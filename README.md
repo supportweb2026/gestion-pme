@@ -4,7 +4,18 @@ Logiciel de gestion pour PME (zone OHADA) : facturation, dépenses, comptabilit�
 projets et tableau de bord, **utilisable sans connexion** et synchronisé entre appareils.
 Hébergement entièrement dans l'offre gratuite de Cloudflare.
 
-État : **lot 1** — ventes complètes hors ligne :
+État : **lot 2** — comptabilité SYSCOHADA :
+
+- écritures générées automatiquement depuis factures, avoirs, encaissements et dépenses
+  (journaux VE, CA, BQ, MM), plus écritures diverses (OD) saisies et contrôlées ;
+- journal, grand livre, balance générale et balance clients, compte de résultat avec soldes
+  intermédiaires (marge, valeur ajoutée, EBE), bilan ;
+- déclaration de TVA (collectée, déductible, nette ou crédit, bases par taux) ;
+- clôture des périodes, appliquée par le serveur ;
+- export CSV des écritures (colonnes de type FEC) et de la balance pour le cabinet ;
+- droits par rôle vérifiés par le serveur (écritures, réglages, validation des dépenses).
+
+Lot 1 — ventes complètes hors ligne :
 
 - devis → facture, avoirs, encaissements multiples (espèces, virement, chèque, Airtel / Moov Money, carte) ;
 - catalogue d'articles et services, clients avec solde dû ;
@@ -69,8 +80,10 @@ Ouvrez l'adresse : le premier écran crée l'entreprise et le compte administrat
 ## Limites connues
 
 - Base locale non chiffrée.
-- Les écrans dépendent du rôle, mais le serveur envoie encore toutes les données de
-  l'entreprise à chaque appareil : le filtrage côté serveur reste à faire.
+- Le serveur vérifie les droits d'écriture par rôle, mais envoie encore toutes les données
+  de l'entreprise à chaque appareil : le filtrage des lectures reste à faire.
+- TVA calculée au régime des débits ; régime, taxes annexes et formulaire officiel à
+  faire valider par le comptable. Pas encore d'amortissements ni de paie automatisés.
 - Un changement de rôle prend effet à la reconnexion de la personne.
 - Pas encore de photo des justificatifs de dépenses (prévue avec le stockage R2).
 - Un numéro pris par une validation refusée (document validé ailleurs entre-temps)

@@ -43,6 +43,12 @@ export function formatXaf(amount: number): string {
   return `${sign}${digits} FCFA`;
 }
 
+/** Montant sans devise pour les tableaux comptables : "1 250 000", vide pour zéro. */
+export function formatAmount(amount: number, blankZero = true): string {
+  if (blankZero && Math.round(amount) === 0) return "";
+  return formatXaf(amount).replace(" FCFA", "");
+}
+
 /** Parité fixe euro / franc CFA. */
 export const EUR_TO_XAF = 655.957;
 

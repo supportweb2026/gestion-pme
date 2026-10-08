@@ -58,7 +58,7 @@ export function useSyncStatus(): SyncStatus {
 
 export type Tab =
   | "dashboard" | "quotes" | "invoices" | "credit_notes" | "expenses"
-  | "clients" | "articles" | "settings";
+  | "clients" | "articles" | "accounting" | "settings";
 
 export const TAB_LABELS: Record<Tab, string> = {
   dashboard: "Tableau de bord",
@@ -68,15 +68,16 @@ export const TAB_LABELS: Record<Tab, string> = {
   expenses: "Dépenses",
   clients: "Clients",
   articles: "Articles",
+  accounting: "Comptabilité",
   settings: "Réglages",
 };
 
 /** Écrans visibles selon le rôle (les droits sont aussi vérifiés côté serveur au fil des lots). */
-const ALL: Tab[] = ["dashboard", "quotes", "invoices", "credit_notes", "expenses", "clients", "articles", "settings"];
+const ALL: Tab[] = ["dashboard", "quotes", "invoices", "credit_notes", "expenses", "clients", "articles", "accounting", "settings"];
 export const TABS_BY_ROLE: Record<string, Tab[]> = {
   admin: ALL,
   director: ALL,
-  accountant: ["dashboard", "invoices", "credit_notes", "quotes", "expenses", "clients", "articles"],
+  accountant: ["dashboard", "accounting", "invoices", "credit_notes", "quotes", "expenses", "clients", "articles"],
   sales: ["dashboard", "quotes", "invoices", "clients", "articles", "expenses"],
   project_manager: ["dashboard", "quotes", "invoices", "expenses", "clients"],
   employee: ["expenses"],
@@ -86,6 +87,7 @@ export const can = {
   approveExpenses: (role: string) => ["admin", "director"].includes(role),
   manageCompany: (role: string) => ["admin", "director"].includes(role),
   manageUsers: (role: string) => role === "admin",
+  keepBooks: (role: string) => ["admin", "accountant"].includes(role),
 };
 
 export const ROLE_LABELS: Record<string, string> = {

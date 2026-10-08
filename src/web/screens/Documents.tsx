@@ -171,7 +171,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const [busy, setBusy] = useState(false);
 
   const numbered = isNumbered(record?.data);
-  const editable = !numbered;
+  const closedUntil = text(settings.closed_until);
+  const locked = !numbered && !!closedUntil && date <= closedUntil && kind !== "quotes";
+  const editable = !numbered && !locked;
   const totals = computeTotals(lines);
   const client = clients.find((c) => c.id === clientId) ?? null;
   const situation: Situation | undefined = kind === "invoices" && record ? situations.get(record.id) : undefined;
@@ -300,6 +302,12 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
         )}
       </div>
 
+      {locked && (
+        <p className="notice">Date dans une période clôturée (jusqu'au {formatDate(closedUntil)}) : choisissez une date ultérieure.</p>
+      )}
+      {locked && (
+        <label className="inline notice-fix">Nouvelle date <input type="date" value={date} min={addDays(closedUntil, 1)} onChange={(e) => setDate(e.target.value)} /></label>
+      )}
       {kind === "credit_notes" && sourceInvoice && (
         <p className="muted small">
           Sur la facture <button className="link" onClick={() => go("invoices", sourceInvoice.id)}>{text(sourceInvoice.data.number)}</button>
@@ -419,6 +427,7 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
   invoice: SyncRecord; situation: Situation; payments: SyncRecord[]; credits: SyncRecord[]; onCredit: () => void;
 }) {
   const { db, session, go } = useApp();
+  const settings = useSettings();
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("cash");
   const [date, setDate] = useState(today());
@@ -427,6 +436,8 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
 
   async function add() {
     setError(null);
+    const closed = text(settings.closed_until);
+    if (closed && date <= closed) return setError(`Période clôturée jusqu'au ${formatDate(closed)} : choisissez une date ultérieure.`);
     const value = Math.round(Number((amount || String(situation.due)).replace(/\s/g, "")));
     if (!Number.isFinite(value) || value <= 0) return setError("Montant invalide.");
     if (value > situation.due && !confirm(`Le montant dépasse le reste dû (${formatXaf(situation.due)}). Enregistrer quand même ?`)) return;

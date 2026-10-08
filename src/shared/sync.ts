@@ -3,7 +3,7 @@ import { isValidHlc, type Hlc } from "./hlc.ts";
 /** Tables synchronisées entre appareils. */
 export const SYNC_TABLES = [
   "clients", "articles", "quotes", "invoices", "credit_notes", "payments",
-  "expenses", "settings", "projects", "tasks",
+  "expenses", "settings", "journal_entries", "projects", "tasks",
 ] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
@@ -107,6 +107,59 @@ export function checkChange(existing: SyncRecord | null, change: Change): string
     }
     if ("number" in change.patch && !(change.patch.status === rule.numberedStatus) && !isNumbered(existing?.data)) {
       return "le numéro n'est attribué qu'à la validation";
+    }
+  }
+  return null;
+}
+
+/** Tables dont les lignes portent une date comptable, verrouillées après clôture. */
+const DATED_TABLES = new Set(["invoices", "credit_notes", "payments", "expenses", "journal_entries"]);
+
+/** Tables que chaque rôle peut modifier. */
+const WRITABLE: Record<string, readonly string[] | "all"> = {
+  admin: "all",
+  director: "all",
+  accountant: "all",
+  sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses"],
+  project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks"],
+  employee: ["expenses"],
+};
+
+export interface Actor {
+  userId: string;
+  role: string;
+}
+
+/**
+ * Droits et clôture, vérifiés par le serveur (et utilisables par l'appareil).
+ * `closedUntil` : dernière date clôturée (AAAA-MM-JJ), ou vide.
+ */
+export function checkPermission(actor: Actor, existing: SyncRecord | null, change: Change, closedUntil = ""): string | null {
+  const writable = WRITABLE[actor.role] ?? [];
+  if (writable !== "all" && !writable.includes(change.tbl)) return "votre rôle ne permet pas cette modification";
+
+  if (change.tbl === "journal_entries" && !["admin", "accountant"].includes(actor.role)) {
+    return "écritures diverses réservées au comptable et à l'administrateur";
+  }
+  if (change.tbl === "settings") {
+    if ("closed_until" in change.patch && !["admin", "accountant"].includes(actor.role)) return "clôture réservée au comptable et à l'administrateur";
+    const other = Object.keys(change.patch).filter((k) => k !== "closed_until");
+    if (other.length && !["admin", "director"].includes(actor.role)) return "réglages réservés à la direction";
+  }
+  if (change.tbl === "expenses") {
+    const status = change.patch.status;
+    const deciding = status === "approved" || status === "rejected";
+    const approver = ["admin", "director", "accountant"].includes(actor.role);
+    if (deciding && !approver) return "validation des dépenses réservée à la direction";
+    if (actor.role === "employee" && existing && existing.data.created_by !== actor.userId) return "dépense d'un autre utilisateur";
+  }
+
+  if (closedUntil && DATED_TABLES.has(change.tbl)) {
+    const onlyTracking = Object.keys(change.patch).every((k) => k === "sent_at");
+    const before = typeof existing?.data.date === "string" ? existing.data.date : "";
+    const after = typeof change.patch.date === "string" ? change.patch.date : before;
+    if (!onlyTracking && ((before && before <= closedUntil) || (after && after <= closedUntil))) {
+      return `période clôturée jusqu'au ${closedUntil.split("-").reverse().join("/")}`;
     }
   }
   return null;

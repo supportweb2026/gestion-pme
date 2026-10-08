@@ -166,6 +166,42 @@ try {
   await nav(A.page, "Factures");
   await shot(A.page, "factures.png");
 
+  step("Comptabilité : balance équilibrée, TVA, résultat, écriture de capital");
+  await nav(A.page, "Comptabilité");
+  await A.page.getByTestId("balance-check").filter({ hasText: "Équilibrée" }).waitFor();
+  await shot(A.page, "balance.png");
+  await A.page.getByRole("tab", { name: "TVA" }).click();
+  await A.page.getByTestId("vat-due").filter({ hasText: /^27 000 FCFA$/ }).waitFor();
+  await A.page.getByRole("tab", { name: "Résultat et bilan" }).click();
+  await A.page.getByTestId("result").filter({ hasText: /^150 000 FCFA$/ }).waitFor();
+  await A.page.getByRole("tab", { name: "Écritures diverses" }).click();
+  await A.page.getByRole("button", { name: "Nouvelle écriture" }).click();
+  await A.page.getByLabel("Libellé", { exact: true }).fill("Apport en capital");
+  const accounts = A.page.getByLabel("Compte");
+  await accounts.nth(0).fill("521");
+  await A.page.getByLabel("Débit").nth(0).fill("1000000");
+  await accounts.nth(1).fill("101");
+  await A.page.getByLabel("Crédit").nth(1).fill("1000000");
+  await A.page.getByRole("button", { name: "Enregistrer l'écriture" }).click();
+  await A.page.getByRole("cell", { name: "Apport en capital" }).waitFor();
+  await A.page.getByRole("tab", { name: "Résultat et bilan" }).click();
+  await A.page.getByText("Bilan équilibré.").waitFor();
+  await shot(A.page, "resultat-bilan.png");
+
+  step("Clôture du mois : le serveur et l'appareil refusent toute modification datée");
+  await A.page.getByRole("tab", { name: "Clôture" }).click();
+  const lastDay = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 0);
+  const iso = `${lastDay.getFullYear()}-${String(lastDay.getMonth() + 1).padStart(2, "0")}-${String(lastDay.getDate()).padStart(2, "0")}`;
+  await A.page.getByLabel("Clôturer jusqu'au").fill(iso);
+  await A.page.getByRole("button", { name: "Clôturer", exact: true }).click();
+  await A.page.getByText("Les opérations sont verrouillées").waitFor();
+  await waitSynced(A.page);
+  await waitSynced(B.page);
+  // B, sur la facture du mois clôturé, tente un encaissement daté d'aujourd'hui.
+  await B.page.getByLabel("Montant encaissé").fill("5000");
+  await B.page.getByRole("button", { name: "Enregistrer l'encaissement" }).click();
+  await B.page.getByText(/Période clôturée jusqu'au/).waitFor();
+
   assert.deepEqual(errors, [], "aucune erreur JavaScript dans les pages");
   console.log("\nOK : cycle de vente complet sur deux appareils, avec coupures, sans perte.");
 } catch (e) {

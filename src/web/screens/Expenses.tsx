@@ -1,23 +1,10 @@
 import { useState, type FormEvent } from "react";
-import { can, formatDate, text, today, useApp, useTable } from "../context.ts";
+import { can, formatDate, text, today, useApp, useSettings, useTable } from "../context.ts";
 import { formatXaf, PAYMENT_METHODS } from "../../shared/invoice.ts";
 import type { SyncRecord } from "../../shared/sync.ts";
+import { EXPENSE_CATEGORIES } from "../../shared/accounting.ts";
 
-/** Catégories avec leur compte de charges SYSCOHADA, pour la comptabilité du lot 2. */
-export const EXPENSE_CATEGORIES: Record<string, { label: string; account: string }> = {
-  goods: { label: "Achats de marchandises", account: "601" },
-  supplies: { label: "Fournitures et petit matériel", account: "6047" },
-  fuel: { label: "Carburant", account: "6042" },
-  transport: { label: "Transport et déplacements", account: "618" },
-  rent: { label: "Loyer", account: "622" },
-  utilities: { label: "Eau et électricité", account: "605" },
-  telecom: { label: "Téléphone et internet", account: "628" },
-  maintenance: { label: "Entretien et réparations", account: "624" },
-  fees: { label: "Honoraires", account: "632" },
-  bank: { label: "Frais bancaires", account: "631" },
-  taxes: { label: "Impôts et taxes", account: "64" },
-  other: { label: "Autres charges", account: "658" },
-};
+export { EXPENSE_CATEGORIES };
 
 const STATUS: Record<string, { label: string; tone: string }> = {
   approved: { label: "Validée", tone: "ok" },
@@ -43,9 +30,17 @@ export function Expenses() {
   for (const e of approved) byCategory.set(text(e.data.category), (byCategory.get(text(e.data.category)) ?? 0) + Number(e.data.amount ?? 0));
   const pending = visible.filter((e) => e.data.status === "pending");
 
+  const closedUntil = text(useSettings().closed_until);
+  const [formError, setFormError] = useState<string | null>(null);
+
   async function save(ev: FormEvent<HTMLFormElement>) {
     ev.preventDefault();
     const f = Object.fromEntries(new FormData(ev.currentTarget)) as Record<string, string>;
+    if (closedUntil && f.date <= closedUntil) {
+      setFormError(`Période clôturée jusqu'au ${formatDate(closedUntil)} : choisissez une date ultérieure.`);
+      return;
+    }
+    setFormError(null);
     const values: Record<string, unknown> = {
       date: f.date,
       amount: Math.round(Number(f.amount.replace(/\s/g, "")) || 0),
@@ -74,7 +69,8 @@ export function Expenses() {
     db.write("expenses", e.id, { status, decided_by: session.user.id, decided_at: new Date().toISOString() });
 
   const v = (k: string, fallback = "") => (editing && editing !== "new" ? text(editing.data[k]) : fallback);
-  const canEdit = (e: SyncRecord) => approver || (e.data.created_by === session.user.id && e.data.status !== "approved");
+  const canEdit = (e: SyncRecord) =>
+    !(closedUntil && text(e.data.date) <= closedUntil) && (approver || (e.data.created_by === session.user.id && e.data.status !== "approved"));
 
   return (
     <section>
@@ -109,6 +105,7 @@ export function Expenses() {
               <option value="10">10 %</option>
             </select>
           </label>
+          {formError && <p className="error wide" role="alert">{formError}</p>}
           <div className="form-actions">
             {editing !== "new" && (
               <button type="button" className="ghost danger" onClick={async () => {

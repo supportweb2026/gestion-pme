@@ -150,3 +150,35 @@ test("utilisateurs : désactivation par l'administrateur, appareils révoqués a
   assert.equal(back.data.user.role, "accountant");
   assert.equal((await call("/api/sync", { changes: [], since: 0 }, back.data.token)).status, 200);
 });
+
+test("droits : un commercial ne passe pas d'écriture comptable, un employé ne valide pas sa dépense", async () => {
+  await call("/api/users", { name: "Paul", email: "paul@sodepsi.ga", role: "sales", password: "commercial2" }, tokenA);
+  await call("/api/users", { name: "Léa", email: "lea@sodepsi.ga", role: "employee", password: "employee12" }, tokenA);
+  const sales = (await call("/api/login", { email: "paul@sodepsi.ga", password: "commercial2", deviceId: "device-eeee-0005" })).data.token;
+  const emp = (await call("/api/login", { email: "lea@sodepsi.ga", password: "employee12", deviceId: "device-ffff-0006" })).data.token;
+  const salesClock = new HlcClock("device-eeee-0005");
+  const empClock = new HlcClock("device-ffff-0006");
+
+  const od = change(salesClock, "journal_entries", "od-000001", { date: "2026-10-01", lines: [] });
+  assert.match((await call("/api/sync", { changes: [od], since: 0 }, sales)).data.rejected[0].reason, /rôle|réservées/);
+
+  const selfApproved = change(empClock, "expenses", "dep-000001", { date: "2026-10-01", amount: 5000, status: "approved", created_by: "x" });
+  assert.match((await call("/api/sync", { changes: [selfApproved], since: 0 }, emp)).data.rejected[0].reason, /direction/);
+  const pending = change(empClock, "expenses", "dep-000002", { date: "2026-10-01", amount: 5000, status: "pending" });
+  assert.equal((await call("/api/sync", { changes: [pending], since: 0 }, emp)).data.accepted.length, 1);
+  const client = change(empClock, "clients", "client-9999", { name: "X" });
+  assert.match((await call("/api/sync", { changes: [client], since: 0 }, emp)).data.rejected[0].reason, /rôle/);
+});
+
+test("clôture : plus aucune modification datée dans une période clôturée", async () => {
+  const close = change(clockA, "settings", "company", { closed_until: "2026-01-31" });
+  assert.equal((await call("/api/sync", { changes: [close], since: 0 }, tokenA)).data.accepted.length, 1);
+  const inClosed = change(clockA, "expenses", "dep-closed-1", { date: "2026-01-15", amount: 1000, status: "approved" });
+  const r = await call("/api/sync", { changes: [inClosed], since: 0 }, tokenA);
+  assert.match(r.data.rejected[0].reason, /clôturée jusqu'au 31\/01\/2026/);
+  const open = change(clockA, "expenses", "dep-open-1", { date: "2026-02-01", amount: 1000, status: "approved" });
+  assert.equal((await call("/api/sync", { changes: [open], since: 0 }, tokenA)).data.accepted.length, 1);
+  // Déplacer une dépense ouverte vers la période clôturée est aussi refusé.
+  const move = change(clockA, "expenses", "dep-open-1", { date: "2026-01-20" });
+  assert.equal((await call("/api/sync", { changes: [move], since: 0 }, tokenA)).data.rejected.length, 1);
+});

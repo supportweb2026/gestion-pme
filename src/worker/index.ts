@@ -5,7 +5,7 @@
 import type { D1PreparedStatement, Env } from "./d1.ts";
 import { hashPassword, signToken, verifyPassword, verifyToken, type Session } from "./auth.ts";
 import {
-  applyChange, checkChange, MAX_PULL, MAX_PUSH,
+  applyChange, checkChange, checkPermission, MAX_PULL, MAX_PUSH,
   type Change, type SyncRecord, type SyncRequest, type SyncResponse,
 } from "../shared/sync.ts";
 import { decodeHlc } from "../shared/hlc.ts";
@@ -215,6 +215,13 @@ async function handleSync(req: Request, env: Env, s: Session) {
     const records = new Map<string, SyncRecord | null>();
     for (const r of recRows.results) records.set(`${r.tbl}/${r.id}`, parseRecord(r));
 
+    // Date de clôture comptable, lue une fois par envoi.
+    const settingsRow = await env.DB.prepare(
+      `SELECT json_extract(data, '$.closed_until') AS closed FROM records WHERE company_id = ? AND tbl = 'settings' AND id = 'company'`,
+    ).bind(s.cid).first<{ closed: string | null }>();
+    const closedUntil = settingsRow?.closed ?? "";
+    const actor = { userId: s.sub, role: s.role };
+
     const statements: D1PreparedStatement[] = [];
     const touched = new Set<string>();
     const receivedAt = now();
@@ -226,7 +233,7 @@ async function handleSync(req: Request, env: Env, s: Session) {
       }
       const key = `${c.tbl}/${c.row}`;
       const existing = records.get(key) ?? null;
-      let reason = c.device !== s.dev ? "appareil incohérent" : checkChange(existing, c);
+      let reason = c.device !== s.dev ? "appareil incohérent" : checkChange(existing, c) ?? checkPermission(actor, existing, c, closedUntil);
       if (!reason && decodeHlc(c.hlc).ms > Date.now() + MAX_CLOCK_AHEAD_MS) {
         reason = "horloge de l'appareil trop en avance : corrigez la date du téléphone";
       }

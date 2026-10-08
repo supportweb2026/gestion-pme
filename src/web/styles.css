@@ -238,3 +238,20 @@ svg .hover-band { fill: var(--line); opacity: 0.45; }
   .ps-title { text-align: left; }
   .ps-client, .ps-sign, .ps-totals { width: 100%; }
 }
+
+/* ---- Lot 2 : comptabilité ---- */
+.subnav { margin-bottom: 16px; flex-wrap: wrap; max-width: 100%; }
+.card-toolbar { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; padding: 12px; }
+.card-toolbar select { width: auto; max-width: 100%; }
+table.books th, table.books td { padding: 7px 10px; font-size: 0.9rem; }
+table.books .mono { font-size: 0.85rem; }
+tbody.entry { cursor: pointer; }
+tbody.entry tr:last-child td { border-bottom: 2px solid var(--line); }
+tbody.entry:hover { background: var(--bg); }
+.class-row td { background: var(--bg); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-soft); }
+.sub-row td { font-weight: 600; }
+.strong-row td { font-weight: 700; border-top: 2px solid var(--ink-soft); }
+.notice { background: var(--warn-soft); color: var(--warn); border-radius: 8px; padding: 10px 14px; }
+.notice-fix { margin-bottom: 12px; }
+p.error.wide { grid-column: 1 / -1; }
+.toolbar select { width: auto; max-width: 100%; }
