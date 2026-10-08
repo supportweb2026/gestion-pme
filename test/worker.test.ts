@@ -6,7 +6,7 @@ import { createLocalD1 } from "../dev/d1-local.ts";
 import { HlcClock } from "../src/shared/hlc.ts";
 import type { Change, SyncResponse } from "../src/shared/sync.ts";
 
-const env = { DB: createLocalD1(":memory:", join(import.meta.dirname, "..", "migrations")), JWT_SECRET: "test" };
+const env = { DB: createLocalD1(":memory:", join(import.meta.dirname, "..", "migrations")), JWT_SECRET: "test-secret-0123456789-0123456789-abc" };
 
 async function call(path: string, body?: unknown, token?: string) {
   const res = await worker.fetch(

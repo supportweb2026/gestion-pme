@@ -17,8 +17,12 @@ const MAX_CLOCK_AHEAD_MS = 24 * 3600 * 1000;
 /** Mot de passe minimal. */
 const MIN_PASSWORD = 8;
 const ROLES = ["admin", "director", "accountant", "sales", "project_manager", "employee"];
-/** Valeur de développement : en production, définir le secret JWT_SECRET. */
-const DEV_SECRET = "dev-secret-a-remplacer";
+/** Secret de signature des sessions : obligatoire, au moins 32 caractères. */
+function secret(env: Env): string {
+  const s = env.JWT_SECRET;
+  if (!s || s.length < 32) throw new HttpError(500, "secret JWT_SECRET absent ou trop court : configurez-le dans Cloudflare");
+  return s;
+}
 
 class HttpError extends Error {
   status: number;
@@ -58,7 +62,7 @@ function deviceId(v: unknown): string {
 async function authenticate(req: Request, env: Env): Promise<Session> {
   const header = req.headers.get("authorization") ?? "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : "";
-  const session = token ? await verifyToken(token, env.JWT_SECRET ?? DEV_SECRET) : null;
+  const session = token ? await verifyToken(token, secret(env)) : null;
   if (!session) throw new HttpError(401, "session expirée, reconnectez-vous");
   // Un seul accès en lecture : appareil non révoqué et utilisateur actif.
   const row = await env.DB.prepare(
@@ -78,7 +82,7 @@ async function openSession(env: Env, user: { id: string; company_id: string; rol
     `INSERT INTO devices (id, company_id, user_id, last_seen) VALUES (?, ?, ?, ?)
      ON CONFLICT(id) DO UPDATE SET user_id = excluded.user_id, company_id = excluded.company_id, last_seen = excluded.last_seen`,
   ).bind(dev, user.company_id, user.id, now()).run();
-  const token = await signToken({ sub: user.id, cid: user.company_id, role: user.role, dev }, env.JWT_SECRET ?? DEV_SECRET);
+  const token = await signToken({ sub: user.id, cid: user.company_id, role: user.role, dev }, secret(env));
   return {
     token,
     user: { id: user.id, name: user.name, email: user.email, role: user.role },

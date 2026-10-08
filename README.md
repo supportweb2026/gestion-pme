@@ -53,7 +53,7 @@ La base D1 `gestion-pme` est déjà créée (identifiant dans `wrangler.jsonc`).
 1. Cloudflare → **Workers & Pages** → **Create** → **Import a repository** → `supportweb2026/gestion-pme`.
 2. Commande de build : `npm run build`
 3. Commande de déploiement : `npx wrangler d1 migrations apply gestion-pme --remote && npx wrangler deploy`
-4. **Settings → Variables and Secrets** : ajouter le secret `JWT_SECRET` (une longue chaîne aléatoire).
+4. **Settings → Variables and Secrets** : ajouter le secret `JWT_SECRET` (chaîne aléatoire d'au moins 32 caractères, obligatoire : sans lui, le serveur refuse les connexions).
 5. Chaque `git push` sur `main` redéploie automatiquement. Adresse : `https://gestion-pme.<compte>.workers.dev`.
 
 Ouvrez l'adresse : le premier écran crée l'entreprise et le compte administrateur.
