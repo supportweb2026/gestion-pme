@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { can, ROLE_LABELS, text, useApp, useSettings, useSyncStatus } from "../context.ts";
 import { api, ApiError } from "../api.ts";
 import { DEFAULT_PAYMENT_DAYS } from "../../shared/invoice.ts";
+import { CURRENCIES, rateFor } from "../../shared/currency.ts";
 
 const COMPANY_FIELDS: { name: string; label: string; placeholder?: string; wide?: boolean }[] = [
   { name: "name", label: "Raison sociale" },
@@ -45,6 +46,7 @@ export function Settings() {
     <section>
       <div className="section-head"><h2>Réglages</h2></div>
       {can.manageCompany(session.user.role) && <CompanySettings />}
+      {can.manageCompany(session.user.role) && <CurrencySettings />}
       {can.manageUsers(session.user.role) && <Users />}
     </section>
   );
@@ -109,6 +111,67 @@ function CompanySettings() {
         <button className="primary">Enregistrer</button>
       </div>
     </form>
+  );
+}
+
+/** Taux de change : 1 unité de devise = n francs CFA. L'euro et le XOF ont une parité fixe. */
+function CurrencySettings() {
+  const { db } = useApp();
+  const s = useSettings();
+  const rates = (s.rates as Record<string, number> | undefined) ?? {};
+  const floating = Object.values(CURRENCIES).filter((c) => !c.fixedRate);
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [message, setMessage] = useState<string | null>(null);
+  const value = (code: string) => values[code] ?? String(rateFor(code, rates));
+
+  async function save(next: Record<string, number>) {
+    await db.write("settings", "company", { rates: { ...rates, ...next }, rates_updated_at: new Date().toISOString() });
+    setValues({});
+  }
+
+  async function fetchRates() {
+    setMessage(null);
+    try {
+      // Service public gratuit, sans clé. Taux exprimés pour 1 XAF.
+      const res = await fetch("https://open.er-api.com/v6/latest/XAF");
+      const data = (await res.json()) as { result?: string; rates?: Record<string, number> };
+      if (data.result !== "success" || !data.rates) throw new Error();
+      const next: Record<string, number> = {};
+      for (const c of floating) {
+        const perXaf = data.rates[c.code];
+        if (perXaf > 0) next[c.code] = Math.round((1 / perXaf) * 100) / 100;
+      }
+      await save(next);
+      setMessage("Taux mis à jour.");
+    } catch {
+      setMessage("Impossible de récupérer les taux (hors ligne ?) : saisissez-les à la main.");
+    }
+  }
+
+  return (
+    <div className="card section-card">
+      <h3>Devises</h3>
+      <p className="muted small">
+        La comptabilité est tenue en francs CFA. Le taux est enregistré sur chaque document au moment de sa création.
+        Parités fixes : 1 EUR = 655,957 FCFA ; 1 XOF = 1 FCFA.
+        {s.rates_updated_at ? ` Dernière mise à jour : ${new Date(String(s.rates_updated_at)).toLocaleDateString("fr-FR")}.` : ""}
+      </p>
+      <div className="form-grid">
+        {floating.map((c) => (
+          <label key={c.code}>
+            1 {c.code} ({c.label}) = … FCFA
+            <input type="number" min="0" step="any" value={value(c.code)} onChange={(e) => setValues((v) => ({ ...v, [c.code]: e.target.value }))} />
+          </label>
+        ))}
+      </div>
+      <div className="form-actions">
+        {message && <span className="muted small">{message}</span>}
+        <button className="ghost" onClick={fetchRates}>Récupérer les taux du jour</button>
+        <button className="primary" onClick={() => save(Object.fromEntries(floating.map((c) => [c.code, Number(value(c.code)) || rateFor(c.code, rates)])))}>
+          Enregistrer les taux
+        </button>
+      </div>
+    </div>
   );
 }
 

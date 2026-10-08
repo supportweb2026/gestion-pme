@@ -4,7 +4,18 @@ Logiciel de gestion pour PME (zone OHADA) : facturation, dépenses, comptabilit�
 projets et tableau de bord, **utilisable sans connexion** et synchronisé entre appareils.
 Hébergement entièrement dans l'offre gratuite de Cloudflare.
 
-État : **lot 2** — comptabilité SYSCOHADA :
+État : **lot 3** — projets et multi-devises :
+
+- projets liés aux clients : budget, taux de facturation et coût horaire interne ;
+- tâches en Kanban (glisser-déposer ou flèches sur mobile), planning de type Gantt ;
+- temps passés par personne et par tâche, facturation du temps non facturé ou d'un jalon ;
+- rentabilité en direct : heures, coûts (temps + dépenses), facturé, marge, budget consommé ;
+- devis, factures et avoirs en EUR, USD, XOF, CNY, GBP : taux mémorisé sur le document,
+  parité fixe de l'euro (655,957), contre-valeur en FCFA, montant en lettres dans la devise ;
+- comptabilité toujours en FCFA, avec écarts de change à l'encaissement (676 / 776) ;
+- taux de change modifiables dans les réglages, ou récupérés en ligne en un clic.
+
+Lot 2 — comptabilité SYSCOHADA :
 
 - écritures générées automatiquement depuis factures, avoirs, encaissements et dépenses
   (journaux VE, CA, BQ, MM), plus écritures diverses (OD) saisies et contrôlées ;

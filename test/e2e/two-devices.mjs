@@ -166,6 +166,44 @@ try {
   await nav(A.page, "Factures");
   await shot(A.page, "factures.png");
 
+  step("Projet : tâches en Kanban, temps passé, facturation du temps");
+  await nav(A.page, "Projets");
+  await A.page.getByRole("button", { name: "Nouveau projet" }).click();
+  await A.page.getByLabel("Nom du projet").fill("Site web Total");
+  await A.page.getByLabel("Client").selectOption({ label: "Total Gabon" });
+  await A.page.getByLabel("Budget HT (FCFA)").fill("2000000");
+  await A.page.getByLabel("Taux de facturation (FCFA / h)").fill("25000");
+  await A.page.getByLabel("Coût horaire interne (FCFA / h)").fill("10000");
+  await A.page.getByRole("button", { name: "Enregistrer le projet" }).click();
+  await A.page.getByRole("heading", { name: "Site web Total" }).waitFor();
+  for (const t of ["Maquettes", "Développement"]) {
+    await A.page.getByLabel("Nouvelle tâche").fill(t);
+    await A.page.getByRole("button", { name: "Ajouter" }).click();
+  }
+  const card = A.page.locator(".task-card", { hasText: "Maquettes" });
+  for (let i = 0; i < 3; i++) await card.getByRole("button", { name: /Avancer/ }).click();
+  await A.page.getByTestId("col-done").getByText("Maquettes").waitFor();
+  await A.page.getByRole("tab", { name: "Temps passés" }).click();
+  await A.page.locator("select[name=task_id]").selectOption({ label: "Maquettes" });
+  await A.page.getByLabel("Durée (heures)").fill("8");
+  await A.page.getByRole("button", { name: "Enregistrer le temps" }).click();
+  await A.page.getByRole("cell", { name: "8 h" }).waitFor();
+  await A.page.getByRole("tab", { name: "Facturation" }).click();
+  await A.page.getByTestId("project-margin").filter({ hasText: /^-80 000 FCFA$/ }).waitFor();
+  await shot(A.page, "projet.png");
+  await A.page.getByRole("button", { name: "Facturer le temps passé" }).click();
+  await A.page.getByTestId("total-ttc").filter({ hasText: /^236 000 FCFA$/ }).waitFor();
+
+  step("Facture en euros : montants au centime, contre-valeur en FCFA");
+  await nav(A.page, "Factures");
+  await A.page.getByRole("button", { name: "Nouvelle facture" }).click();
+  await A.page.getByLabel("Devise").selectOption("EUR");
+  await A.page.getByLabel("Désignation").fill("Hébergement annuel");
+  await A.page.getByLabel("Prix unitaire").fill("100.5");
+  await A.page.getByTestId("total-ttc").filter({ hasText: /^118,59 €$/ }).waitFor();
+  await A.page.getByText("77 790 FCFA").waitFor();
+  await A.page.getByRole("button", { name: "← Factures" }).click();
+
   step("Comptabilité : balance équilibrée, TVA, résultat, écriture de capital");
   await nav(A.page, "Comptabilité");
   await A.page.getByTestId("balance-check").filter({ hasText: "Équilibrée" }).waitFor();

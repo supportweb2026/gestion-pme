@@ -10,6 +10,7 @@ import { Articles } from "./screens/Articles.tsx";
 import { Expenses } from "./screens/Expenses.tsx";
 import { Settings } from "./screens/Settings.tsx";
 import { Accounting } from "./screens/Accounting.tsx";
+import { Projects } from "./screens/Projects.tsx";
 
 type Boot =
   | { kind: "loading" }
@@ -176,6 +177,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
           {tab === "expenses" && <Expenses />}
           {tab === "clients" && <Clients />}
           {tab === "articles" && <Articles />}
+          {tab === "projects" && <Projects />}
           {tab === "accounting" && <Accounting />}
           {tab === "settings" && <Settings />}
         </main>

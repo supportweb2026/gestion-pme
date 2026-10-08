@@ -5,7 +5,8 @@
  */
 import { useEffect } from "react";
 import { formatDate, text, useSettings } from "../context.ts";
-import { amountInWords, computeTotals, formatXaf, type InvoiceLine } from "../../shared/invoice.ts";
+import { computeTotals, lineNet, lineVat, type InvoiceLine } from "../../shared/invoice.ts";
+import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../../shared/currency.ts";
 import type { DocTable, SyncRecord } from "../../shared/sync.ts";
 import type { Situation } from "../ledger.ts";
 
@@ -25,16 +26,18 @@ export function PrintView({ kind, record, client, situation, onClose }: {
 }) {
   const s = useSettings();
   const lines = (record.data.lines as InvoiceLine[]) ?? [];
-  const totals = computeTotals(lines);
+  const currency = text(record.data.currency) || "XAF";
+  const decimals = decimalsOf(currency);
+  const totals = computeTotals(lines, decimals);
+  const formatXaf = (n: number) => formatMoney(n, currency);
   const c = client?.data ?? {};
   const number = text(record.data.number);
 
   // TVA ventilée par taux, comme l'exige une facture.
   const vatByRate = new Map<number, { base: number; vat: number }>();
   for (const l of lines) {
-    const base = Math.round(l.qty * l.unitPrice);
     const cur = vatByRate.get(l.vatRate) ?? { base: 0, vat: 0 };
-    vatByRate.set(l.vatRate, { base: cur.base + base, vat: cur.vat + Math.round((base * l.vatRate) / 100) });
+    vatByRate.set(l.vatRate, { base: cur.base + lineNet(l, decimals), vat: cur.vat + lineVat(l, decimals) });
   }
 
   useEffect(() => {
@@ -90,7 +93,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
                 <td className="r">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td>
                 <td className="r">{formatXaf(l.unitPrice)}</td>
                 <td className="r">{l.vatRate} %</td>
-                <td className="r">{formatXaf(Math.round(l.qty * l.unitPrice))}</td>
+                <td className="r">{formatXaf(lineNet(l, decimals))}</td>
               </tr>
             ))}
           </tbody>
@@ -98,7 +101,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
 
         <div className="ps-bottom">
           <div className="ps-words">
-            {ARRETE[kind]} à la somme de <strong>{amountInWords(totals.gross)} francs CFA</strong> toutes taxes comprises.
+            {ARRETE[kind]} à la somme de <strong>{amountInWordsWithCurrency(totals.gross, currency)}</strong> toutes taxes comprises.
             {text(record.data.notes) && <p className="ps-notes">{text(record.data.notes)}</p>}
           </div>
           <table className="ps-totals">

@@ -3,7 +3,7 @@ import { isValidHlc, type Hlc } from "./hlc.ts";
 /** Tables synchronisées entre appareils. */
 export const SYNC_TABLES = [
   "clients", "articles", "quotes", "invoices", "credit_notes", "payments",
-  "expenses", "settings", "journal_entries", "projects", "tasks",
+  "expenses", "settings", "journal_entries", "projects", "tasks", "time_entries",
 ] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
@@ -113,16 +113,16 @@ export function checkChange(existing: SyncRecord | null, change: Change): string
 }
 
 /** Tables dont les lignes portent une date comptable, verrouillées après clôture. */
-const DATED_TABLES = new Set(["invoices", "credit_notes", "payments", "expenses", "journal_entries"]);
+const DATED_TABLES = new Set(["invoices", "credit_notes", "payments", "expenses", "journal_entries", "time_entries"]);
 
 /** Tables que chaque rôle peut modifier. */
 const WRITABLE: Record<string, readonly string[] | "all"> = {
   admin: "all",
   director: "all",
   accountant: "all",
-  sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses"],
-  project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks"],
-  employee: ["expenses"],
+  sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses", "projects", "tasks", "time_entries"],
+  project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks", "time_entries"],
+  employee: ["expenses", "tasks", "time_entries"],
 };
 
 export interface Actor {
@@ -152,6 +152,11 @@ export function checkPermission(actor: Actor, existing: SyncRecord | null, chang
     const approver = ["admin", "director", "accountant"].includes(actor.role);
     if (deciding && !approver) return "validation des dépenses réservée à la direction";
     if (actor.role === "employee" && existing && existing.data.created_by !== actor.userId) return "dépense d'un autre utilisateur";
+  }
+
+  if (change.tbl === "time_entries" && actor.role === "employee") {
+    const owner = existing ? existing.data.user_id : change.patch.user_id;
+    if (owner !== actor.userId) return "un employé ne saisit que ses propres temps";
   }
 
   if (closedUntil && DATED_TABLES.has(change.tbl)) {

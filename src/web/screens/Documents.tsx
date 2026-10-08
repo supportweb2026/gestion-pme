@@ -6,10 +6,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatDate, normalize, text, today, useApp, useSettings, useTable } from "../context.ts";
 import {
-  addDays, computeTotals, DEFAULT_PAYMENT_DAYS, DEFAULT_VAT_RATE, formatXaf, PAYMENT_METHODS, type InvoiceLine,
+  addDays, computeTotals, DEFAULT_PAYMENT_DAYS, DEFAULT_VAT_RATE, lineNet, PAYMENT_METHODS, type InvoiceLine,
 } from "../../shared/invoice.ts";
+import { CURRENCIES, decimalsOf, formatMoney, rateFor } from "../../shared/currency.ts";
 import { isNumbered, type DocTable, type SyncRecord } from "../../shared/sync.ts";
-import { invoiceSituations, linesOf, QUOTE_LABELS, quoteStatus, SITUATION_LABELS, totalsOf, type Situation } from "../ledger.ts";
+import { currencyOf, invoiceSituations, linesOf, QUOTE_LABELS, quoteStatus, rateOf, SITUATION_LABELS, totalsOf, type Situation } from "../ledger.ts";
 import { PrintView } from "./PrintView.tsx";
 
 interface DocConfig {
@@ -135,8 +136,8 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
                     <td>{formatDate(d.data.date)}</td>
                     <td>{clientName(d.data.client_id)}</td>
                     <td><span className={`badge ${st.tone}`}>{st.label}</span></td>
-                    {kind === "invoices" && <td className="right mono">{st.key === "draft" ? "" : formatXaf(situations.get(d.id)?.due ?? 0)}</td>}
-                    <td className="right mono">{formatXaf(totalsOf(d).gross)}</td>
+                    {kind === "invoices" && <td className="right mono">{st.key === "draft" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
+                    <td className="right mono">{formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
                   </tr>
                 );
               })}
@@ -166,6 +167,10 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const [dueDate, setDueDate] = useState(text(record?.data.due_date ?? record?.data.valid_until) || addDays(today(), paymentDays));
   const [lines, setLines] = useState<InvoiceLine[]>(() => (record ? linesOf(record) : [emptyLine()]).map((l) => ({ ...l })));
   const [notes, setNotes] = useState(text(record?.data.notes));
+  const [currency, setCurrency] = useState(currencyOf(record));
+  const [rate, setRate] = useState<number>(() => (record ? rateOf(record) : 1));
+  const [projectId, setProjectId] = useState(text(record?.data.project_id));
+  const projects = useTable("projects");
   const [message, setMessage] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -174,7 +179,13 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const closedUntil = text(settings.closed_until);
   const locked = !numbered && !!closedUntil && date <= closedUntil && kind !== "quotes";
   const editable = !numbered && !locked;
-  const totals = computeTotals(lines);
+  const decimals = decimalsOf(currency);
+  const totals = computeTotals(lines, decimals);
+  const fm = (n: number) => formatMoney(n, currency);
+  const changeCurrency = (code: string) => {
+    setCurrency(code);
+    setRate(rateFor(code, settings.rates as Record<string, number> | undefined));
+  };
   const client = clients.find((c) => c.id === clientId) ?? null;
   const situation: Situation | undefined = kind === "invoices" && record ? situations.get(record.id) : undefined;
   const sourceInvoice = kind === "credit_notes" ? invoices.find((i) => i.id === record?.data.invoice_id) : undefined;
@@ -199,7 +210,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const cleanLines = () => lines.filter((l) => l.label.trim() !== "" || l.unitPrice !== 0);
 
   function contentPatch(): Record<string, unknown> {
-    const p: Record<string, unknown> = { client_id: clientId, date, lines: cleanLines(), notes: notes.trim(), currency: "XAF" };
+    const p: Record<string, unknown> = {
+      client_id: clientId, date, lines: cleanLines(), notes: notes.trim(), currency, rate: currency === "XAF" ? 1 : rate, project_id: projectId,
+    };
     if (kind === "invoices") p.due_date = dueDate;
     if (kind === "quotes") p.valid_until = dueDate;
     if (!record) Object.assign(p, { status: "draft", created_by: session.user.id });
@@ -221,7 +234,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
         .filter((c) => c.id !== id && c.data.invoice_id === sourceInvoice.id && c.data.status === "validated")
         .reduce((n, c) => n + totalsOf(c).gross, 0);
       const max = totalsOf(sourceInvoice).gross - others;
-      if (totals.gross > max) return setMessage(`L'avoir dépasse le montant restant de la facture (${formatXaf(max)}).`);
+      if (totals.gross > max) return setMessage(`L'avoir dépasse le montant restant de la facture (${fm(max)}).`);
     }
     if (!confirm(cfg.confirm)) return;
     setBusy(true);
@@ -252,7 +265,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       due_date: addDays(today(), paymentDays),
       lines: linesOf(record),
       notes: text(record!.data.notes),
-      currency: "XAF",
+      currency: currencyOf(record),
+      rate: rateOf(record),
+      project_id: text(record!.data.project_id),
       quote_id: id,
       quote_number: record!.data.number,
       created_by: session.user.id,
@@ -268,7 +283,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       client_id: record!.data.client_id,
       date: today(),
       lines: linesOf(record),
-      currency: "XAF",
+      currency: currencyOf(record),
+      rate: rateOf(record),
+      project_id: text(record!.data.project_id),
       invoice_id: id,
       invoice_number: record!.data.number,
       notes: `Avoir sur la facture ${text(record!.data.number)}`,
@@ -297,7 +314,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
         {numbered && (
           <div className="actions">
             <button onClick={() => setPrinting(true)}>Imprimer / PDF</button>
-            <ShareButtons kind={kind} record={record!} client={client} gross={totals.gross} due={situation?.due} />
+            <ShareButtons kind={kind} record={record!} client={client} gross={totals.gross} due={situation?.due} currency={currency} />
           </div>
         )}
       </div>
@@ -328,6 +345,28 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
             </select>
           </label>
           <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={!editable} /></label>
+          <label>
+            Devise
+            <select value={currency} onChange={(e) => changeCurrency(e.target.value)} disabled={!editable || kind === "credit_notes"}>
+              {Object.values(CURRENCIES).map((c) => <option key={c.code} value={c.code}>{c.code} · {c.label}</option>)}
+            </select>
+          </label>
+          {currency !== "XAF" && (
+            <label>
+              Taux (1 {currency} = … FCFA)
+              <input type="number" min="0" step="any" value={rate} onChange={(e) => setRate(Number(e.target.value))}
+                disabled={!editable || !!CURRENCIES[currency]?.fixedRate || kind === "credit_notes"} />
+            </label>
+          )}
+          {projects.length > 0 && (
+            <label>
+              Projet
+              <select value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={!editable}>
+                <option value="">Aucun</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{text(p.data.name)}</option>)}
+              </select>
+            </label>
+          )}
           {kind !== "credit_notes" && (
             <label>
               {kind === "quotes" ? "Valable jusqu'au" : "Échéance"}
@@ -352,9 +391,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                 <tr key={i}>
                   <td><input aria-label="Désignation" list="articles-list" value={l.label} onChange={(e) => pickArticle(i, e.target.value)} disabled={!editable} /></td>
                   <td className="num"><input aria-label="Quantité" type="number" min="0" step="any" value={l.qty} onChange={(e) => update(i, { qty: Number(e.target.value) })} disabled={!editable} /></td>
-                  <td className="num"><input aria-label="Prix unitaire" type="number" min="0" step="1" value={l.unitPrice} onChange={(e) => update(i, { unitPrice: Number(e.target.value) })} disabled={!editable} /></td>
+                  <td className="num"><input aria-label="Prix unitaire" type="number" min="0" step={decimals ? "0.01" : "1"} value={l.unitPrice} onChange={(e) => update(i, { unitPrice: Number(e.target.value) })} disabled={!editable} /></td>
                   <td className="num"><input aria-label="TVA" type="number" min="0" step="any" value={l.vatRate} onChange={(e) => update(i, { vatRate: Number(e.target.value) })} disabled={!editable} /></td>
-                  <td className="right mono">{formatXaf(Math.round(l.qty * l.unitPrice))}</td>
+                  <td className="right mono">{fm(lineNet(l, decimals))}</td>
                   {editable && (
                     <td><button className="ghost small" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} aria-label="Supprimer la ligne">✕</button></td>
                   )}
@@ -371,14 +410,15 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
             <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={!editable} />
           </label>
           <dl className="totals">
-            <dt>Total HT</dt><dd className="mono">{formatXaf(totals.net)}</dd>
-            <dt>TVA</dt><dd className="mono">{formatXaf(totals.vat)}</dd>
-            <dt className="strong">Total TTC</dt><dd className="mono strong" data-testid="total-ttc">{formatXaf(totals.gross)}</dd>
+            <dt>Total HT</dt><dd className="mono">{fm(totals.net)}</dd>
+            <dt>TVA</dt><dd className="mono">{fm(totals.vat)}</dd>
+            <dt className="strong">Total TTC</dt><dd className="mono strong" data-testid="total-ttc">{fm(totals.gross)}</dd>
+            {currency !== "XAF" && (<><dt>Contre-valeur</dt><dd className="mono muted">{formatMoney(Math.round(totals.gross * rate), "XAF")}</dd></>)}
             {situation && situation.status !== "draft" && (
               <>
-                {situation.paid > 0 && (<><dt>Encaissé</dt><dd className="mono">{formatXaf(situation.paid)}</dd></>)}
-                {situation.credited > 0 && (<><dt>Avoirs</dt><dd className="mono">{formatXaf(situation.credited)}</dd></>)}
-                <dt className="strong">Reste dû</dt><dd className="mono strong" data-testid="due">{formatXaf(situation.due)}</dd>
+                {situation.paid > 0 && (<><dt>Encaissé</dt><dd className="mono">{fm(situation.paid)}</dd></>)}
+                {situation.credited > 0 && (<><dt>Avoirs</dt><dd className="mono">{fm(situation.credited)}</dd></>)}
+                <dt className="strong">Reste dû</dt><dd className="mono strong" data-testid="due">{fm(situation.due)}</dd>
               </>
             )}
           </dl>
@@ -433,19 +473,27 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
   const [date, setDate] = useState(today());
   const [reference, setReference] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const currency = situation.currency;
+  const fm = (n: number) => formatMoney(n, currency);
+  const fixed = !!CURRENCIES[currency]?.fixedRate;
+  const [rate, setRate] = useState<number>(() => rateFor(currency, settings.rates as Record<string, number> | undefined));
 
   async function add() {
     setError(null);
     const closed = text(settings.closed_until);
     if (closed && date <= closed) return setError(`Période clôturée jusqu'au ${formatDate(closed)} : choisissez une date ultérieure.`);
-    const value = Math.round(Number((amount || String(situation.due)).replace(/\s/g, "")));
+    const d = decimalsOf(currency);
+    const typed = Number((amount || String(situation.due)).replace(/\s/g, "").replace(",", "."));
+    const value = Math.round(typed * 10 ** d) / 10 ** d;
     if (!Number.isFinite(value) || value <= 0) return setError("Montant invalide.");
-    if (value > situation.due && !confirm(`Le montant dépasse le reste dû (${formatXaf(situation.due)}). Enregistrer quand même ?`)) return;
+    if (value > situation.due && !confirm(`Le montant dépasse le reste dû (${fm(situation.due)}). Enregistrer quand même ?`)) return;
     await db.write("payments", db.newId("pay"), {
       invoice_id: invoice.id,
       client_id: invoice.data.client_id,
       date,
       amount: value,
+      currency,
+      rate: currency === "XAF" ? 1 : rate,
       method,
       reference: reference.trim(),
       created_by: session.user.id,
@@ -455,7 +503,7 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
   }
 
   async function cancel(p: SyncRecord) {
-    if (!confirm(`Annuler l'encaissement de ${formatXaf(Number(p.data.amount))} ?`)) return;
+    if (!confirm(`Annuler l'encaissement de ${fm(Number(p.data.amount))} ?`)) return;
     await db.remove("payments", p.id);
   }
 
@@ -472,7 +520,7 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
                 <td>{formatDate(p.data.date)}</td>
                 <td>{PAYMENT_METHODS[text(p.data.method)] ?? text(p.data.method)}</td>
                 <td className="muted">{text(p.data.reference)}</td>
-                <td className="right mono">{formatXaf(Number(p.data.amount))}</td>
+                <td className="right mono">{fm(Number(p.data.amount))}</td>
                 <td className="right"><button className="ghost small" onClick={() => cancel(p)}>Annuler</button></td>
               </tr>
             ))}
@@ -489,6 +537,9 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
             </select>
           </label>
           <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+          {currency !== "XAF" && (
+            <label>Taux du jour<input type="number" step="any" min="0" value={rate} disabled={fixed} onChange={(e) => setRate(Number(e.target.value))} /></label>
+          )}
           <label>Référence<input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="n° de transaction, chèque…" /></label>
           <button className="primary" onClick={add}>Enregistrer l'encaissement</button>
         </div>
@@ -501,7 +552,7 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
           {credits.map((c) => (
             <li key={c.id}>
               <button className="link" onClick={() => go("credit_notes", c.id)}>{text(c.data.number) || "Brouillon d'avoir"}</button>
-              {" · "}{formatXaf(totalsOf(c).gross)}{c.data.status !== "validated" && " (non validé)"}
+              {" · "}{fm(totalsOf(c).gross)}{c.data.status !== "validated" && " (non validé)"}
             </li>
           ))}
         </ul>
@@ -512,7 +563,9 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
 }
 
 /** Partage par WhatsApp ou e-mail : le message résume le document, le PDF se joint depuis l'impression. */
-function ShareButtons({ kind, record, client, gross, due }: { kind: DocTable; record: SyncRecord; client: SyncRecord | null; gross: number; due?: number }) {
+function ShareButtons({ kind, record, client, gross, due, currency }: {
+  kind: DocTable; record: SyncRecord; client: SyncRecord | null; gross: number; due?: number; currency: string;
+}) {
   const { db } = useApp();
   const settings = useSettings();
   const company = text(settings.name);
@@ -520,10 +573,10 @@ function ShareButtons({ kind, record, client, gross, due }: { kind: DocTable; re
   const what = kind === "quotes" ? "notre devis" : kind === "credit_notes" ? "notre avoir" : "notre facture";
   const lines = [
     `Bonjour${client ? ` ${text(client.data.name)}` : ""},`,
-    `Veuillez trouver ${what} ${number} d'un montant de ${formatXaf(gross)}.`,
+    `Veuillez trouver ${what} ${number} d'un montant de ${formatMoney(gross, currency)}.`,
   ];
   if (kind === "invoices" && due !== undefined && due > 0) {
-    lines.push(`Reste à régler : ${formatXaf(due)}${record.data.due_date ? `, échéance le ${formatDate(record.data.due_date)}` : ""}.`);
+    lines.push(`Reste à régler : ${formatMoney(due, currency)}${record.data.due_date ? `, échéance le ${formatDate(record.data.due_date)}` : ""}.`);
   }
   if (kind === "quotes" && record.data.valid_until) lines.push(`Offre valable jusqu'au ${formatDate(record.data.valid_until)}.`);
   lines.push("Cordialement,", company);

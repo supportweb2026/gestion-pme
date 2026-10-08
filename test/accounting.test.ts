@@ -103,3 +103,32 @@ test("Export CSV : en-tête FEC, une ligne par mouvement", () => {
   assert.equal(csv.length, 1 + entries.reduce((n, e) => n + e.lines.length, 0));
   assert.ok(csv.some((l) => l.includes(";411;Clients;cli-1;Total Gabon;")));
 });
+
+import { amountInWordsWithCurrency, formatMoney, rateFor } from "../src/shared/currency.ts";
+
+test("Devises : format, parités fixes, montant en lettres", () => {
+  assert.equal(formatMoney(1250.5, "EUR"), "1 250,50 €");
+  assert.equal(formatMoney(1250000, "XAF"), "1 250 000 FCFA");
+  assert.equal(rateFor("EUR", { EUR: 700 }), 655.957, "la parité euro est fixe");
+  assert.equal(rateFor("USD", { USD: 610 }), 610);
+  assert.equal(amountInWordsWithCurrency(1200.5, "EUR"), "mille deux cents euros et cinquante centimes");
+  assert.equal(amountInWordsWithCurrency(1, "USD"), "un dollar");
+});
+
+test("Facture en dollars : conversion en FCFA, écart de change à l'encaissement", () => {
+  const usd: LedgerInput = {
+    ...input,
+    invoices: [{ id: "fa-usd", data: { status: "validated", number: "FA-2026-00002", date: "2026-10-01", client_id: "cli-1", currency: "USD", rate: 600, lines: [{ label: "Conseil", qty: 1, unitPrice: 1000, vatRate: 0 }] } }],
+    credit_notes: [],
+    payments: [{ id: "pay-usd", data: { invoice_id: "fa-usd", client_id: "cli-1", date: "2026-10-20", amount: 1000, rate: 610, method: "transfer" } }],
+    expenses: [], journal_entries: [],
+  };
+  const es = generateEntries(usd);
+  for (const e of es) assert.ok(isBalanced(e.lines), e.id);
+  const inv = Object.fromEntries(es.find((e) => e.id === "invoices/fa-usd")!.lines.map((l) => [l.account, l.debit - l.credit]));
+  assert.deepEqual(inv, { "411": 600000, "706": -600000 });
+  const pay = Object.fromEntries(es.find((e) => e.id === "payments/pay-usd")!.lines.map((l) => [l.account, l.debit - l.credit]));
+  assert.deepEqual(pay, { "521": 610000, "411": -600000, "776": -10000 });
+  const rows = trialBalance(es, ...Y);
+  assert.equal(rows.find((r) => r.account === "411")!.balance, 0, "créance soldée");
+});

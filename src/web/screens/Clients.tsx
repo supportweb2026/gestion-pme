@@ -37,7 +37,8 @@ export function Clients() {
     const m = new Map<string, number>();
     for (const inv of invoices) {
       const id = text(inv.data.client_id);
-      m.set(id, (m.get(id) ?? 0) + (sit.get(inv.id)?.due ?? 0));
+      const st = sit.get(inv.id);
+      m.set(id, (m.get(id) ?? 0) + Math.round((st?.due ?? 0) * (st?.rate ?? 1)));
     }
     return m;
   }, [invoices, payments, credits]);

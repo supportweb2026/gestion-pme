@@ -255,3 +255,44 @@ tbody.entry:hover { background: var(--bg); }
 .notice-fix { margin-bottom: 12px; }
 p.error.wide { grid-column: 1 / -1; }
 .toolbar select { width: auto; max-width: 100%; }
+
+/* ---- Lot 3 : projets ---- */
+.danger-text { color: var(--danger); }
+.warn-text { color: var(--warn); }
+.project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.project-card { text-align: left; display: flex; flex-direction: column; gap: 8px; cursor: pointer; font: inherit; color: inherit; }
+.project-card:hover { border-color: var(--accent); }
+.project-card-head { display: flex; justify-content: space-between; gap: 8px; align-items: start; }
+.mini-stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin: 0; }
+.mini-stats dt { font-size: 0.75rem; color: var(--ink-soft); }
+.mini-stats dd { margin: 0; font-variant-numeric: tabular-nums; font-size: 0.9rem; font-weight: 600; }
+.progress { display: flex; flex-direction: column; gap: 4px; }
+.progress-bar { height: 6px; border-radius: 3px; background: var(--line); overflow: hidden; }
+.progress-bar span { display: block; height: 100%; background: var(--accent); border-radius: 3px; }
+
+.kanban { display: grid; grid-template-columns: repeat(4, minmax(200px, 1fr)); gap: 12px; overflow-x: auto; padding-bottom: 8px; }
+.kanban-col { background: var(--bg); border: 1px solid var(--line); border-radius: var(--radius); padding: 8px; min-height: 160px; display: flex; flex-direction: column; gap: 8px; }
+.kanban-col.over { border-color: var(--accent); background: var(--accent-soft); }
+.kanban-head { display: flex; justify-content: space-between; font-weight: 600; font-size: 0.9rem; padding: 4px 4px 0; }
+.task-card { background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; cursor: grab; }
+.task-title { border: none; background: none; padding: 0; text-align: left; font-weight: 500; width: 100%; }
+.task-meta { display: flex; flex-wrap: wrap; gap: 8px; font-size: 0.8rem; color: var(--ink-soft); margin-top: 6px; }
+.task-move { display: flex; justify-content: flex-end; gap: 4px; margin-top: 4px; }
+.task-form { display: flex; flex-direction: column; gap: 6px; }
+.task-form .form-actions { margin-top: 4px; }
+
+.gantt { padding: 12px; overflow-x: auto; }
+.gantt-row { display: grid; grid-template-columns: 180px 1fr; align-items: center; min-height: 30px; min-width: 560px; }
+.gantt-label { font-size: 0.85rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; padding-right: 8px; }
+.gantt-track { position: relative; height: 30px; border-bottom: 1px solid var(--line); }
+.gantt-axis .gantt-track { border-bottom: 1px solid var(--ink-soft); height: 22px; }
+.gantt-month { position: absolute; top: 2px; font-size: 0.75rem; color: var(--ink-soft); padding-left: 4px; border-left: 1px solid var(--line); }
+.gantt-grid { position: absolute; top: 0; bottom: 0; border-left: 1px solid var(--line); }
+.gantt-today { position: absolute; top: 0; bottom: 0; border-left: 2px solid var(--series-2); z-index: 1; }
+.gantt-bar { position: absolute; top: 8px; height: 14px; border-radius: 4px; background: var(--ink-soft); opacity: 0.55; }
+.gantt-bar.doing, .gantt-bar.review, .swatch.gl-doing { background: var(--series-1); opacity: 1; }
+.gantt-bar.done, .swatch.gl-done { background: var(--accent); opacity: 1; }
+.gantt-bar.late, .swatch.gl-late { background: var(--danger); opacity: 1; }
+.swatch.gl-todo { background: var(--ink-soft); opacity: 0.55; }
+.gantt-legend { margin-top: 10px; }
+@media (max-width: 640px) { .kanban { grid-template-columns: repeat(4, 78vw); } }

@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { formatDate, text, today, useApp, useSyncStatus, useTable } from "../context.ts";
 import { formatXaf } from "../../shared/invoice.ts";
-import { invoiceSituations, quoteStatus, totalsOf } from "../ledger.ts";
+import { invoiceSituations, netXafOf, quoteStatus } from "../ledger.ts";
 
 const MONTHS = ["janv.", "févr.", "mars", "avr.", "mai", "juin", "juil.", "août", "sept.", "oct.", "nov.", "déc."];
 
@@ -44,7 +44,7 @@ export function Dashboard() {
     for (const inv of invoices) {
       if (inv.data.status !== "validated") continue;
       const m = text(inv.data.date).slice(0, 7);
-      const net = totalsOf(inv).net;
+      const net = netXafOf(inv);
       if (revenue.has(m)) {
         revenue.set(m, revenue.get(m)! + net);
         byClient.set(text(inv.data.client_id), (byClient.get(text(inv.data.client_id)) ?? 0) + net);
@@ -53,7 +53,7 @@ export function Dashboard() {
     for (const c of credits) {
       if (c.data.status !== "validated") continue;
       const m = text(c.data.date).slice(0, 7);
-      const net = totalsOf(c).net;
+      const net = netXafOf(c);
       if (revenue.has(m)) {
         revenue.set(m, revenue.get(m)! - net);
         byClient.set(text(c.data.client_id), (byClient.get(text(c.data.client_id)) ?? 0) - net);
@@ -72,13 +72,16 @@ export function Dashboard() {
     for (const inv of invoices) {
       const s = sit.get(inv.id);
       if (!s || s.status === "draft") continue;
-      due += s.due;
+      // Les factures en devise sont ramenées en francs CFA au taux du document.
+      const dueXaf = Math.round(s.due * s.rate);
+      due += dueXaf;
       if (s.status === "overdue") {
-        overdue += s.due;
-        late.push({ id: inv.id, number: text(inv.data.number), client: text(inv.data.client_id), due: s.due, date: text(inv.data.due_date) });
+        overdue += dueXaf;
+        late.push({ id: inv.id, number: text(inv.data.number), client: text(inv.data.client_id), due: dueXaf, date: text(inv.data.due_date) });
       }
     }
-    const collected = payments.filter((p) => text(p.data.date).startsWith(month)).reduce((n, p) => n + Number(p.data.amount ?? 0), 0);
+    const collected = payments.filter((p) => text(p.data.date).startsWith(month))
+      .reduce((n, p) => n + Math.round(Number(p.data.amount ?? 0) * (Number(p.data.rate) || 1)), 0);
     const openQuotes = quotes.filter((q) => quoteStatus(q) === "sent" || quoteStatus(q) === "accepted");
     const drafts = invoices.filter((i) => i.data.status !== "validated").length;
 
@@ -89,7 +92,7 @@ export function Dashboard() {
       revenueMonth: revenue.get(month) ?? 0,
       spendingMonth: spending.get(month) ?? 0,
       openQuotes: openQuotes.length,
-      openQuotesAmount: openQuotes.reduce((n, q) => n + totalsOf(q).net, 0),
+      openQuotesAmount: openQuotes.reduce((n, q) => n + netXafOf(q), 0),
     };
   }, [invoices, payments, credits, expenses, quotes]);
 

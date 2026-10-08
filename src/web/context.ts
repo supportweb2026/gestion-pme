@@ -58,7 +58,7 @@ export function useSyncStatus(): SyncStatus {
 
 export type Tab =
   | "dashboard" | "quotes" | "invoices" | "credit_notes" | "expenses"
-  | "clients" | "articles" | "accounting" | "settings";
+  | "clients" | "articles" | "projects" | "accounting" | "settings";
 
 export const TAB_LABELS: Record<Tab, string> = {
   dashboard: "Tableau de bord",
@@ -68,19 +68,20 @@ export const TAB_LABELS: Record<Tab, string> = {
   expenses: "Dépenses",
   clients: "Clients",
   articles: "Articles",
+  projects: "Projets",
   accounting: "Comptabilité",
   settings: "Réglages",
 };
 
 /** Écrans visibles selon le rôle (les droits sont aussi vérifiés côté serveur au fil des lots). */
-const ALL: Tab[] = ["dashboard", "quotes", "invoices", "credit_notes", "expenses", "clients", "articles", "accounting", "settings"];
+const ALL: Tab[] = ["dashboard", "quotes", "invoices", "credit_notes", "projects", "expenses", "clients", "articles", "accounting", "settings"];
 export const TABS_BY_ROLE: Record<string, Tab[]> = {
   admin: ALL,
   director: ALL,
-  accountant: ["dashboard", "accounting", "invoices", "credit_notes", "quotes", "expenses", "clients", "articles"],
-  sales: ["dashboard", "quotes", "invoices", "clients", "articles", "expenses"],
-  project_manager: ["dashboard", "quotes", "invoices", "expenses", "clients"],
-  employee: ["expenses"],
+  accountant: ["dashboard", "accounting", "invoices", "credit_notes", "quotes", "projects", "expenses", "clients", "articles"],
+  sales: ["dashboard", "quotes", "invoices", "projects", "clients", "articles", "expenses"],
+  project_manager: ["dashboard", "projects", "quotes", "invoices", "expenses", "clients"],
+  employee: ["projects", "expenses"],
 };
 
 export const can = {
@@ -88,6 +89,7 @@ export const can = {
   manageCompany: (role: string) => ["admin", "director"].includes(role),
   manageUsers: (role: string) => role === "admin",
   keepBooks: (role: string) => ["admin", "accountant"].includes(role),
+  manageProjects: (role: string) => ["admin", "director", "accountant", "sales", "project_manager"].includes(role),
 };
 
 export const ROLE_LABELS: Record<string, string> = {

@@ -6,7 +6,8 @@
  * l'appareil. Une seule source de vérité, aucune double saisie, et les états
  * restent disponibles hors ligne. Seules les opérations diverses (OD) sont saisies.
  */
-import type { InvoiceLine } from "./invoice.ts";
+import { lineNet, lineVat, type InvoiceLine } from "./invoice.ts";
+import { decimalsOf, toXaf } from "./currency.ts";
 
 /** Ligne minimale d'une table synchronisée (même forme que SyncRecord). */
 export interface Rec {
@@ -61,10 +62,12 @@ export const CHART: Record<string, string> = {
   "661": "Rémunérations directes versées au personnel",
   "664": "Charges sociales",
   "671": "Intérêts des emprunts",
+  "676": "Pertes de change",
   "701": "Ventes de marchandises",
   "706": "Services vendus",
   "707": "Produits accessoires",
   "758": "Produits divers",
+  "776": "Gains de change",
 };
 
 export function accountLabel(account: string): string {
@@ -136,17 +139,30 @@ export interface Entry {
 const str = (v: unknown) => (v === undefined || v === null ? "" : String(v));
 const num = (v: unknown) => Number(v ?? 0) || 0;
 
-/** Montants HT et TVA par compte de produit, arrondis ligne par ligne comme sur la facture. */
-function salesSplit(lines: InvoiceLine[], productIds: Set<string>) {
-  const byAccount = new Map<string, number>();
-  let vat = 0;
+/** Devise et taux d'un document (taux : 1 unité = n XAF). */
+export function docCurrency(r: Rec): { currency: string; rate: number; decimals: number } {
+  const currency = str(r.data.currency) || "XAF";
+  const rate = num(r.data.rate) || 1;
+  return { currency, rate: currency === "XAF" ? 1 : rate, decimals: decimalsOf(currency) };
+}
+
+/**
+ * Montants HT par compte de produit et TVA, en francs CFA. Chaque compte est
+ * converti puis arrondi ; le total client est la somme des parts, l'écriture
+ * reste donc équilibrée quelle que soit la devise.
+ */
+function salesSplit(r: Rec, productIds: Set<string>) {
+  const { rate, decimals } = docCurrency(r);
+  const lines = (r.data.lines as InvoiceLine[]) ?? [];
+  const inCurrency = new Map<string, number>();
+  let vatCurrency = 0;
   for (const l of lines) {
-    const net = Math.round(l.qty * l.unitPrice);
     const account = l.articleId && productIds.has(l.articleId) ? "701" : "706";
-    byAccount.set(account, (byAccount.get(account) ?? 0) + net);
-    vat += Math.round((net * l.vatRate) / 100);
+    inCurrency.set(account, (inCurrency.get(account) ?? 0) + lineNet(l, decimals));
+    vatCurrency += lineVat(l, decimals);
   }
-  return { byAccount, vat };
+  const byAccount = new Map([...inCurrency].map(([a, v]) => [a, toXaf(v, rate)]));
+  return { byAccount, vat: toXaf(vatCurrency, rate) };
 }
 
 export interface LedgerInput {
@@ -168,8 +184,7 @@ export function generateEntries(input: LedgerInput): Entry[] {
 
   const sale = (r: Rec, tbl: "invoices" | "credit_notes", sign: 1 | -1) => {
     if (r.data.status !== "validated") return;
-    const lines = (r.data.lines as InvoiceLine[]) ?? [];
-    const { byAccount, vat } = salesSplit(lines, products);
+    const { byAccount, vat } = salesSplit(r, products);
     const net = [...byAccount.values()].reduce((a, b) => a + b, 0);
     const gross = net + vat;
     if (gross === 0) return;
@@ -189,20 +204,26 @@ export function generateEntries(input: LedgerInput): Entry[] {
   input.credit_notes.forEach((r) => sale(r, "credit_notes", -1));
 
   for (const p of input.payments) {
-    const amount = Math.round(num(p.data.amount));
+    const amount = num(p.data.amount);
     if (amount <= 0) continue;
     const t = TREASURY[str(p.data.method)] ?? TREASURY.cash;
     const inv = invoiceById.get(str(p.data.invoice_id));
     const client = str(p.data.client_id || inv?.data.client_id);
     const ref = str(inv?.data.number);
     const label = `Règlement ${ref} ${clientName.get(client) ?? ""}`.trim();
-    entries.push({
-      id: `payments/${p.id}`, journal: t.journal, date: str(p.data.date), ref, label, source: { tbl: "payments", id: p.id },
-      lines: [
-        { account: t.account, label, debit: amount, credit: 0 },
-        { account: "411", aux: client, label, debit: 0, credit: amount },
-      ],
-    });
+    // En devise : la créance est soldée au taux de la facture, la trésorerie
+    // reçoit le montant au taux du jour ; la différence est un écart de change.
+    const invoiceRate = inv ? docCurrency(inv).rate : 1;
+    const paymentRate = num(p.data.rate) || invoiceRate;
+    const settled = toXaf(amount, invoiceRate);
+    const received = toXaf(amount, paymentRate);
+    const lines: EntryLine[] = [
+      { account: t.account, label, debit: received, credit: 0 },
+      { account: "411", aux: client, label, debit: 0, credit: settled },
+    ];
+    if (received > settled) lines.push({ account: "776", label: `Gain de change ${ref}`, debit: 0, credit: received - settled });
+    if (received < settled) lines.push({ account: "676", label: `Perte de change ${ref}`, debit: settled - received, credit: 0 });
+    entries.push({ id: `payments/${p.id}`, journal: t.journal, date: str(p.data.date), ref, label, source: { tbl: "payments", id: p.id }, lines });
   }
 
   for (const e of input.expenses) {
@@ -391,11 +412,11 @@ export function vatReturn(entries: Entry[], from: string, to: string, invoices: 
   const bases = new Map<number, { base: number; vat: number }>();
   const add = (r: Rec, sign: 1 | -1) => {
     if (r.data.status !== "validated" || !inPeriod(str(r.data.date), from, to)) return;
+    const { rate, decimals } = docCurrency(r);
     for (const l of (r.data.lines as InvoiceLine[]) ?? []) {
-      const net = Math.round(l.qty * l.unitPrice);
       const b = bases.get(l.vatRate) ?? { base: 0, vat: 0 };
-      b.base += sign * net;
-      b.vat += sign * Math.round((net * l.vatRate) / 100);
+      b.base += sign * toXaf(lineNet(l, decimals), rate);
+      b.vat += sign * toXaf(lineVat(l, decimals), rate);
       bases.set(l.vatRate, b);
     }
   };

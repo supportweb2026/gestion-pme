@@ -20,20 +20,24 @@ export interface InvoiceTotals {
 
 export const DEFAULT_VAT_RATE = 18;
 
-/** Arrondi commercial à l'unité, appliqué ligne par ligne. */
-function round(n: number): number {
-  return Math.round(n + Number.EPSILON);
+/** Arrondi commercial ligne par ligne, à l'unité (FCFA) ou au centime (euro, dollar). */
+export function roundAmount(n: number, decimals = 0): number {
+  const f = 10 ** decimals;
+  return Math.round((n + Number.EPSILON) * f) / f;
 }
 
-export function computeTotals(lines: InvoiceLine[]): InvoiceTotals {
+/** Montant HT d'une ligne, arrondi à la précision de la devise. */
+export const lineNet = (l: InvoiceLine, decimals = 0) => roundAmount(l.qty * l.unitPrice, decimals);
+export const lineVat = (l: InvoiceLine, decimals = 0) => roundAmount((lineNet(l, decimals) * l.vatRate) / 100, decimals);
+
+export function computeTotals(lines: InvoiceLine[], decimals = 0): InvoiceTotals {
   let net = 0;
   let vat = 0;
   for (const l of lines) {
-    const lineNet = round(l.qty * l.unitPrice);
-    net += lineNet;
-    vat += round((lineNet * l.vatRate) / 100);
+    net += lineNet(l, decimals);
+    vat += lineVat(l, decimals);
   }
-  return { net, vat, gross: net + vat };
+  return { net: roundAmount(net, decimals), vat: roundAmount(vat, decimals), gross: roundAmount(net + vat, decimals) };
 }
 
 /** "1 250 000 FCFA" : espace comme séparateur de milliers, sans décimales. */

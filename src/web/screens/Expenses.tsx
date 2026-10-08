@@ -15,6 +15,7 @@ const STATUS: Record<string, { label: string; tone: string }> = {
 export function Expenses() {
   const { db, session } = useApp();
   const all = useTable("expenses");
+  const projects = useTable("projects");
   const [month, setMonth] = useState(today().slice(0, 7));
   const [editing, setEditing] = useState<SyncRecord | "new" | null>(null);
   const approver = can.approveExpenses(session.user.role);
@@ -49,6 +50,7 @@ export function Expenses() {
       supplier: f.supplier.trim(),
       description: f.description.trim(),
       method: f.method,
+      project_id: f.project_id ?? "",
     };
     if (editing === "new") {
       Object.assign(values, {
@@ -97,6 +99,15 @@ export function Expenses() {
               {Object.entries(PAYMENT_METHODS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
             </select>
           </label>
+          {projects.length > 0 && (
+            <label>
+              Projet
+              <select name="project_id" defaultValue={v("project_id")}>
+                <option value="">Aucun</option>
+                {projects.map((p) => <option key={p.id} value={p.id}>{text(p.data.name)}</option>)}
+              </select>
+            </label>
+          )}
           <label>
             TVA récupérable
             <select name="vat_rate" defaultValue={v("vat_rate", "0")}>
