@@ -4,7 +4,17 @@ Logiciel de gestion pour PME (zone OHADA) : facturation, dépenses, comptabilit�
 projets et tableau de bord, **utilisable sans connexion** et synchronisé entre appareils.
 Hébergement entièrement dans l'offre gratuite de Cloudflare.
 
-État : **lot 3** — projets et multi-devises :
+État : **lot 4** — finition et sécurité :
+
+- chaque appareil ne reçoit que les données de son rôle (filtrage par le serveur) ;
+  si le rôle change, la copie locale est rechargée ;
+- code PIN facultatif : copie locale chiffrée (AES-GCM, clé protégée par le PIN),
+  verrouillage après inactivité, déverrouillage hors ligne, « code oublié » = effacement local ;
+- justificatifs de dépenses (photo compressée ou PDF) : pris hors ligne, envoyés ensuite,
+  stockés dans une seconde base D1 gratuite (`gestion-pme-fichiers`), consultables partout ;
+- import CSV des clients et articles (export Excel), modèles téléchargeables, doublons ignorés.
+
+Lot 3 — projets et multi-devises :
 
 - projets liés aux clients : budget, taux de facturation et coût horaire interne ;
 - tâches en Kanban (glisser-déposer ou flèches sur mobile), planning de type Gantt ;
@@ -90,9 +100,10 @@ Ouvrez l'adresse : le premier écran crée l'entreprise et le compte administrat
 
 ## Limites connues
 
-- Base locale non chiffrée.
-- Le serveur vérifie les droits d'écriture par rôle, mais envoie encore toutes les données
-  de l'entreprise à chaque appareil : le filtrage des lectures reste à faire.
+- Justificatifs : 1,4 Mo maximum par fichier ; la base de fichiers gratuite fait 500 Mo
+  (environ 2 000 à 3 000 photos). Au-delà : ouvrir une autre base, ou activer R2 (10 Go gratuits,
+  carte bancaire demandée par Cloudflare à l'activation).
+
 - TVA calculée au régime des débits ; régime, taxes annexes et formulaire officiel à
   faire valider par le comptable. Pas encore d'amortissements ni de paie automatisés.
 - Un changement de rôle prend effet à la reconnexion de la personne.

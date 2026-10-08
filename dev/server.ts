@@ -14,7 +14,7 @@ const dist = join(root, "dist");
 const port = Number(process.env.PORT ?? 8787);
 const dbPath = process.env.DB_PATH ?? join(root, "dev", "data", "local.sqlite");
 if (dbPath !== ":memory:") mkdirSync(join(dbPath, ".."), { recursive: true });
-const env = { DB: createLocalD1(dbPath, join(root, "migrations")), JWT_SECRET: "dev-local-secret-0123456789-0123456789" };
+const env = { DB: createLocalD1(dbPath, join(root, "migrations")), FILES: createLocalD1(":memory:"), JWT_SECRET: "dev-local-secret-0123456789-0123456789" };
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",

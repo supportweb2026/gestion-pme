@@ -78,10 +78,10 @@ const ALL: Tab[] = ["dashboard", "quotes", "invoices", "credit_notes", "projects
 export const TABS_BY_ROLE: Record<string, Tab[]> = {
   admin: ALL,
   director: ALL,
-  accountant: ["dashboard", "accounting", "invoices", "credit_notes", "quotes", "projects", "expenses", "clients", "articles"],
-  sales: ["dashboard", "quotes", "invoices", "projects", "clients", "articles", "expenses"],
-  project_manager: ["dashboard", "projects", "quotes", "invoices", "expenses", "clients"],
-  employee: ["projects", "expenses"],
+  accountant: ["dashboard", "accounting", "invoices", "credit_notes", "quotes", "projects", "expenses", "clients", "articles", "settings"],
+  sales: ["dashboard", "quotes", "invoices", "projects", "clients", "articles", "expenses", "settings"],
+  project_manager: ["dashboard", "projects", "quotes", "invoices", "expenses", "clients", "settings"],
+  employee: ["projects", "expenses", "settings"],
 };
 
 export const can = {

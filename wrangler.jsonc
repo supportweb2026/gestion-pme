@@ -19,6 +19,12 @@
       "database_name": "gestion-pme",
       "database_id": "a8ccf93a-4610-4b36-aab6-6cbddc4dfdbd",
       "migrations_dir": "migrations"
+    },
+    {
+      // Justificatifs (photos de reçus) : base séparée, gratuite, sans carte bancaire.
+      "binding": "FILES",
+      "database_name": "gestion-pme-fichiers",
+      "database_id": "447cdfe8-ff18-432a-b2c2-bc0e91d7fccd"
     }
   ],
   "observability": { "enabled": true }

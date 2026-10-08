@@ -6,7 +6,7 @@ import { createLocalD1 } from "../dev/d1-local.ts";
 import { HlcClock } from "../src/shared/hlc.ts";
 import type { Change, SyncResponse } from "../src/shared/sync.ts";
 
-const env = { DB: createLocalD1(":memory:", join(import.meta.dirname, "..", "migrations")), JWT_SECRET: "test-secret-0123456789-0123456789-abc" };
+const env = { DB: createLocalD1(":memory:", join(import.meta.dirname, "..", "migrations")), FILES: createLocalD1(":memory:"), JWT_SECRET: "test-secret-0123456789-0123456789-abc" };
 
 async function call(path: string, body?: unknown, token?: string) {
   const res = await worker.fetch(
@@ -181,4 +181,57 @@ test("clôture : plus aucune modification datée dans une période clôturée", 
   // Déplacer une dépense ouverte vers la période clôturée est aussi refusé.
   const move = change(clockA, "expenses", "dep-open-1", { date: "2026-01-20" });
   assert.equal((await call("/api/sync", { changes: [move], since: 0 }, tokenA)).data.rejected.length, 1);
+});
+
+test("lecture : chaque rôle ne reçoit que ses données", async () => {
+  // Paul (commercial) et Léa (employée) ont été créés plus haut.
+  const sales = (await call("/api/login", { email: "paul@sodepsi.ga", password: "commercial2", deviceId: "device-eeee-0005" })).data.token;
+  const empLogin = (await call("/api/login", { email: "lea@sodepsi.ga", password: "employee12", deviceId: "device-ffff-0006" })).data;
+  const emp = empLogin.token;
+  const own = change(new HlcClock("device-ffff-0006"), "expenses", "dep-lea-0001", { date: "2026-10-03", amount: 3000, status: "pending", created_by: empLogin.user.id });
+  assert.equal((await call("/api/sync", { changes: [own], since: 0 }, emp)).data.accepted.length, 1);
+  const od = change(clockA, "journal_entries", "od-lecture-1", { date: "2026-10-02", label: "Capital", lines: [] });
+  const adminExpense = change(clockA, "expenses", "dep-admin-1", { date: "2026-10-02", amount: 7000, status: "approved", created_by: "admin-x" });
+  await call("/api/sync", { changes: [od, adminExpense], since: 0 }, tokenA);
+
+  const pull = async (token: string) => {
+    const all: Change[] = [];
+    let since = 0;
+    for (;;) {
+      const r: SyncResponse = (await call("/api/sync", { changes: [], since }, token)).data;
+      all.push(...r.changes);
+      since = r.cursor;
+      if (!r.more) return { changes: all, role: r.role };
+    }
+  };
+  const s = await pull(sales);
+  assert.equal(s.role, "sales");
+  assert.ok(s.changes.some((c) => c.tbl === "clients"));
+  assert.ok(!s.changes.some((c) => c.tbl === "journal_entries"), "pas d'écritures comptables");
+  assert.ok(!s.changes.some((c) => c.row === "dep-admin-1"), "pas les dépenses des autres");
+
+  const e = await pull(emp);
+  const tables = new Set(e.changes.map((c) => c.tbl));
+  assert.ok(!tables.has("clients") && !tables.has("invoices") && !tables.has("journal_entries"));
+  // Ses propres modifications ne lui reviennent pas (même appareil) : on vérifie depuis un 2e appareil.
+  const emp2 = (await call("/api/login", { email: "lea@sodepsi.ga", password: "employee12", deviceId: "device-ffff-0007" })).data.token;
+  const e2 = await pull(emp2);
+  assert.ok(e2.changes.some((c) => c.row === "dep-lea-0001"), "sa propre dépense");
+  assert.ok(!e2.changes.some((c) => c.row === "dep-admin-1"));
+  assert.ok(tables.has("tasks"));
+});
+
+test("justificatifs : envoi idempotent, lecture limitée à l'entreprise", async () => {
+  const bytes = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 1, 2, 3, 4, 5]);
+  const put = (token: string, type = "image/jpeg") => worker.fetch(new Request("http://local/api/files/rcpt-00000001", {
+    method: "PUT", headers: { "content-type": type, authorization: `Bearer ${token}` }, body: bytes,
+  }), env);
+  assert.equal((await put(tokenA)).status, 201);
+  assert.equal((await put(tokenA)).status, 201, "renvoi sans erreur");
+  assert.equal((await put(tokenA, "text/html")).status, 415);
+  const get = await worker.fetch(new Request("http://local/api/files/rcpt-00000001", { headers: { authorization: `Bearer ${tokenB}` } }), env);
+  assert.equal(get.headers.get("content-type"), "image/jpeg");
+  assert.deepEqual(new Uint8Array(await get.arrayBuffer()), bytes);
+  const anon = await worker.fetch(new Request("http://local/api/files/rcpt-00000001"), env);
+  assert.equal(anon.status, 401);
 });

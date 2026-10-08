@@ -240,6 +240,64 @@ try {
   await B.page.getByRole("button", { name: "Enregistrer l'encaissement" }).click();
   await B.page.getByText(/Période clôturée jusqu'au/).waitFor();
 
+  step("Import CSV de clients (export Excel, point-virgule)");
+  await nav(A.page, "Clients");
+  await A.page.getByLabel("Fichier CSV à importer").setInputFiles({
+    name: "clients.csv", mimeType: "text/csv",
+    buffer: Buffer.from("Raison sociale;Ville;Téléphone\r\nTotal Gabon;Port-Gentil;\r\nAssala Energy;Port-Gentil;+241 01 00 00 01\r\nComilog;Moanda;\r\n"),
+  });
+  await A.page.getByText("1 déjà présent(s)").waitFor();
+  await A.page.getByRole("button", { name: "Importer 2" }).click();
+  await A.page.getByRole("cell", { name: "Comilog" }).waitFor();
+
+  step("Justificatif photographié, envoyé, puis consulté depuis l'autre appareil");
+  const next = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 2);
+  const nextIso = `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-02`;
+  await nav(A.page, "Dépenses");
+  await A.page.getByRole("button", { name: "Nouvelle dépense" }).click();
+  await A.page.getByLabel("Date").fill(nextIso);
+  await A.page.getByLabel("Montant TTC (FCFA)").fill("25000");
+  await A.page.getByLabel("Fournisseur").fill("Total Energies station");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64");
+  await A.page.getByLabel("Justificatif", { exact: true }).setInputFiles({ name: "recu.png", mimeType: "image/png", buffer: png });
+  await A.page.getByText(/Prêt · \d+ Ko/).waitFor();
+  await A.page.getByRole("button", { name: "Enregistrer" }).click();
+  await waitSynced(A.page);
+  await waitSynced(B.page);
+  await nav(B.page, "Dépenses");
+  await B.page.getByLabel("Mois").fill(nextIso.slice(0, 7));
+  await B.page.getByRole("button", { name: "Voir le justificatif" }).click();
+  await B.page.getByRole("img", { name: "Justificatif de dépense" }).waitFor();
+  await B.page.getByRole("button", { name: "Fermer" }).click();
+
+  step("Code PIN sur B : données chiffrées sur l'appareil, déverrouillage hors ligne");
+  await nav(B.page, "Réglages");
+  await B.page.getByLabel("Nouveau code PIN").fill("2468");
+  await B.page.getByLabel("Confirmer le code").fill("2468");
+  await B.page.getByRole("button", { name: "Activer le code PIN" }).click();
+  await B.page.getByText("Code PIN activé").waitFor();
+  const plain = await B.page.evaluate(async () => {
+    const db = await new Promise((res) => { const r = indexedDB.open("gestion-pme"); r.onsuccess = () => res(r.result); });
+    const all = await new Promise((res) => { const r = db.transaction("records").objectStore("records").getAll(); r.onsuccess = () => res(r.result); });
+    const session = await new Promise((res) => { const r = db.transaction("meta").objectStore("meta").get("session"); r.onsuccess = () => res(r.result); });
+    return { count: all.length, sealed: all.filter((x) => x.sealed).length, leak: JSON.stringify(all).includes("Total Gabon") || JSON.stringify(session).includes("token") };
+  });
+  assert.ok(plain.count > 0 && plain.sealed === plain.count, "toutes les lignes chiffrées");
+  assert.equal(plain.leak, false, "aucun nom de client ni jeton lisible");
+  await B.context.setOffline(true);
+  await B.page.reload();
+  await B.page.getByText("Appareil verrouillé").waitFor();
+  await B.page.getByLabel("Code PIN").fill("1111");
+  await B.page.getByRole("button", { name: "Déverrouiller" }).click();
+  await B.page.getByText("Code incorrect.").waitFor();
+  await B.page.getByLabel("Code PIN").fill("2468");
+  await B.page.getByRole("button", { name: "Déverrouiller" }).click();
+  await nav(B.page, "Factures");
+  await B.page.getByRole("cell", { name: `FA-${YEAR}-00051` }).waitFor();
+  await B.context.setOffline(false);
+  await waitSynced(B.page);
+  await shot(B.page, "b-apres-pin.png");
+
   assert.deepEqual(errors, [], "aucune erreur JavaScript dans les pages");
   console.log("\nOK : cycle de vente complet sur deux appareils, avec coupures, sans perte.");
 } catch (e) {

@@ -6,7 +6,7 @@
 import { MAX_PUSH, type SyncRequest, type SyncResponse } from "../../shared/sync.ts";
 import { formatInvoiceNumber } from "../../shared/invoice.ts";
 import type { LocalDb } from "./db.ts";
-import { api, ApiError } from "../api.ts";
+import { api, ApiError, uploadFile } from "../api.ts";
 
 export type SyncState = "idle" | "syncing" | "offline" | "error" | "auth";
 
@@ -108,6 +108,15 @@ export class SyncEngine {
         const since = (await this.db.getMeta<number>("cursor")) ?? 0;
         const body: SyncRequest = { changes: outbox, since };
         const res = await api<SyncResponse>("/api/sync", body);
+        const knownRole = await this.db.getMeta<string>("role");
+        if (knownRole !== res.role) {
+          // Premier passage, ou rôle modifié par l'administrateur : copie locale rechargée.
+          if (knownRole !== undefined || since > 0) {
+            await this.db.resetForRole(res.role);
+            continue;
+          }
+          await this.db.setMeta("role", res.role);
+        }
         await this.db.applySyncResult({
           acknowledged: [...res.accepted, ...res.rejected.map((r) => r.id)],
           serverRecords: res.rejected.map((r) => {
@@ -122,6 +131,7 @@ export class SyncEngine {
         if (!res.more && (remaining === 0 || outbox.length === 0)) break;
       }
       await this.ensureNumbers();
+      await this.uploadFiles();
       this.set({
         state: "idle",
         lastSync: new Date().toISOString(),
@@ -143,6 +153,22 @@ export class SyncEngine {
       if (this.again) {
         this.again = false;
         this.schedule();
+      }
+    }
+  }
+
+  /** Envoie les justificatifs pris hors ligne (après les données, plus légères). */
+  private async uploadFiles(): Promise<void> {
+    for (const id of await this.db.pendingFiles()) {
+      const blob = await this.db.getFile(id);
+      if (!blob) continue;
+      try {
+        await uploadFile(id, blob);
+        await this.db.markUploaded(id);
+      } catch (e) {
+        // Fichier refusé (format, taille) : on ne le renvoie plus ; erreur réseau : on réessaiera.
+        if (!(e instanceof ApiError) || e.status === 401) throw e;
+        if (e.status === 413 || e.status === 415) await this.db.markUploaded(id);
       }
     }
   }

@@ -1,3 +1,4 @@
+import { ImportCsv } from "../ImportCsv.tsx";
 import { useState, type FormEvent } from "react";
 import { normalize, text, useApp, useTable } from "../context.ts";
 import { DEFAULT_VAT_RATE, formatXaf } from "../../shared/invoice.ts";
@@ -40,7 +41,10 @@ export function Articles() {
     <section>
       <div className="section-head">
         <h2>Articles et services</h2>
-        <button className="primary" onClick={() => setEditing("new")}>Nouvel article</button>
+        <div className="actions">
+          <ImportCsv kind="articles" />
+          <button className="primary" onClick={() => setEditing("new")}>Nouvel article</button>
+        </div>
       </div>
 
       {editing && (

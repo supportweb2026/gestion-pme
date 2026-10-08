@@ -1,3 +1,4 @@
+import { ImportCsv } from "../ImportCsv.tsx";
 import { useMemo, useState, type FormEvent } from "react";
 import { normalize, text, useApp, useTable } from "../context.ts";
 import { formatXaf } from "../../shared/invoice.ts";
@@ -60,7 +61,10 @@ export function Clients() {
     <section>
       <div className="section-head">
         <h2>Clients</h2>
-        <button className="primary" onClick={() => setEditing("new")}>Nouveau client</button>
+        <div className="actions">
+          <ImportCsv kind="clients" />
+          <button className="primary" onClick={() => setEditing("new")}>Nouveau client</button>
+        </div>
       </div>
 
       {editing && (

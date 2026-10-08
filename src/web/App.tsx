@@ -14,6 +14,7 @@ import { Projects } from "./screens/Projects.tsx";
 
 type Boot =
   | { kind: "loading" }
+  | { kind: "locked"; db: LocalDb }
   | { kind: "auth"; db: LocalDb }
   | { kind: "ready"; db: LocalDb; session: Session };
 
@@ -22,17 +23,37 @@ export function App() {
 
   useEffect(() => {
     LocalDb.open().then(async (db) => {
-      const session = await db.getMeta<Session>("session");
-      if (session) {
-        setToken(session.token);
-        setBoot({ kind: "ready", db, session });
-      } else {
-        setBoot({ kind: "auth", db });
-      }
+      if (await db.isProtected()) setBoot({ kind: "locked", db });
+      else await afterUnlock(db);
     });
   }, []);
 
+  async function afterUnlock(db: LocalDb) {
+    const session = await db.getMeta<Session>("session");
+    if (session) {
+      setToken(session.token);
+      setBoot({ kind: "ready", db, session });
+    } else {
+      setBoot({ kind: "auth", db });
+    }
+  }
+
   if (boot.kind === "loading") return <div className="center muted">Ouverture…</div>;
+  if (boot.kind === "locked") {
+    return (
+      <PinScreen
+        onPin={async (pin) => {
+          if (!(await boot.db.unlock(pin))) return false;
+          await afterUnlock(boot.db);
+          return true;
+        }}
+        onForgot={async () => {
+          await boot.db.wipe();
+          setBoot({ kind: "auth", db: boot.db });
+        }}
+      />
+    );
+  }
   if (boot.kind === "auth") {
     return (
       <AuthScreen
@@ -56,6 +77,52 @@ export function App() {
         setBoot({ kind: "auth", db: boot.db });
       }}
     />
+  );
+}
+
+/** Écran de déverrouillage : le code PIN déchiffre la copie locale, sans réseau. */
+function PinScreen({ onPin, onForgot }: { onPin: (pin: string) => Promise<boolean>; onForgot: () => Promise<void> }) {
+  const [pin, setPin] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [attempts, setAttempts] = useState(0);
+
+  async function submit(e: FormEvent) {
+    e.preventDefault();
+    setBusy(true);
+    setError(null);
+    // Délai croissant après plusieurs erreurs, contre les essais en série.
+    if (attempts >= 3) await new Promise((r) => setTimeout(r, Math.min(30, 2 ** (attempts - 2)) * 1000));
+    const ok = await onPin(pin);
+    setBusy(false);
+    if (!ok) {
+      setAttempts((a) => a + 1);
+      setPin("");
+      setError("Code incorrect.");
+    }
+  }
+
+  async function forgot() {
+    if (!confirm("Effacer les données de cet appareil et vous reconnecter ? Vos données sur le serveur sont conservées ; seules les modifications pas encore synchronisées seraient perdues.")) return;
+    await onForgot();
+  }
+
+  return (
+    <div className="auth">
+      <form className="card auth-card" onSubmit={submit}>
+        <div className="brand"><span className="brand-mark">G</span><span>Gestion PME</span></div>
+        <h1>Appareil verrouillé</h1>
+        <p className="muted">Saisissez votre code PIN pour ouvrir l'application.</p>
+        <label>
+          Code PIN
+          <input type="password" inputMode="numeric" autoComplete="off" autoFocus required minLength={4} maxLength={12}
+            value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} />
+        </label>
+        {error && <p className="error" role="alert">{error}</p>}
+        <button className="primary" disabled={busy || pin.length < 4}>{busy ? "Vérification…" : "Déverrouiller"}</button>
+        <button type="button" className="link small" onClick={forgot}>Code oublié ?</button>
+      </form>
+    </div>
   );
 }
 
@@ -135,6 +202,28 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
     sync.start();
     return () => sync.stop();
   }, [sync]);
+
+  // Avec un code PIN : verrouillage après une période sans activité.
+  useEffect(() => {
+    let last = Date.now();
+    let minutes = 0;
+    let alive = true;
+    (async () => {
+      if (!(await db.isProtected())) return;
+      minutes = Number((await db.getMeta<number>("lock_minutes")) ?? 10);
+    })();
+    const touch = () => { last = Date.now(); };
+    const events = ["pointerdown", "keydown", "scroll"];
+    events.forEach((e) => window.addEventListener(e, touch, { passive: true }));
+    const timer = setInterval(() => {
+      if (alive && minutes > 0 && Date.now() - last > minutes * 60_000) location.reload();
+    }, 15_000);
+    return () => {
+      alive = false;
+      clearInterval(timer);
+      events.forEach((e) => window.removeEventListener(e, touch));
+    };
+  }, [db]);
 
   const go = (t: Tab, id?: string) => {
     setTab(t);

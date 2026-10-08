@@ -178,7 +178,33 @@ export interface SyncRequest {
   since: number;
 }
 
+/**
+ * Lecture : ce que le serveur envoie à un appareil selon le rôle de son utilisateur.
+ * `owner` = auteur de la ligne (created_by), pour les dépenses personnelles.
+ */
+const READABLE: Record<string, readonly string[] | "all"> = {
+  admin: "all",
+  director: "all",
+  accountant: "all",
+  project_manager: SYNC_TABLES.filter((t) => t !== "journal_entries"),
+  sales: SYNC_TABLES.filter((t) => t !== "journal_entries"),
+  employee: ["settings", "projects", "tasks", "time_entries", "expenses"],
+};
+const OWN_ONLY: Record<string, readonly string[]> = {
+  sales: ["expenses"],
+  employee: ["expenses"],
+};
+
+export function canRead(actor: Actor, tbl: string, owner: unknown): boolean {
+  const readable = READABLE[actor.role] ?? [];
+  if (readable !== "all" && !readable.includes(tbl)) return false;
+  if ((OWN_ONLY[actor.role] ?? []).includes(tbl)) return owner === actor.userId;
+  return true;
+}
+
 export interface SyncResponse {
+  /** Rôle pris en compte : s'il change, l'appareil repart de zéro. */
+  role: string;
   accepted: string[];
   rejected: { id: string; reason: string; record: SyncRecord | null }[];
   /** Modifications des autres appareils depuis le curseur. */

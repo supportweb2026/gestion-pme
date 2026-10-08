@@ -45,6 +45,7 @@ export function Settings() {
   return (
     <section>
       <div className="section-head"><h2>Réglages</h2></div>
+      <DeviceSecurity />
       {can.manageCompany(session.user.role) && <CompanySettings />}
       {can.manageCompany(session.user.role) && <CurrencySettings />}
       {can.manageUsers(session.user.role) && <Users />}
@@ -111,6 +112,87 @@ function CompanySettings() {
         <button className="primary">Enregistrer</button>
       </div>
     </form>
+  );
+}
+
+/** Code PIN de l'appareil : chiffre la copie locale et verrouille après inactivité. */
+function DeviceSecurity() {
+  const { db } = useApp();
+  const [protectedDevice, setProtected] = useState<boolean | null>(null);
+  const [pin, setPin] = useState("");
+  const [confirmPin, setConfirmPin] = useState("");
+  const [minutes, setMinutes] = useState(10);
+  const [message, setMessage] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    db.isProtected().then(setProtected);
+    db.getMeta<number>("lock_minutes").then((m) => m !== undefined && setMinutes(m));
+  }, [db]);
+
+  async function enable(e: FormEvent) {
+    e.preventDefault();
+    setMessage(null);
+    if (!/^\d{4,12}$/.test(pin)) return setMessage("Le code doit contenir 4 à 12 chiffres.");
+    if (pin !== confirmPin) return setMessage("Les deux codes ne correspondent pas.");
+    setBusy(true);
+    try {
+      await db.enablePin(pin);
+      await db.setMeta("lock_minutes", minutes);
+      setProtected(true);
+      setPin("");
+      setConfirmPin("");
+      setMessage("Code PIN activé : les données de cet appareil sont chiffrées.");
+    } catch (err) {
+      setMessage(err instanceof Error ? err.message : "Activation impossible.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disable() {
+    if (!confirm("Retirer le code PIN ? Les données de cet appareil ne seront plus chiffrées.")) return;
+    setBusy(true);
+    await db.disablePin();
+    setBusy(false);
+    setProtected(false);
+    setMessage("Code PIN retiré.");
+  }
+
+  return (
+    <div className="card section-card">
+      <h3>Sécurité de cet appareil</h3>
+      <p className="muted small">
+        Un code PIN chiffre toutes les données gardées sur cet appareil (factures, clients, justificatifs, session) et
+        verrouille l'application après une période d'inactivité. Il fonctionne hors ligne et ne quitte jamais l'appareil.
+        Recommandé sur les téléphones et les ordinateurs partagés.
+      </p>
+      {protectedDevice === null ? null : protectedDevice ? (
+        <div className="form-actions">
+          <label className="inline">
+            Verrouiller après
+            <select value={minutes} onChange={async (e) => { const m = Number(e.target.value); setMinutes(m); await db.setMeta("lock_minutes", m); }}>
+              {[2, 5, 10, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
+            </select>
+          </label>
+          <button className="ghost" onClick={() => location.reload()}>Verrouiller maintenant</button>
+          <button className="ghost danger" onClick={disable} disabled={busy}>Retirer le code PIN</button>
+        </div>
+      ) : (
+        <form className="form-grid" onSubmit={enable}>
+          <label>Nouveau code PIN<input type="password" inputMode="numeric" autoComplete="new-password" value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))} maxLength={12} /></label>
+          <label>Confirmer le code<input type="password" inputMode="numeric" autoComplete="new-password" value={confirmPin} onChange={(e) => setConfirmPin(e.target.value.replace(/\D/g, ""))} maxLength={12} /></label>
+          <label>
+            Verrouiller après
+            <select value={minutes} onChange={(e) => setMinutes(Number(e.target.value))}>
+              {[2, 5, 10, 30, 60].map((m) => <option key={m} value={m}>{m} min d'inactivité</option>)}
+            </select>
+          </label>
+          <div className="form-actions"><button className="primary" disabled={busy}>{busy ? "Chiffrement…" : "Activer le code PIN"}</button></div>
+        </form>
+      )}
+      {message && <p className="muted small" role="status">{message}</p>}
+    </div>
   );
 }
 

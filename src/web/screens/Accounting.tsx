@@ -343,7 +343,7 @@ function VatView({ entries, from, to, invoices, credits }: { entries: Entry[]; f
 const emptyLine = (): EntryLine => ({ account: "", label: "", debit: 0, credit: 0 });
 
 function OdView({ rows, closedUntil }: { rows: SyncRecord[]; closedUntil: string }) {
-  const { db, session } = useApp();
+  const { session } = useApp();
   const allowed = can.keepBooks(session.user.role);
   const [editing, setEditing] = useState<SyncRecord | "new" | null>(null);
   const sorted = [...rows].sort((a, b) => text(b.data.date).localeCompare(text(a.data.date)));

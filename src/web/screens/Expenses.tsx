@@ -3,6 +3,7 @@ import { can, formatDate, text, today, useApp, useSettings, useTable } from "../
 import { formatXaf, PAYMENT_METHODS } from "../../shared/invoice.ts";
 import type { SyncRecord } from "../../shared/sync.ts";
 import { EXPENSE_CATEGORIES } from "../../shared/accounting.ts";
+import { prepareReceipt, ReceiptViewer } from "../receipts.tsx";
 
 export { EXPENSE_CATEGORIES };
 
@@ -33,6 +34,19 @@ export function Expenses() {
 
   const closedUntil = text(useSettings().closed_until);
   const [formError, setFormError] = useState<string | null>(null);
+  const [receipt, setReceipt] = useState<Blob | null>(null);
+  const [viewing, setViewing] = useState<string | null>(null);
+
+  async function pickReceipt(file: File | undefined) {
+    setFormError(null);
+    if (!file) return setReceipt(null);
+    try {
+      setReceipt(await prepareReceipt(file));
+    } catch (e) {
+      setReceipt(null);
+      setFormError(e instanceof Error ? e.message : "Fichier illisible.");
+    }
+  }
 
   async function save(ev: FormEvent<HTMLFormElement>) {
     ev.preventDefault();
@@ -52,6 +66,12 @@ export function Expenses() {
       method: f.method,
       project_id: f.project_id ?? "",
     };
+    // La photo est gardée sur l'appareil puis envoyée à la prochaine synchronisation.
+    if (receipt) {
+      const fileId = db.newId("rcpt");
+      await db.putFile(fileId, receipt, false);
+      values.receipt_id = fileId;
+    }
     if (editing === "new") {
       Object.assign(values, {
         status: approver || session.user.role === "accountant" ? "approved" : "pending",
@@ -65,6 +85,7 @@ export function Expenses() {
       if (Object.keys(patch).length) await db.write("expenses", editing.id, patch);
     }
     setEditing(null);
+    setReceipt(null);
   }
 
   const decide = (e: SyncRecord, status: "approved" | "rejected") =>
@@ -116,6 +137,12 @@ export function Expenses() {
               <option value="10">10 %</option>
             </select>
           </label>
+          <label>
+            Justificatif (photo ou PDF)
+            <input type="file" accept="image/*,application/pdf" capture="environment" onChange={(e) => pickReceipt(e.target.files?.[0])} aria-label="Justificatif" />
+            {receipt ? <span className="muted small">Prêt · {Math.round(receipt.size / 1024)} Ko</span>
+              : editing !== "new" && editing?.data.receipt_id ? <span className="muted small">Un justificatif est déjà joint ; en choisir un autre le remplace.</span> : null}
+          </label>
           {formError && <p className="error wide" role="alert">{formError}</p>}
           <div className="form-actions">
             {editing !== "new" && (
@@ -126,7 +153,7 @@ export function Expenses() {
                 }
               }}>Supprimer</button>
             )}
-            <button type="button" className="ghost" onClick={() => setEditing(null)}>Annuler</button>
+            <button type="button" className="ghost" onClick={() => { setEditing(null); setReceipt(null); }}>Annuler</button>
             <button className="primary">Enregistrer</button>
           </div>
         </form>
@@ -185,7 +212,10 @@ export function Expenses() {
                     <td className="muted">{text(e.data.created_by_name)}</td>
                     <td><span className={`badge ${st.tone}`}>{st.label}</span></td>
                     <td className="right mono">{formatXaf(Number(e.data.amount))}</td>
-                    <td className="right">{canEdit(e) && <button className="ghost small" onClick={() => setEditing(e)}>Modifier</button>}</td>
+                    <td className="right nowrap">
+                      {e.data.receipt_id ? <button className="ghost small" onClick={() => setViewing(String(e.data.receipt_id))} aria-label="Voir le justificatif">Justificatif</button> : null}
+                      {canEdit(e) && <button className="ghost small" onClick={() => setEditing(e)}>Modifier</button>}
+                    </td>
                   </tr>
                 );
               })}
@@ -193,6 +223,7 @@ export function Expenses() {
           </table>
         </div>
       )}
+      {viewing && <ReceiptViewer id={viewing} onClose={() => setViewing(null)} />}
     </section>
   );
 }

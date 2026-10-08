@@ -5,7 +5,7 @@
 import type { D1PreparedStatement, Env } from "./d1.ts";
 import { hashPassword, signToken, verifyPassword, verifyToken, type Session } from "./auth.ts";
 import {
-  applyChange, checkChange, checkPermission, MAX_PULL, MAX_PUSH,
+  applyChange, canRead, checkChange, checkPermission, MAX_PULL, MAX_PUSH,
   type Change, type SyncRecord, type SyncRequest, type SyncResponse,
 } from "../shared/sync.ts";
 import { decodeHlc } from "../shared/hlc.ts";
@@ -152,7 +152,7 @@ async function handleUpdateUser(req: Request, env: Env, s: Session) {
   if (id === s.sub) throw new HttpError(400, "vous ne pouvez pas modifier votre propre compte ici");
   const target = await env.DB.prepare(`SELECT id FROM users WHERE id = ? AND company_id = ?`).bind(id, s.cid).first();
   if (!target) throw new HttpError(404, "utilisateur introuvable");
-  const statements = [];
+  const statements: D1PreparedStatement[] = [];
   if (body.role !== undefined) {
     const role = str(body.role, "rôle");
     if (!ROLES.includes(role)) throw new HttpError(400, "rôle inconnu");
@@ -269,19 +269,24 @@ async function handleSync(req: Request, env: Env, s: Session) {
     if (statements.length > 0) await env.DB.batch(statements);
   }
 
-  // Réception : modifications postérieures au curseur, hors celles de cet appareil.
+  // Réception : modifications postérieures au curseur, hors celles de cet appareil,
+  // limitées à ce que le rôle de l'utilisateur peut voir.
   const { results } = await env.DB.prepare(
-    `SELECT seq, op_id, device_id, tbl, row_id, patch, hlc FROM changes
-     WHERE company_id = ? AND seq > ? ORDER BY seq LIMIT ?`,
-  ).bind(s.cid, since, MAX_PULL + 1).all<{ seq: number; op_id: string; device_id: string; tbl: string; row_id: string; patch: string; hlc: string }>();
+    `SELECT c.seq, c.op_id, c.device_id, c.tbl, c.row_id, c.patch, c.hlc,
+            json_extract(r.data, '$.created_by') AS owner
+     FROM changes c
+     LEFT JOIN records r ON r.company_id = c.company_id AND r.tbl = c.tbl AND r.id = c.row_id
+     WHERE c.company_id = ? AND c.seq > ? ORDER BY c.seq LIMIT ?`,
+  ).bind(s.cid, since, MAX_PULL + 1).all<{ seq: number; op_id: string; device_id: string; tbl: string; row_id: string; patch: string; hlc: string; owner: string | null }>();
   const more = results.length > MAX_PULL;
   const page = more ? results.slice(0, MAX_PULL) : results;
+  const reader = { userId: s.sub, role: s.role };
   const changes: Change[] = page
-    .filter((r) => r.device_id !== s.dev)
+    .filter((r) => r.device_id !== s.dev && canRead(reader, r.tbl, r.owner))
     .map((r) => ({ id: r.op_id, tbl: r.tbl as Change["tbl"], row: r.row_id, patch: JSON.parse(r.patch), hlc: r.hlc, device: r.device_id }));
   const cursor = page.length > 0 ? page[page.length - 1].seq : since;
 
-  const response: SyncResponse = { accepted, rejected, changes, cursor, more };
+  const response: SyncResponse = { role: s.role, accepted, rejected, changes, cursor, more };
   return json(response);
 }
 
@@ -304,6 +309,61 @@ async function handleReserveNumbers(req: Request, env: Env, s: Session) {
   return json({ series, start, end });
 }
 
+/** Taille maximale d'un justificatif (après compression sur l'appareil). */
+const MAX_FILE_BYTES = 1_400_000;
+const FILE_TYPES = ["image/jpeg", "image/png", "image/webp", "application/pdf"];
+let filesReady = false;
+
+/** Crée la table des fichiers au premier usage : aucune migration à lancer à la main. */
+async function filesDb(env: Env) {
+  if (!env.FILES) throw new HttpError(503, "stockage des justificatifs non configuré");
+  if (!filesReady) {
+    await env.FILES.prepare(
+      `CREATE TABLE IF NOT EXISTS files (
+         company_id TEXT NOT NULL, id TEXT NOT NULL, mime TEXT NOT NULL, size INTEGER NOT NULL,
+         data TEXT NOT NULL, created_by TEXT NOT NULL, created_at TEXT NOT NULL,
+         PRIMARY KEY (company_id, id))`,
+    ).run();
+    filesReady = true;
+  }
+  return env.FILES;
+}
+
+function toBase64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
+}
+
+function fromBase64(b64: string): Uint8Array<ArrayBuffer> {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function handleFile(req: Request, env: Env, s: Session, id: string) {
+  if (!/^[A-Za-z0-9_-]{8,64}$/.test(id)) throw new HttpError(400, "identifiant de fichier invalide");
+  const db = await filesDb(env);
+  if (req.method === "PUT") {
+    const mime = (req.headers.get("content-type") ?? "").split(";")[0].trim();
+    if (!FILE_TYPES.includes(mime)) throw new HttpError(415, "format accepté : photo (JPEG, PNG, WebP) ou PDF");
+    const bytes = new Uint8Array(await req.arrayBuffer());
+    if (bytes.length === 0 || bytes.length > MAX_FILE_BYTES) throw new HttpError(413, "fichier vide ou trop lourd (1,4 Mo maximum)");
+    // Idempotent : un renvoi après coupure ne crée pas de doublon.
+    await db.prepare(
+      `INSERT OR IGNORE INTO files (company_id, id, mime, size, data, created_by, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(s.cid, id, mime, bytes.length, toBase64(bytes), s.sub, now()).run();
+    return json({ id, size: bytes.length }, 201);
+  }
+  if (req.method === "GET") {
+    const row = await db.prepare(`SELECT mime, data FROM files WHERE company_id = ? AND id = ?`).bind(s.cid, id).first<{ mime: string; data: string }>();
+    if (!row) throw new HttpError(404, "fichier introuvable");
+    return new Response(fromBase64(row.data), { headers: { "content-type": row.mime, "cache-control": "private, max-age=31536000, immutable" } });
+  }
+  throw new HttpError(405, "méthode non autorisée");
+}
+
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const p = url.pathname;
@@ -321,6 +381,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (p === "/api/users" && m === "GET") return handleListUsers(env, session);
   if (p === "/api/users" && m === "POST") return handleCreateUser(req, env, session);
   if (p === "/api/users/update" && m === "POST") return handleUpdateUser(req, env, session);
+  if (p.startsWith("/api/files/")) return handleFile(req, env, session, p.slice("/api/files/".length));
   throw new HttpError(404, "route inconnue");
 }
 
