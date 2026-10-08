@@ -31,7 +31,9 @@ const LOW_NUMBERS = 10;
 const PERIODIC_MS = 30_000;
 const DEBOUNCE_MS = 1_500;
 
-export const invoiceSeries = (date = new Date()) => `FA-${date.getFullYear()}`;
+/** Série de l'année en cours pour un préfixe : FA (factures), AV (avoirs), DV (devis). */
+export const seriesFor = (prefix: string, date = new Date()) => `${prefix}-${date.getFullYear()}`;
+const PREFIXES = ["FA", "AV", "DV"];
 
 export class SyncEngine {
   private db: LocalDb;
@@ -146,27 +148,30 @@ export class SyncEngine {
   }
 
   /** Stock de numéros de facture disponibles hors ligne pour la série en cours. */
-  async availableNumbers(series = invoiceSeries()): Promise<number> {
+  async availableNumbers(series = seriesFor("FA")): Promise<number> {
     const blocks = (await this.db.getMeta<NumberBlock[]>("numberBlocks")) ?? [];
     return blocks.filter((b) => b.series === series).reduce((n, b) => n + (b.end - b.next + 1), 0);
   }
 
   private async ensureNumbers(): Promise<void> {
-    const series = invoiceSeries();
-    if ((await this.availableNumbers(series)) >= LOW_NUMBERS) return;
-    const block = await api<{ series: string; start: number; end: number }>("/api/numbers/reserve", { series });
-    await withLock("numbers", async () => {
-      const blocks = (await this.db.getMeta<NumberBlock[]>("numberBlocks")) ?? [];
-      blocks.push({ ...block, next: block.start });
-      await this.db.setMeta("numberBlocks", blocks);
-    });
+    for (const prefix of PREFIXES) {
+      const series = seriesFor(prefix);
+      if ((await this.availableNumbers(series)) >= LOW_NUMBERS) continue;
+      const block = await api<{ series: string; start: number; end: number }>("/api/numbers/reserve", { series });
+      await withLock("numbers", async () => {
+        const blocks = (await this.db.getMeta<NumberBlock[]>("numberBlocks")) ?? [];
+        blocks.push({ ...block, next: block.start });
+        await this.db.setMeta("numberBlocks", blocks);
+      });
+    }
   }
 
   /**
-   * Prend le prochain numéro de facture réservé par cet appareil.
+   * Prend le prochain numéro réservé par cet appareil pour une série (FA, AV, DV).
    * Fonctionne hors ligne ; null si l'appareil n'a plus de numéro en réserve.
    */
-  async takeInvoiceNumber(series = invoiceSeries()): Promise<string | null> {
+  async takeNumber(prefix: string): Promise<string | null> {
+    const series = seriesFor(prefix);
     const n = await withLock("numbers", async () => {
       const blocks = (await this.db.getMeta<NumberBlock[]>("numberBlocks")) ?? [];
       const block = blocks.filter((b) => b.series === series && b.next <= b.end).sort((a, b) => a.start - b.start)[0];

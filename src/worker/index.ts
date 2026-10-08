@@ -80,7 +80,7 @@ async function authenticate(req: Request, env: Env): Promise<Session> {
 async function openSession(env: Env, user: { id: string; company_id: string; role: string; name: string; email: string }, dev: string, companyName: string) {
   await env.DB.prepare(
     `INSERT INTO devices (id, company_id, user_id, last_seen) VALUES (?, ?, ?, ?)
-     ON CONFLICT(id) DO UPDATE SET user_id = excluded.user_id, company_id = excluded.company_id, last_seen = excluded.last_seen`,
+     ON CONFLICT(id) DO UPDATE SET user_id = excluded.user_id, company_id = excluded.company_id, last_seen = excluded.last_seen, revoked = 0`,
   ).bind(dev, user.company_id, user.id, now()).run();
   const token = await signToken({ sub: user.id, cid: user.company_id, role: user.role, dev }, secret(env));
   return {
@@ -142,6 +142,30 @@ async function handleCreateUser(req: Request, env: Env, s: Session) {
     `INSERT INTO users (id, company_id, email, name, role, password_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).bind(id, s.cid, email, str(body.name, "nom"), role, await hashPassword(password), now()).run();
   return json({ id }, 201);
+}
+
+/** Change le rôle d'un utilisateur ou le désactive (ses appareils sont alors révoqués). */
+async function handleUpdateUser(req: Request, env: Env, s: Session) {
+  if (s.role !== "admin") throw new HttpError(403, "réservé à l'administrateur");
+  const body = await readJson<Record<string, unknown>>(req);
+  const id = str(body.id, "utilisateur", 64);
+  if (id === s.sub) throw new HttpError(400, "vous ne pouvez pas modifier votre propre compte ici");
+  const target = await env.DB.prepare(`SELECT id FROM users WHERE id = ? AND company_id = ?`).bind(id, s.cid).first();
+  if (!target) throw new HttpError(404, "utilisateur introuvable");
+  const statements = [];
+  if (body.role !== undefined) {
+    const role = str(body.role, "rôle");
+    if (!ROLES.includes(role)) throw new HttpError(400, "rôle inconnu");
+    statements.push(env.DB.prepare(`UPDATE users SET role = ? WHERE id = ?`).bind(role, id));
+  }
+  if (body.active !== undefined) {
+    const active = body.active ? 1 : 0;
+    statements.push(env.DB.prepare(`UPDATE users SET active = ? WHERE id = ?`).bind(active, id));
+    if (!active) statements.push(env.DB.prepare(`UPDATE devices SET revoked = 1 WHERE user_id = ?`).bind(id));
+  }
+  if (statements.length === 0) throw new HttpError(400, "rien à modifier");
+  await env.DB.batch(statements);
+  return json({ ok: true });
 }
 
 async function handleListUsers(env: Env, s: Session) {
@@ -289,6 +313,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (p === "/api/numbers/reserve" && m === "POST") return handleReserveNumbers(req, env, session);
   if (p === "/api/users" && m === "GET") return handleListUsers(env, session);
   if (p === "/api/users" && m === "POST") return handleCreateUser(req, env, session);
+  if (p === "/api/users/update" && m === "POST") return handleUpdateUser(req, env, session);
   throw new HttpError(404, "route inconnue");
 }
 

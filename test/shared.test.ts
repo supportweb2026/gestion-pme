@@ -86,3 +86,34 @@ test("Facture : totaux HT, TVA 18 %, TTC en FCFA", () => {
   assert.equal(formatXaf(1250000), "1 250 000 FCFA");
   assert.equal(formatInvoiceNumber("FA-2026", 42), "FA-2026-00042");
 });
+
+import { amountInWords, invoiceBalance, addDays } from "../src/shared/invoice.ts";
+
+test("Montant en lettres", () => {
+  const cases: [number, string][] = [
+    [0, "zéro"], [21, "vingt et un"], [71, "soixante et onze"], [80, "quatre-vingts"],
+    [81, "quatre-vingt-un"], [99, "quatre-vingt-dix-neuf"], [200, "deux cents"], [201, "deux cent un"],
+    [1000, "mille"], [80000, "quatre-vingt mille"], [200000, "deux cent mille"],
+    [354000, "trois cent cinquante-quatre mille"], [1250000, "un million deux cent cinquante mille"],
+    [2000000, "deux millions"], [17_591_311, "dix-sept millions cinq cent quatre-vingt-onze mille trois cent onze"],
+  ];
+  for (const [n, words] of cases) assert.equal(amountInWords(n), words, String(n));
+});
+
+test("Solde de facture : encaissements multiples et avoirs", () => {
+  assert.deepEqual(invoiceBalance(354000, [100000, 54000], [200000]), { gross: 354000, paid: 154000, credited: 200000, due: 0, status: "paid" });
+  assert.equal(invoiceBalance(354000, [100000], []).status, "partial");
+  assert.equal(invoiceBalance(354000, [], []).due, 354000);
+  assert.equal(addDays("2026-10-08", 30), "2026-11-07");
+});
+
+test("Règles : devis envoyé figé sauf statut, avoir numéroté dans sa série", () => {
+  const sent: SyncRecord = { tbl: "quotes", id: "quote-1", data: { status: "sent", number: "DV-2026-00001", lines: [] }, clocks: {} };
+  const base = { id: "x", tbl: "quotes" as const, row: "quote-1", hlc: encodeHlc(1, 0, "A"), device: "A" };
+  assert.equal(checkChange(sent, { ...base, patch: { status: "accepted" } }), null);
+  assert.ok(checkChange(sent, { ...base, patch: { lines: [] } }));
+  const cn = { ...base, tbl: "credit_notes" as const, row: "credit-1" };
+  assert.ok(checkChange(null, { ...cn, patch: { status: "validated", number: "FA-2026-00001" } }));
+  assert.equal(checkChange(null, { ...cn, patch: { status: "validated", number: "AV-2026-00001" } }), null);
+  assert.ok(checkChange(null, { ...cn, patch: { number: "AV-2026-00002" } }));
+});

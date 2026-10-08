@@ -1,6 +1,6 @@
 // Service worker : garde une copie de l'application pour l'ouvrir sans réseau.
 // Les données ne passent jamais par ce cache : elles vivent dans la base locale.
-const CACHE = "gestion-pme-v1";
+const CACHE = "gestion-pme-v2";
 const SHELL = ["/", "/manifest.webmanifest", "/icon.svg"];
 
 self.addEventListener("install", (event) => {

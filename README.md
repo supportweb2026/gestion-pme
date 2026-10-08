@@ -4,7 +4,15 @@ Logiciel de gestion pour PME (zone OHADA) : facturation, dépenses, comptabilit�
 projets et tableau de bord, **utilisable sans connexion** et synchronisé entre appareils.
 Hébergement entièrement dans l'offre gratuite de Cloudflare.
 
-État : **lot 0** — prototype de synchronisation (clients, factures, tableau de bord simple).
+État : **lot 1** — ventes complètes hors ligne :
+
+- devis → facture, avoirs, encaissements multiples (espèces, virement, chèque, Airtel / Moov Money, carte) ;
+- catalogue d'articles et services, clients avec solde dû ;
+- impression A4 / PDF avec logo, mentions légales, TVA ventilée et montant en lettres ;
+- envoi par WhatsApp et e-mail ;
+- dépenses par catégorie (comptes SYSCOHADA), validation par la direction ;
+- tableau de bord : CA, encaissements, impayés, retards, graphique sur 12 mois, meilleurs clients ;
+- utilisateurs et rôles gérés depuis l'application, désactivation avec effacement des appareils.
 
 ## Architecture
 
@@ -58,14 +66,14 @@ La base D1 `gestion-pme` est déjà créée (identifiant dans `wrangler.jsonc`).
 
 Ouvrez l'adresse : le premier écran crée l'entreprise et le compte administrateur.
 
-## Limites connues du lot 0 (traitées au lot 1)
+## Limites connues
 
-- Base locale non chiffrée ; à chiffrer avec la session de l'utilisateur.
-- Tous les utilisateurs d'une entreprise reçoivent toutes ses données ; le filtrage par rôle
-  (le commercial ne voit que ses ventes) viendra avec les règles de partage.
-- Les encaissements sont un champ cumulé de la facture : deux encaissements simultanés
-  sur deux appareils hors ligne peuvent s'écraser. Ils deviendront des lignes `payments` distinctes.
-- Un numéro pris par une validation refusée (facture validée ailleurs entre-temps)
+- Base locale non chiffrée.
+- Les écrans dépendent du rôle, mais le serveur envoie encore toutes les données de
+  l'entreprise à chaque appareil : le filtrage côté serveur reste à faire.
+- Un changement de rôle prend effet à la reconnexion de la personne.
+- Pas encore de photo des justificatifs de dépenses (prévue avec le stockage R2).
+- Un numéro pris par une validation refusée (document validé ailleurs entre-temps)
   n'est pas encore tracé comme annulé dans le journal.
 - PBKDF2 à 50 000 itérations pour rester sous la limite de calcul du plan gratuit.
 

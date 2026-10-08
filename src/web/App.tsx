@@ -2,10 +2,13 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { LocalDb } from "./local/db.ts";
 import { SyncEngine } from "./local/sync.ts";
 import { api, ApiError, setToken } from "./api.ts";
-import { Ctx, ROLE_LABELS, useApp, useSyncStatus, type Session } from "./context.ts";
+import { Ctx, ROLE_LABELS, TAB_LABELS, TABS_BY_ROLE, text, useApp, useSettings, useSyncStatus, type Session, type Tab } from "./context.ts";
 import { Dashboard } from "./screens/Dashboard.tsx";
-import { Invoices } from "./screens/Invoices.tsx";
+import { Documents } from "./screens/Documents.tsx";
 import { Clients } from "./screens/Clients.tsx";
+import { Articles } from "./screens/Articles.tsx";
+import { Expenses } from "./screens/Expenses.tsx";
+import { Settings } from "./screens/Settings.tsx";
 
 type Boot =
   | { kind: "loading" }
@@ -117,21 +120,26 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
   );
 }
 
-type Tab = "dashboard" | "invoices" | "clients";
-const TABS: { id: Tab; label: string }[] = [
-  { id: "dashboard", label: "Tableau de bord" },
-  { id: "invoices", label: "Factures" },
-  { id: "clients", label: "Clients" },
-];
-
 function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLogout: (wipe: boolean) => Promise<void> }) {
   const sync = useMemo(() => new SyncEngine(db), [db]);
-  const [tab, setTab] = useState<Tab>("dashboard");
+  const tabs = TABS_BY_ROLE[session.user.role] ?? ["expenses"];
+  const [tab, setTab] = useState<Tab>(() => {
+    const saved = (() => { try { return localStorage.getItem("tab") as Tab | null; } catch { return null; } })();
+    return saved && tabs.includes(saved) ? saved : tabs[0];
+  });
+  const [open, setOpen] = useState<string | null>(null);
 
   useEffect(() => {
     sync.start();
     return () => sync.stop();
   }, [sync]);
+
+  const go = (t: Tab, id?: string) => {
+    setTab(t);
+    setOpen(id ?? null);
+    try { localStorage.setItem("tab", t); } catch { /* stockage indisponible */ }
+    window.scrollTo(0, 0);
+  };
 
   const logout = async () => {
     const pending = await db.pendingCount();
@@ -141,14 +149,11 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
   };
 
   return (
-    <Ctx.Provider value={{ db, sync, session, logout }}>
+    <Ctx.Provider value={{ db, sync, session, logout, go }}>
       <div className="app">
         <header className="topbar">
-          <div className="brand">
-            <span className="brand-mark">G</span>
-            <span>{session.company.name}</span>
-          </div>
-          <SyncPill onAuthLost={() => { sync.stop(); onLogout(false); }} />
+          <CompanyBrand fallback={session.company.name} />
+          <SyncPill onAuthLost={(revoked) => { sync.stop(); onLogout(revoked); }} />
           <div className="user">
             <span className="user-name">{session.user.name}</span>
             <span className="muted small">{ROLE_LABELS[session.user.role] ?? session.user.role}</span>
@@ -156,16 +161,21 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
           </div>
         </header>
         <nav className="tabs" aria-label="Sections">
-          {TABS.map((t) => (
-            <button key={t.id} className={tab === t.id ? "tab active" : "tab"} onClick={() => setTab(t.id)} aria-current={tab === t.id}>
-              {t.label}
+          {tabs.map((t) => (
+            <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => go(t)} aria-current={tab === t}>
+              {TAB_LABELS[t]}
             </button>
           ))}
         </nav>
         <main className="content">
           {tab === "dashboard" && <Dashboard />}
-          {tab === "invoices" && <Invoices />}
+          {(tab === "quotes" || tab === "invoices" || tab === "credit_notes") && (
+            <Documents key={tab} kind={tab} open={open} setOpen={setOpen} />
+          )}
+          {tab === "expenses" && <Expenses />}
           {tab === "clients" && <Clients />}
+          {tab === "articles" && <Articles />}
+          {tab === "settings" && <Settings />}
         </main>
         <RejectedNotice />
       </div>
@@ -173,11 +183,24 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
   );
 }
 
-function SyncPill({ onAuthLost }: { onAuthLost: () => void }) {
+/** Nom et logo de l'entreprise tels que définis dans les réglages. */
+function CompanyBrand({ fallback }: { fallback: string }) {
+  const s = useSettings();
+  const logo = typeof s.logo === "string" && s.logo ? s.logo : null;
+  return (
+    <div className="brand">
+      {logo ? <img src={logo} alt="" className="brand-logo" /> : <span className="brand-mark">G</span>}
+      <span>{text(s.name) || fallback}</span>
+    </div>
+  );
+}
+
+function SyncPill({ onAuthLost }: { onAuthLost: (revoked: boolean) => void }) {
   const { sync } = useApp();
   const s = useSyncStatus();
   useEffect(() => {
-    if (s.state === "auth") onAuthLost();
+    // Compte désactivé ou appareil révoqué : les données locales sont effacées.
+    if (s.state === "auth") onAuthLost(/révoqué/.test(s.message ?? ""));
   }, [s.state]);
   let label: string;
   let tone: string;

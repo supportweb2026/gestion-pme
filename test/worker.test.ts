@@ -133,3 +133,20 @@ test("pagination : plus de 500 modifications reçues en plusieurs passes", async
   assert.equal(received, 600);
   assert.ok(passes >= 2);
 });
+
+test("utilisateurs : désactivation par l'administrateur, appareils révoqués aussitôt", async () => {
+  const users = (await call("/api/users", undefined, tokenA)).data.users as { id: string; email: string }[];
+  const awa = users.find((u) => u.email === "awa@sodepsi.ga")!;
+  const login = await call("/api/login", { email: "awa@sodepsi.ga", password: "commercial1", deviceId: "device-dddd-0004" });
+  assert.equal((await call("/api/sync", { changes: [], since: 0 }, login.data.token)).status, 200);
+  assert.equal((await call("/api/users/update", { id: awa.id, active: false }, tokenA)).status, 200);
+  const after = await call("/api/sync", { changes: [], since: 0 }, login.data.token);
+  assert.equal(after.status, 401);
+  assert.match(after.data.error, /révoqué/);
+  assert.equal((await call("/api/login", { email: "awa@sodepsi.ga", password: "commercial1", deviceId: "device-dddd-0004" })).status, 401);
+  // Réactivée : elle peut se reconnecter sur le même appareil.
+  await call("/api/users/update", { id: awa.id, active: true, role: "accountant" }, tokenA);
+  const back = await call("/api/login", { email: "awa@sodepsi.ga", password: "commercial1", deviceId: "device-dddd-0004" });
+  assert.equal(back.data.user.role, "accountant");
+  assert.equal((await call("/api/sync", { changes: [], since: 0 }, back.data.token)).status, 200);
+});

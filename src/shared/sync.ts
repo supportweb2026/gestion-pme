@@ -1,7 +1,10 @@
 import { isValidHlc, type Hlc } from "./hlc.ts";
 
 /** Tables synchronisées entre appareils. */
-export const SYNC_TABLES = ["clients", "articles", "invoices", "expenses", "projects", "tasks"] as const;
+export const SYNC_TABLES = [
+  "clients", "articles", "quotes", "invoices", "credit_notes", "payments",
+  "expenses", "settings", "projects", "tasks",
+] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
 export type Fields = Record<string, unknown>;
@@ -55,8 +58,26 @@ export function isDeleted(record: SyncRecord | null | undefined): boolean {
   return Boolean(record?.data[DELETED]);
 }
 
-/** Champs encore modifiables sur une facture validée (le reste est figé). */
-const INVOICE_FIELDS_AFTER_VALIDATION = new Set(["paid_amount", "payment_status", "sent_at"]);
+/**
+ * Documents commerciaux numérotés. Une fois numérotés (facture ou avoir validé,
+ * devis envoyé), leur contenu est figé : seuls certains champs de suivi bougent.
+ */
+export const NUMBERED_DOCS = {
+  invoices: { numberedStatus: "validated", series: "FA", afterNumbering: ["sent_at", "paid_amount", "payment_status"] },
+  credit_notes: { numberedStatus: "validated", series: "AV", afterNumbering: ["sent_at"] },
+  quotes: { numberedStatus: "sent", series: "DV", afterNumbering: ["status", "invoice_id", "sent_at", "decided_at"] },
+} as const;
+
+export type DocTable = keyof typeof NUMBERED_DOCS;
+
+export function isDocTable(tbl: string): tbl is DocTable {
+  return tbl in NUMBERED_DOCS;
+}
+
+/** Vrai si le document a déjà reçu son numéro définitif. */
+export function isNumbered(data: Fields | undefined): boolean {
+  return typeof data?.number === "string" && data.number.length > 0;
+}
 
 /**
  * Règles métier vérifiées à la fois sur l'appareil et sur le serveur.
@@ -65,22 +86,27 @@ const INVOICE_FIELDS_AFTER_VALIDATION = new Set(["paid_amount", "payment_status"
 export function checkChange(existing: SyncRecord | null, change: Change): string | null {
   if (!(SYNC_TABLES as readonly string[]).includes(change.tbl)) return "table inconnue";
   if (!isValidHlc(change.hlc)) return "horodatage invalide";
-  if (typeof change.row !== "string" || change.row.length < 8 || change.row.length > 64) return "identifiant de ligne invalide";
+  if (typeof change.row !== "string" || change.row.length < 3 || change.row.length > 64) return "identifiant de ligne invalide";
   if (!change.patch || typeof change.patch !== "object" || Array.isArray(change.patch)) return "contenu invalide";
   if (Object.keys(change.patch).length === 0) return "modification vide";
 
-  if (change.tbl === "invoices") {
-    const validated = existing?.data.status === "validated";
-    if (validated) {
-      const forbidden = Object.keys(change.patch).filter((f) => !INVOICE_FIELDS_AFTER_VALIDATION.has(f));
+  if (isDocTable(change.tbl)) {
+    const rule = NUMBERED_DOCS[change.tbl];
+    const allowed = new Set<string>(rule.afterNumbering);
+    if (isNumbered(existing?.data)) {
+      const forbidden = Object.keys(change.patch).filter((f) => !allowed.has(f));
       if (forbidden.length > 0) {
-        return `facture validée non modifiable (${forbidden.join(", ")}) : passer par un avoir`;
+        const fix = change.tbl === "invoices" ? " : passer par un avoir" : "";
+        return `document numéroté non modifiable (${forbidden.join(", ")})${fix}`;
+      }
+    } else if (change.patch.status === rule.numberedStatus) {
+      const n = change.patch.number;
+      if (typeof n !== "string" || !n.startsWith(`${rule.series}-`)) {
+        return "un document validé doit recevoir un numéro de sa série";
       }
     }
-    if (change.patch.status === "validated" && !validated) {
-      if (typeof change.patch.number !== "string" || change.patch.number.length === 0) {
-        return "une facture validée doit recevoir un numéro";
-      }
+    if ("number" in change.patch && !(change.patch.status === rule.numberedStatus) && !isNumbered(existing?.data)) {
+      return "le numéro n'est attribué qu'à la validation";
     }
   }
   return null;
