@@ -27,5 +27,7 @@
       "database_id": "447cdfe8-ff18-432a-b2c2-bc0e91d7fccd"
     }
   ],
+  // Entreprise éditrice (IDO) : ses administrateurs gèrent la plateforme Gestia.
+  "vars": { "PLATFORM_COMPANY": "a6de1303-7072-48ba-8dac-c259e192f4dd" },
   "observability": { "enabled": true }
 }

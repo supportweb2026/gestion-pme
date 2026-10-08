@@ -25,6 +25,8 @@ export interface Env {
   DB: D1Database;
   /** Base des justificatifs (photos, PDF), séparée pour ne pas alourdir la base principale. */
   FILES?: D1Database;
+  /** Entreprise éditrice : ses administrateurs gèrent la plateforme (abonnements, comptes). */
+  PLATFORM_COMPANY?: string;
   /** Secret de signature des jetons : `wrangler secret put JWT_SECRET`. */
   JWT_SECRET?: string;
 }

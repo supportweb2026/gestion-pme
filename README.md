@@ -4,7 +4,24 @@ Gestia : logiciel de gestion pour PME (zone OHADA) : facturation, dépenses, com
 projets et tableau de bord, **utilisable sans connexion** et synchronisé entre appareils.
 Hébergement entièrement dans l'offre gratuite de Cloudflare.
 
-État : **lot 4** — finition et sécurité :
+Adresse : **https://gestia.ido.ga** — éditeur : IDO (Libreville).
+
+État : **v5** — plateforme multi-entreprises (SaaS) :
+
+- inscription libre « Créer mon entreprise » : 30 jours d'essai, données de chaque entreprise
+  isolées par le serveur (aucune requête ne lit hors de l'entreprise du jeton) ;
+- formules Essentiel (3 utilisateurs), Pro (15), Entreprise (illimité) ; quota d'utilisateurs appliqué ;
+- échéance dépassée : 7 jours de grâce, puis **consultation seule** (les saisies restent sur
+  l'appareil et partent au renouvellement) ; suspension possible par l'éditeur ;
+- console **Plateforme** (administrateurs de l'entreprise éditrice, `PLATFORM_COMPANY` dans
+  `wrangler.jsonc`) : entreprises, échéances, paiements reçus (virement, mobile money…),
+  prolongation d'essai, suspension, mot de passe provisoire, erreurs remontées par les appareils ;
+- comptes : changement de mot de passe, mot de passe provisoire imposé à la première connexion,
+  réinitialisation par l'administrateur, blocage 15 min après 8 échecs, 5 inscriptions par jour et par IP ;
+- export complet des données (JSON) par la direction ; stockage persistant demandé sur téléphone,
+  bouton « Installer », coordonnées du support affichées (celles des réglages de l'éditeur).
+
+Lot 4 — finition et sécurité :
 
 - chaque appareil ne reçoit que les données de son rôle (filtrage par le serveur) ;
   si le rôle change, la copie locale est rechargée ;
@@ -96,7 +113,9 @@ La base D1 `gestion-pme` est déjà créée (identifiant dans `wrangler.jsonc`).
 4. **Settings → Variables and Secrets** : ajouter le secret `JWT_SECRET` (chaîne aléatoire d'au moins 32 caractères, obligatoire : sans lui, le serveur refuse les connexions).
 5. Chaque `git push` sur `main` redéploie automatiquement. Adresse : `https://gestion-pme.<compte>.workers.dev`.
 
-Ouvrez l'adresse : le premier écran crée l'entreprise et le compte administrateur.
+Ouvrez l'adresse : « Créer mon entreprise » ouvre un espace en essai de 30 jours.
+Les entreprises existantes avant la v5 passent en formule Pro jusqu'au 31/12/2027 (migration `0002`).
+Les abonnements sont encaissés hors ligne (virement, mobile money) puis enregistrés dans la console Plateforme.
 
 ## Limites connues
 
@@ -106,8 +125,13 @@ Ouvrez l'adresse : le premier écran crée l'entreprise et le compte administrat
 
 - TVA calculée au régime des débits ; régime, taxes annexes et formulaire officiel à
   faire valider par le comptable. Pas encore d'amortissements ni de paie automatisés.
-- Un changement de rôle prend effet à la reconnexion de la personne.
-- Pas encore de photo des justificatifs de dépenses (prévue avec le stockage R2).
+- Un changement de rôle prend effet à la synchronisation suivante de la personne.
+- Pas d'envoi d'e-mail (offre gratuite) : un mot de passe oublié passe par l'administrateur
+  de l'entreprise, ou par l'équipe Gestia pour un administrateur.
+- Paiement des abonnements non automatisé (pas de passerelle de paiement en ligne).
+- Offre gratuite Cloudflare : 5 millions de lectures et 100 000 écritures D1 par jour, 5 Go
+  au total, pour toutes les entreprises réunies ; à surveiller dans le tableau de bord Cloudflare
+  quand le nombre de clients grandit (passage au plan payant à 5 $/mois si besoin).
 - Un numéro pris par une validation refusée (document validé ailleurs entre-temps)
   n'est pas encore tracé comme annulé dans le journal.
 - PBKDF2 à 50 000 itérations pour rester sous la limite de calcul du plan gratuit.

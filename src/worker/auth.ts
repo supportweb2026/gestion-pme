@@ -61,6 +61,8 @@ export interface Session {
   cid: string;      // entreprise
   role: string;
   dev: string;      // appareil
+  /** Administrateur de la plateforme Gestia (équipe éditrice). */
+  pa?: boolean;
   exp: number;
 }
 

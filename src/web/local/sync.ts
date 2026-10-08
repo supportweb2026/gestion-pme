@@ -4,6 +4,7 @@
  * dès que le réseau est disponible ; ne bloque jamais le travail local.
  */
 import { MAX_PUSH, type SyncRequest, type SyncResponse } from "../../shared/sync.ts";
+import type { SubscriptionInfo } from "../../shared/plans.ts";
 import { formatInvoiceNumber } from "../../shared/invoice.ts";
 import type { LocalDb } from "./db.ts";
 import { api, ApiError, uploadFile } from "../api.ts";
@@ -17,6 +18,8 @@ export interface SyncStatus {
   message?: string;
   /** Modifications refusées par le serveur lors de la dernière passe. */
   rejected: { reason: string }[];
+  /** Abonnement de l'entreprise, tel que renvoyé par le serveur. */
+  subscription?: SubscriptionInfo;
 }
 
 interface NumberBlock {
@@ -60,6 +63,7 @@ export class SyncEngine {
   }
 
   start(): void {
+    this.db.getMeta<SubscriptionInfo>("subscription").then((sub) => sub && !this.status.subscription && this.set({ subscription: sub }));
     window.addEventListener("online", () => this.syncNow());
     window.addEventListener("offline", () => this.set({ state: "offline" }));
     document.addEventListener("visibilitychange", () => {
@@ -127,6 +131,15 @@ export class SyncEngine {
           cursor: res.cursor,
         });
         rejected.push(...res.rejected.map((r) => ({ reason: r.reason })));
+        if (res.subscription) {
+          this.set({ subscription: res.subscription });
+          await this.db.setMeta("subscription", res.subscription);
+        }
+        // Consultation seule : on récupère les données, nos saisies restent en attente.
+        if (res.subscription?.readOnly) {
+          if (!res.more) break;
+          continue;
+        }
         const remaining = await this.db.pendingCount();
         if (!res.more && (remaining === 0 || outbox.length === 0)) break;
       }
@@ -141,6 +154,8 @@ export class SyncEngine {
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         this.set({ state: "auth", message: e.message });
+      } else if (e instanceof ApiError && e.status === 403 && /suspendu/.test(e.message)) {
+        this.set({ state: "error", message: e.message, subscription: { ...(this.status.subscription ?? { plan: "", planLabel: "", endsAt: null, daysLeft: null, maxUsers: 0 }), state: "suspended", readOnly: true } });
       } else if (e instanceof ApiError) {
         this.set({ state: "error", message: e.message });
       } else {

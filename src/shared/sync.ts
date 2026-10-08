@@ -1,4 +1,5 @@
 import { isValidHlc, type Hlc } from "./hlc.ts";
+import type { SubscriptionInfo } from "./plans.ts";
 
 /** Tables synchronisées entre appareils. */
 export const SYNC_TABLES = [
@@ -205,6 +206,8 @@ export function canRead(actor: Actor, tbl: string, owner: unknown): boolean {
 export interface SyncResponse {
   /** Rôle pris en compte : s'il change, l'appareil repart de zéro. */
   role: string;
+  /** État de l'abonnement de l'entreprise (lecture seule si expiré ou suspendu). */
+  subscription?: SubscriptionInfo;
   accepted: string[];
   rejected: { id: string; reason: string; record: SyncRecord | null }[];
   /** Modifications des autres appareils depuis le curseur. */

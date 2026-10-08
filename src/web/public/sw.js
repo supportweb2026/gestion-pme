@@ -1,6 +1,6 @@
 // Service worker : garde une copie de l'application pour l'ouvrir sans réseau.
 // Les données ne passent jamais par ce cache : elles vivent dans la base locale.
-const CACHE = "gestia-v3";
+const CACHE = "gestia-v5";
 const SHELL = [
   "/", "/manifest.webmanifest", "/favicon.ico", "/favicon-32.png", "/icon-192.png",
   "/brand/gestia-logo.png", "/brand/gestia-logo-blanc.png",

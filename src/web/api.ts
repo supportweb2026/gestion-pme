@@ -14,6 +14,10 @@ export function setToken(t: string | null): void {
   token = t;
 }
 
+export function getToken(): string | null {
+  return token;
+}
+
 export async function api<T>(path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
     method: body === undefined ? "GET" : "POST",

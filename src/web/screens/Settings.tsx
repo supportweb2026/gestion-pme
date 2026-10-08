@@ -1,6 +1,8 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { can, ROLE_LABELS, text, useApp, useSettings, useSyncStatus } from "../context.ts";
-import { api, ApiError } from "../api.ts";
+import { api, ApiError, getToken } from "../api.ts";
+import { formatDate, SubscriptionBadge } from "../subscription.tsx";
+import { PLANS } from "../../shared/plans.ts";
 import { DEFAULT_PAYMENT_DAYS } from "../../shared/invoice.ts";
 import { CURRENCIES, rateFor } from "../../shared/currency.ts";
 
@@ -45,11 +47,120 @@ export function Settings() {
   return (
     <section>
       <div className="section-head"><h2>Réglages</h2></div>
+      <MyAccount />
       <DeviceSecurity />
+      {can.manageCompany(session.user.role) && <SubscriptionCard />}
       {can.manageCompany(session.user.role) && <CompanySettings />}
       {can.manageCompany(session.user.role) && <CurrencySettings />}
       {can.manageUsers(session.user.role) && <Users />}
+      {can.manageCompany(session.user.role) && <DataExport />}
     </section>
+  );
+}
+
+const sentence = (m: string) => m.charAt(0).toUpperCase() + m.slice(1) + ".";
+
+/** Changement de son propre mot de passe (tous les rôles). */
+function MyAccount() {
+  const { session } = useApp();
+  const [open, setOpen] = useState(false);
+  const [msg, setMsg] = useState<{ ok: boolean; text: string } | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const form = e.currentTarget;
+    const f = Object.fromEntries(new FormData(form)) as Record<string, string>;
+    if (f.next !== f.confirm) return setMsg({ ok: false, text: "Les deux mots de passe ne correspondent pas." });
+    setBusy(true);
+    try {
+      await api("/api/me/password", { current: f.current, next: f.next });
+      form.reset();
+      setOpen(false);
+      setMsg({ ok: true, text: "Mot de passe modifié." });
+    } catch (err) {
+      setMsg({ ok: false, text: err instanceof ApiError ? sentence(err.message) : "Connexion internet nécessaire." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="card section-card">
+      <div className="section-head">
+        <h3>Mon compte</h3>
+        <button onClick={() => { setOpen((o) => !o); setMsg(null); }}>{open ? "Annuler" : "Changer mon mot de passe"}</button>
+      </div>
+      <p className="muted">{session.user.name} · {session.user.email} · {ROLE_LABELS[session.user.role] ?? session.user.role}</p>
+      {open && (
+        <form className="form-grid" onSubmit={submit}>
+          <label>Mot de passe actuel<input name="current" type="password" required autoComplete="current-password" /></label>
+          <label>Nouveau mot de passe<input name="next" type="password" required minLength={8} autoComplete="new-password" /></label>
+          <label>Confirmer<input name="confirm" type="password" required minLength={8} autoComplete="new-password" /></label>
+          <div className="form-actions"><button className="primary" disabled={busy}>Enregistrer</button></div>
+        </form>
+      )}
+      {msg && <p className={msg.ok ? "success" : "error"} role="status">{msg.text}</p>}
+    </div>
+  );
+}
+
+/** Formule, échéance et contact pour s'abonner. */
+function SubscriptionCard() {
+  const { session } = useApp();
+  const sync = useSyncStatus();
+  const sub = sync.subscription ?? session.company.subscription;
+  if (!sub) return null;
+  return (
+    <div className="card section-card">
+      <div className="section-head"><h3>Abonnement</h3><SubscriptionBadge sub={sub} /></div>
+      <p>
+        Formule <strong>{sub.planLabel}</strong>
+        {sub.endsAt && <> · {sub.plan === "trial" ? "essai jusqu'au" : "payé jusqu'au"} <strong>{formatDate(sub.endsAt)}</strong></>}
+        {" "}· jusqu'à {sub.maxUsers >= 1000 ? "un nombre illimité d'" : `${sub.maxUsers} `}utilisateurs actifs
+      </p>
+      <ul className="muted small plan-list">
+        {Object.entries(PLANS).filter(([k]) => k !== "trial").map(([k, p]) => (
+          <li key={k}><strong>{p.label}</strong> : {p.description}</li>
+        ))}
+      </ul>
+      <p className="muted small">Pour vous abonner ou changer de formule, contactez l'équipe Gestia ; le paiement (virement, mobile money) est enregistré par elle et prend effet à la synchronisation suivante.</p>
+    </div>
+  );
+}
+
+/** Export complet des données : sauvegarde personnelle ou départ vers un autre outil. */
+function DataExport() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  async function download() {
+    setBusy(true);
+    setError(null);
+    try {
+      const res = await fetch("/api/export", { headers: { authorization: `Bearer ${getToken()}` } });
+      if (!res.ok) throw new ApiError(res.status, ((await res.json().catch(() => null)) as { error?: string } | null)?.error ?? `erreur ${res.status}`);
+      const blob = await res.blob();
+      const name = /filename="([^"]+)"/.exec(res.headers.get("content-disposition") ?? "")?.[1] ?? "gestia-export.json";
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = name;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 10_000);
+    } catch (err) {
+      setError(err instanceof ApiError ? sentence(err.message) : "Connexion internet nécessaire pour l'export.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="card section-card">
+      <div className="section-head">
+        <h3>Sauvegarde des données</h3>
+        <button onClick={download} disabled={busy}>{busy ? "Préparation…" : "Exporter toutes les données"}</button>
+      </div>
+      <p className="muted small">Fichier JSON contenant clients, articles, documents, paiements, dépenses, projets et réglages de l'entreprise (sans mots de passe ni justificatifs). Vos données vous appartiennent : conservez une copie régulièrement.</p>
+      {error && <p className="error">{error}</p>}
+    </div>
   );
 }
 
@@ -257,7 +368,14 @@ function CurrencySettings() {
   );
 }
 
-interface User { id: string; email: string; name: string; role: string; active: number }
+interface User { id: string; email: string; name: string; role: string; active: number; must_change_password?: number }
+
+/** Mot de passe provisoire lisible, sans caractères ambigus. */
+function temporaryPassword(): string {
+  const chars = "abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = crypto.getRandomValues(new Uint8Array(10));
+  return Array.from(bytes, (b) => chars[b % chars.length]).join("");
+}
 
 function Users() {
   const { session } = useApp();
@@ -265,6 +383,7 @@ function Users() {
   const [users, setUsers] = useState<User[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
+  const [temp, setTemp] = useState<{ name: string; password: string } | null>(null);
 
   const load = () =>
     api<{ users: User[] }>("/api/users")
@@ -295,6 +414,18 @@ function Users() {
     }
   }
 
+  async function reset(u: User) {
+    if (!confirm(`Donner un mot de passe provisoire à ${u.name} ? Ses appareils seront déconnectés ; il devra choisir un nouveau mot de passe à la connexion.`)) return;
+    const password = temporaryPassword();
+    try {
+      await api("/api/users/password", { id: u.id, password });
+      setTemp({ name: u.name, password });
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Connexion internet nécessaire.");
+    }
+  }
+
   return (
     <div className="card section-card">
       <div className="section-head">
@@ -316,6 +447,13 @@ function Users() {
         </form>
       )}
       {error && <p className="error">{error}</p>}
+      {temp && (
+        <div className="notice" role="status">
+          Mot de passe provisoire de <strong>{temp.name}</strong> : <code className="mono" data-testid="temp-password">{temp.password}</code>
+          <p className="muted small">Communiquez-le à la personne (de vive voix ou par message). Il ne sera plus affiché.</p>
+          <button className="ghost small" onClick={() => setTemp(null)}>J'ai noté</button>
+        </div>
+      )}
       {users && (
         <div className="table-wrap">
           <table>
@@ -334,12 +472,18 @@ function Users() {
                         </select>
                       )}
                     </td>
-                    <td><span className={`badge ${u.active ? "ok" : ""}`}>{u.active ? "Actif" : "Désactivé"}</span></td>
+                    <td>
+                      <span className={`badge ${u.active ? "ok" : ""}`}>{u.active ? "Actif" : "Désactivé"}</span>
+                      {u.active && u.must_change_password ? <span className="badge warn">Mot de passe provisoire</span> : null}
+                    </td>
                     <td className="right">
                       {!self && (
-                        <button className="ghost small" onClick={() => update(u.id, { active: !u.active })}>
-                          {u.active ? "Désactiver" : "Réactiver"}
-                        </button>
+                        <div className="actions right-actions">
+                          {u.active ? <button className="ghost small" onClick={() => reset(u)}>Réinitialiser le mot de passe</button> : null}
+                          <button className="ghost small" onClick={() => update(u.id, { active: !u.active })}>
+                            {u.active ? "Désactiver" : "Réactiver"}
+                          </button>
+                        </div>
                       )}
                     </td>
                   </tr>
@@ -349,7 +493,7 @@ function Users() {
           </table>
         </div>
       )}
-      <p className="muted small">Un changement de rôle prend effet à la prochaine connexion de la personne.</p>
+      <p className="muted small">Un changement de rôle prend effet à la prochaine synchronisation de la personne. Un nouveau compte se connecte avec le mot de passe provisoire choisi ici, puis le remplace.</p>
     </div>
   );
 }

@@ -14,7 +14,19 @@ const dist = join(root, "dist");
 const port = Number(process.env.PORT ?? 8787);
 const dbPath = process.env.DB_PATH ?? join(root, "dev", "data", "local.sqlite");
 if (dbPath !== ":memory:") mkdirSync(join(dbPath, ".."), { recursive: true });
-const env = { DB: createLocalD1(dbPath, join(root, "migrations")), FILES: createLocalD1(":memory:"), JWT_SECRET: "dev-local-secret-0123456789-0123456789" };
+const env: { DB: ReturnType<typeof createLocalD1>; FILES: ReturnType<typeof createLocalD1>; JWT_SECRET: string; PLATFORM_COMPANY?: string } = {
+  DB: createLocalD1(dbPath, join(root, "migrations")),
+  FILES: createLocalD1(":memory:"),
+  JWT_SECRET: "dev-local-secret-0123456789-0123456789",
+  PLATFORM_COMPANY: process.env.PLATFORM_COMPANY,
+};
+
+/** En local, la première entreprise créée tient le rôle d'éditeur (comme IDO en production). */
+async function resolvePlatform() {
+  if (env.PLATFORM_COMPANY) return;
+  const first = await env.DB.prepare(`SELECT id FROM companies ORDER BY created_at LIMIT 1`).first<{ id: string }>();
+  if (first) env.PLATFORM_COMPANY = first.id;
+}
 
 const TYPES: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
@@ -38,6 +50,7 @@ createServer(async (req, res) => {
     );
     res.writeHead(response.status, Object.fromEntries(response.headers));
     res.end(Buffer.from(await response.arrayBuffer()));
+    await resolvePlatform();
     return;
   }
   // Fichiers statiques, avec repli sur index.html (application monopage).
@@ -45,4 +58,4 @@ createServer(async (req, res) => {
   if (!file.startsWith(dist) || !existsSync(file) || statSync(file).isDirectory()) file = join(dist, "index.html");
   res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
   res.end(readFileSync(file));
-}).listen(port, () => console.log(`Gestion PME en local : http://localhost:${port}`));
+}).listen(port, () => console.log(`Gestia en local : http://localhost:${port}`));

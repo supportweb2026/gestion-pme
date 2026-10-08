@@ -30,13 +30,14 @@ const change = (clock: HlcClock, tbl: Change["tbl"], row: string, patch: Record<
   id: crypto.randomUUID(), tbl, row, patch, hlc: clock.tick(), device: clock.deviceId,
 });
 
-test("installation : création de l'entreprise et de l'administrateur, une seule fois", async () => {
-  assert.equal((await call("/api/status")).data.initialized, false);
-  const r = await call("/api/setup", { company: "Sodepsi", name: "Johann", email: "admin@sodepsi.ga", password: "motdepasse1", deviceId: DEV_A });
+test("inscription : création de l'entreprise et de son administrateur, e-mail unique", async () => {
+  const r = await call("/api/signup", { company: "Sodepsi", name: "Johann", email: "admin@sodepsi.ga", password: "motdepasse1", deviceId: DEV_A });
   assert.equal(r.status, 201);
+  assert.equal(r.data.company.subscription.state, "trial");
+  assert.equal(r.data.company.subscription.daysLeft, 30);
   tokenA = r.data.token;
-  const again = await call("/api/setup", { company: "X", name: "Y", email: "x@y.ga", password: "motdepasse1", deviceId: DEV_A });
-  assert.equal(again.status, 403);
+  const again = await call("/api/signup", { company: "X", name: "Y", email: "ADMIN@sodepsi.ga", password: "motdepasse1", deviceId: DEV_A });
+  assert.equal(again.status, 409);
 });
 
 test("connexion : mauvais mot de passe refusé, deuxième appareil accepté", async () => {

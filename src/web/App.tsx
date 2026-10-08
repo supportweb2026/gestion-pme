@@ -11,6 +11,10 @@ import { Expenses } from "./screens/Expenses.tsx";
 import { Settings } from "./screens/Settings.tsx";
 import { Accounting } from "./screens/Accounting.tsx";
 import { Projects } from "./screens/Projects.tsx";
+import { Platform } from "./screens/Platform.tsx";
+import { useInstall } from "./device.ts";
+import { formatDate } from "./subscription.tsx";
+import { GRACE_DAYS } from "../shared/plans.ts";
 
 type Boot =
   | { kind: "loading" }
@@ -62,6 +66,24 @@ export function App() {
           await boot.db.setMeta("session", session);
           setToken(session.token);
           setBoot({ kind: "ready", db: boot.db, session });
+        }}
+      />
+    );
+  }
+  if (boot.session.user.mustChangePassword) {
+    const { db, session } = boot;
+    return (
+      <ForcePasswordScreen
+        session={session}
+        onDone={async () => {
+          const next = { ...session, user: { ...session.user, mustChangePassword: false } };
+          await db.setMeta("session", next);
+          setBoot({ kind: "ready", db, session: next });
+        }}
+        onLogout={async () => {
+          await db.setMeta("session", undefined);
+          setToken(null);
+          setBoot({ kind: "auth", db });
         }}
       />
     );
@@ -126,31 +148,127 @@ function PinScreen({ onPin, onForgot }: { onPin: (pin: string) => Promise<boolea
   );
 }
 
+interface Support { name?: string; email?: string; phone?: string }
+
+/** Coordonnées de l'équipe Gestia, mémorisées pour être affichées hors ligne. */
+function useSupport(): Support {
+  const [support, setSupport] = useState<Support>(() => {
+    try { return JSON.parse(localStorage.getItem("support") ?? "{}"); } catch { return {}; }
+  });
+  useEffect(() => {
+    api<{ support?: Support }>("/api/status")
+      .then((r) => {
+        setSupport(r.support ?? {});
+        try { localStorage.setItem("support", JSON.stringify(r.support ?? {})); } catch { /* stockage indisponible */ }
+      })
+      .catch(() => {});
+  }, []);
+  return support;
+}
+
+function SupportLine({ support, prefix }: { support: Support; prefix: string }) {
+  if (!support.email && !support.phone) return null;
+  return (
+    <p className="muted small">
+      {prefix}{" "}
+      {support.phone && <a href={`tel:${support.phone.replace(/\s/g, "")}`}>{support.phone}</a>}
+      {support.phone && support.email && " · "}
+      {support.email && <a href={`mailto:${support.email}`}>{support.email}</a>}
+    </p>
+  );
+}
+
 function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) => Promise<void> }) {
-  const [mode, setMode] = useState<"login" | "setup" | "checking">("checking");
+  const [mode, setMode] = useState<"login" | "signup">(() => (location.hash === "#inscription" ? "signup" : "login"));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const support = useSupport();
 
-  useEffect(() => {
-    api<{ initialized: boolean }>("/api/status")
-      .then((s) => setMode(s.initialized ? "login" : "setup"))
-      .catch(() => {
-        setMode("login");
-        setError("Pas de connexion : la toute première ouverture sur cet appareil demande internet.");
-      });
-  }, []);
+  function switchTo(m: "login" | "signup") {
+    setMode(m);
+    setError(null);
+    history.replaceState(null, "", m === "signup" ? "#inscription" : location.pathname);
+  }
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
+    if (mode === "signup" && f.password !== f.confirm) {
+      setError("Les deux mots de passe ne correspondent pas.");
+      return;
+    }
+    delete f.confirm;
     setBusy(true);
     setError(null);
     try {
-      const path = mode === "setup" ? "/api/setup" : "/api/login";
-      const session = await api<Session>(path, { ...f, deviceId: db.deviceId });
+      const session = await api<Session>(mode === "signup" ? "/api/signup" : "/api/login", { ...f, deviceId: db.deviceId });
+      history.replaceState(null, "", location.pathname);
       await onSession(session);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Serveur injoignable : vérifiez votre connexion.");
+      if (err instanceof ApiError) setError(err.message.charAt(0).toUpperCase() + err.message.slice(1) + ".");
+      else setError("Serveur injoignable : la première connexion sur cet appareil demande internet.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <div className="auth">
+      <form className="card auth-card" onSubmit={submit} key={mode}>
+        <GestiaLogo full />
+        <h1>{mode === "signup" ? "Créer mon entreprise" : "Connexion"}</h1>
+        {mode === "signup" ? (
+          <>
+            <p className="muted">30 jours d'essai gratuit, toutes les fonctions. Vous serez l'administrateur de votre espace.</p>
+            <label>Nom de l'entreprise<input name="company" required autoComplete="organization" maxLength={120} /></label>
+            <label>Votre nom<input name="name" required autoComplete="name" maxLength={120} /></label>
+            <label>Téléphone<input name="phone" type="tel" autoComplete="tel" placeholder="+241 …" maxLength={40} /></label>
+          </>
+        ) : null}
+        <label>E-mail<input name="email" type="email" required autoComplete="email" /></label>
+        <label>
+          Mot de passe
+          <input name="password" type="password" required minLength={8} autoComplete={mode === "signup" ? "new-password" : "current-password"} />
+        </label>
+        {mode === "signup" && (
+          <label>Confirmer le mot de passe<input name="confirm" type="password" required minLength={8} autoComplete="new-password" /></label>
+        )}
+        {error && <p className="error" role="alert">{error}</p>}
+        <button className="primary" disabled={busy}>{busy ? "Patientez…" : mode === "signup" ? "Démarrer l'essai gratuit" : "Se connecter"}</button>
+        {mode === "login" ? (
+          <>
+            <p className="auth-switch">Nouvelle entreprise ? <button type="button" className="link" onClick={() => switchTo("signup")}>Créer mon entreprise</button></p>
+            <details className="small muted">
+              <summary>Mot de passe oublié ?</summary>
+              <p>Demandez à l'administrateur de votre entreprise de vous donner un mot de passe provisoire (Réglages › Utilisateurs). Si vous êtes l'administrateur, contactez l'équipe Gestia.</p>
+              <SupportLine support={support} prefix="Équipe Gestia :" />
+            </details>
+          </>
+        ) : (
+          <p className="auth-switch">Déjà un compte ? <button type="button" className="link" onClick={() => switchTo("login")}>Se connecter</button></p>
+        )}
+      </form>
+    </div>
+  );
+}
+
+/** Mot de passe provisoire : il doit être remplacé avant d'utiliser l'application. */
+function ForcePasswordScreen({ session, onDone, onLogout }: { session: Session; onDone: () => Promise<void>; onLogout: () => Promise<void> }) {
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+
+  async function submit(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
+    if (f.next !== f.confirm) return setError("Les deux mots de passe ne correspondent pas.");
+    setBusy(true);
+    setError(null);
+    try {
+      setToken(session.token);
+      await api("/api/me/password", { current: f.current, next: f.next });
+      await onDone();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message.charAt(0).toUpperCase() + err.message.slice(1) + "." : "Connexion internet nécessaire.");
     } finally {
       setBusy(false);
     }
@@ -160,27 +278,14 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
     <div className="auth">
       <form className="card auth-card" onSubmit={submit}>
         <GestiaLogo full />
-        {mode === "checking" ? (
-          <p className="muted">Vérification…</p>
-        ) : (
-          <>
-            <h1>{mode === "setup" ? "Créer votre entreprise" : "Connexion"}</h1>
-            {mode === "setup" && (
-              <>
-                <p className="muted">Première installation : vous serez l'administrateur.</p>
-                <label>Nom de l'entreprise<input name="company" required autoComplete="organization" /></label>
-                <label>Votre nom<input name="name" required autoComplete="name" /></label>
-              </>
-            )}
-            <label>E-mail<input name="email" type="email" required autoComplete="email" /></label>
-            <label>
-              Mot de passe
-              <input name="password" type="password" required minLength={8} autoComplete={mode === "setup" ? "new-password" : "current-password"} />
-            </label>
-            {error && <p className="error" role="alert">{error}</p>}
-            <button className="primary" disabled={busy}>{busy ? "Patientez…" : mode === "setup" ? "Créer" : "Se connecter"}</button>
-          </>
-        )}
+        <h1>Choisissez votre mot de passe</h1>
+        <p className="muted">Bonjour {session.user.name}, vous vous êtes connecté avec un mot de passe provisoire. Remplacez-le par un mot de passe personnel.</p>
+        <label>Mot de passe provisoire<input name="current" type="password" required autoComplete="current-password" /></label>
+        <label>Nouveau mot de passe<input name="next" type="password" required minLength={8} autoComplete="new-password" /></label>
+        <label>Confirmer<input name="confirm" type="password" required minLength={8} autoComplete="new-password" /></label>
+        {error && <p className="error" role="alert">{error}</p>}
+        <button className="primary" disabled={busy}>{busy ? "Patientez…" : "Enregistrer"}</button>
+        <button type="button" className="link small" onClick={onLogout}>Se déconnecter</button>
       </form>
     </div>
   );
@@ -188,7 +293,7 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
 
 function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLogout: (wipe: boolean) => Promise<void> }) {
   const sync = useMemo(() => new SyncEngine(db), [db]);
-  const tabs = TABS_BY_ROLE[session.user.role] ?? ["expenses"];
+  const tabs: Tab[] = [...(TABS_BY_ROLE[session.user.role] ?? ["expenses"]), ...(session.user.platformAdmin ? (["platform"] as Tab[]) : [])];
   const [tab, setTab] = useState<Tab>(() => {
     const saved = (() => { try { return localStorage.getItem("tab") as Tab | null; } catch { return null; } })();
     return saved && tabs.includes(saved) ? saved : tabs[0];
@@ -245,6 +350,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
           <div className="user">
             <span className="user-name">{session.user.name}</span>
             <span className="muted small">{ROLE_LABELS[session.user.role] ?? session.user.role}</span>
+            <InstallButton />
             <button className="ghost small" onClick={logout}>Déconnexion</button>
           </div>
         </header>
@@ -255,6 +361,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
             </button>
           ))}
         </nav>
+        <SubscriptionBanner />
         <main className="content">
           {tab === "dashboard" && <Dashboard />}
           {(tab === "quotes" || tab === "invoices" || tab === "credit_notes") && (
@@ -266,6 +373,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
           {tab === "projects" && <Projects />}
           {tab === "accounting" && <Accounting />}
           {tab === "settings" && <Settings />}
+          {tab === "platform" && session.user.platformAdmin && <Platform />}
         </main>
         <RejectedNotice />
       </div>
@@ -343,6 +451,64 @@ function RejectedNotice() {
       <strong>{s.rejected.length} modification(s) refusée(s) par le serveur</strong>
       <ul>{s.rejected.slice(0, 3).map((r, i) => <li key={i}>{r.reason}</li>)}</ul>
       <button className="ghost small" onClick={() => setHidden(s.lastSync)}>Fermer</button>
+    </div>
+  );
+}
+
+/** Installer Gestia sur l'écran d'accueil (téléphone ou ordinateur). */
+function InstallButton() {
+  const { available, install, iosHint } = useInstall();
+  const [hint, setHint] = useState(false);
+  if (!available) return null;
+  return (
+    <>
+      <button className="ghost small" onClick={() => (iosHint ? setHint((h) => !h) : install())}>Installer</button>
+      {hint && (
+        <div className="toast" role="status">
+          <strong>Installer Gestia sur l'iPhone</strong>
+          <p className="muted">Dans Safari, touchez le bouton Partager puis « Sur l'écran d'accueil ».</p>
+          <button className="ghost small" onClick={() => setHint(false)}>Fermer</button>
+        </div>
+      )}
+    </>
+  );
+}
+
+/** Bandeau d'abonnement : fin d'essai proche, retard de paiement, consultation seule. */
+function SubscriptionBanner() {
+  const { session } = useApp();
+  const s = useSyncStatus();
+  const support = useSupport();
+  const sub = s.subscription ?? session.company.subscription;
+  const [closed, setClosed] = useState(false);
+  if (!sub || closed) return null;
+  let tone = "info";
+  let msg: string | null = null;
+  const days = sub.daysLeft ?? 0;
+  if (sub.state === "suspended") {
+    tone = "danger";
+    msg = "Le compte de votre entreprise est suspendu. Vos données sont conservées : contactez l'équipe Gestia pour le rétablir.";
+  } else if (sub.state === "expired") {
+    tone = "danger";
+    msg = `Votre abonnement a pris fin le ${formatDate(sub.endsAt)}. Gestia est en consultation seule : vos nouvelles saisies restent sur cet appareil et seront envoyées dès le renouvellement.`;
+  } else if (sub.state === "grace") {
+    tone = "warn";
+    msg = `Votre ${sub.plan === "trial" ? "essai" : "abonnement"} a pris fin le ${formatDate(sub.endsAt)}. Il vous reste ${GRACE_DAYS + days} jour(s) avant le passage en consultation seule.`;
+  } else if (sub.state === "trial" && sub.daysLeft !== null && days <= 7) {
+    tone = "info";
+    msg = days === 0 ? "Votre essai gratuit se termine aujourd'hui." : `Votre essai gratuit se termine dans ${days} jour(s) (le ${formatDate(sub.endsAt)}).`;
+  } else if (sub.state === "active" && sub.daysLeft !== null && days <= 7) {
+    tone = "info";
+    msg = `Votre abonnement ${sub.planLabel} arrive à échéance le ${formatDate(sub.endsAt)}.`;
+  }
+  if (!msg) return null;
+  return (
+    <div className={`banner ${tone}`} role="status" data-testid="subscription-banner">
+      <div>
+        <p>{msg}</p>
+        <SupportLine support={support} prefix={sub.state === "trial" || sub.state === "active" ? "Pour vous abonner :" : "Contact :"} />
+      </div>
+      {!sub.readOnly && <button className="ghost small" onClick={() => setClosed(true)} aria-label="Fermer">×</button>}
     </div>
   );
 }

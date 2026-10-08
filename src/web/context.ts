@@ -5,8 +5,8 @@ import type { SyncRecord, SyncTable } from "../shared/sync.ts";
 
 export interface Session {
   token: string;
-  user: { id: string; name: string; email: string; role: string };
-  company: { id: string; name: string };
+  user: { id: string; name: string; email: string; role: string; platformAdmin?: boolean; mustChangePassword?: boolean };
+  company: { id: string; name: string; subscription?: import("../shared/plans.ts").SubscriptionInfo };
 }
 
 export interface AppCtx {
@@ -58,7 +58,7 @@ export function useSyncStatus(): SyncStatus {
 
 export type Tab =
   | "dashboard" | "quotes" | "invoices" | "credit_notes" | "expenses"
-  | "clients" | "articles" | "projects" | "accounting" | "settings";
+  | "clients" | "articles" | "projects" | "accounting" | "settings" | "platform";
 
 export const TAB_LABELS: Record<Tab, string> = {
   dashboard: "Tableau de bord",
@@ -71,6 +71,7 @@ export const TAB_LABELS: Record<Tab, string> = {
   projects: "Projets",
   accounting: "Comptabilité",
   settings: "Réglages",
+  platform: "Plateforme",
 };
 
 /** Écrans visibles selon le rôle (les droits sont aussi vérifiés côté serveur au fil des lots). */
