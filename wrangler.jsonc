@@ -1,0 +1,25 @@
+// Déploiement Cloudflare, entièrement dans l'offre gratuite :
+//  - le Worker répond aux routes /api/* ;
+//  - tout le reste (l'application) est servi en fichiers statiques depuis dist/,
+//    sans limite de requêtes et sans facturation ;
+//  - D1 est la base centrale de synchronisation.
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "gestion-pme",
+  "main": "src/worker/index.ts",
+  "compatibility_date": "2026-09-01",
+  "assets": {
+    "directory": "./dist",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  },
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "gestion-pme",
+      "database_id": "a8ccf93a-4610-4b36-aab6-6cbddc4dfdbd",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "observability": { "enabled": true }
+}
