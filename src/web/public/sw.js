@@ -1,7 +1,13 @@
 // Service worker : garde une copie de l'application pour l'ouvrir sans réseau.
 // Les données ne passent jamais par ce cache : elles vivent dans la base locale.
-const CACHE = "gestion-pme-v2";
-const SHELL = ["/", "/manifest.webmanifest", "/icon.svg"];
+const CACHE = "gestia-v3";
+const SHELL = [
+  "/", "/manifest.webmanifest", "/favicon.ico", "/favicon-32.png", "/icon-192.png",
+  "/brand/gestia-logo.png", "/brand/gestia-logo-blanc.png",
+  "/brand/gestia-logo-sans-slogan.png", "/brand/gestia-logo-sans-slogan-blanc.png",
+];
+// Police Montserrat (Google Fonts) : gardée en cache pour l'affichage hors ligne.
+const FONT_HOSTS = ["fonts.googleapis.com", "fonts.gstatic.com"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(
@@ -28,7 +34,25 @@ self.addEventListener("activate", (event) => {
 
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
-  if (event.request.method !== "GET" || url.origin !== location.origin || url.pathname.startsWith("/api/")) return;
+  if (event.request.method !== "GET") return;
+  if (FONT_HOSTS.includes(url.hostname)) {
+    event.respondWith(
+      (async () => {
+        const cached = await caches.match(event.request);
+        if (cached) return cached;
+        try {
+          const fresh = await fetch(event.request);
+          const cache = await caches.open(CACHE);
+          await cache.put(event.request, fresh.clone());
+          return fresh;
+        } catch {
+          return Response.error();
+        }
+      })(),
+    );
+    return;
+  }
+  if (url.origin !== location.origin || url.pathname.startsWith("/api/")) return;
 
   // Pages : réseau d'abord (nouvelle version), copie locale si hors ligne.
   if (event.request.mode === "navigate") {

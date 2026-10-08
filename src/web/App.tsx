@@ -110,7 +110,7 @@ function PinScreen({ onPin, onForgot }: { onPin: (pin: string) => Promise<boolea
   return (
     <div className="auth">
       <form className="card auth-card" onSubmit={submit}>
-        <div className="brand"><span className="brand-mark">G</span><span>Gestia</span></div>
+        <GestiaLogo full />
         <h1>Appareil verrouillé</h1>
         <p className="muted">Saisissez votre code PIN pour ouvrir l'application.</p>
         <label>
@@ -159,10 +159,7 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
   return (
     <div className="auth">
       <form className="card auth-card" onSubmit={submit}>
-        <div className="brand">
-          <span className="brand-mark">G</span>
-          <span>Gestia</span>
-        </div>
+        <GestiaLogo full />
         {mode === "checking" ? (
           <p className="muted">Vérification…</p>
         ) : (
@@ -276,14 +273,30 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
   );
 }
 
-/** Nom et logo de l'entreprise tels que définis dans les réglages. */
+/** Logo Gestia, en version claire ou sombre selon le thème de l'appareil. */
+function GestiaLogo({ full = false }: { full?: boolean }) {
+  const base = full ? "gestia-logo" : "gestia-logo-sans-slogan";
+  const cls = full ? "auth-logo" : "gestia-logo";
+  return (
+    <>
+      <img src={`/brand/${base}.png`} alt="Gestia" className={`${cls} light`} />
+      <img src={`/brand/${base}-blanc.png`} alt="Gestia" className={`${cls} dark`} />
+    </>
+  );
+}
+
+/** Gestia, puis le nom (ou le logo) de l'entreprise cliente tels que définis dans les réglages. */
 function CompanyBrand({ fallback }: { fallback: string }) {
   const s = useSettings();
   const logo = typeof s.logo === "string" && s.logo ? s.logo : null;
   return (
     <div className="brand">
-      {logo ? <img src={logo} alt="" className="brand-logo" /> : <span className="brand-mark">G</span>}
-      <span>{text(s.name) || fallback}</span>
+      <GestiaLogo />
+      <span className="brand-sep" aria-hidden="true" />
+      <span className="company">
+        {logo && <img src={logo} alt="" className="brand-logo" />}
+        <span>{text(s.name) || fallback}</span>
+      </span>
     </div>
   );
 }

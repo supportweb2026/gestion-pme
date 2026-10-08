@@ -56,6 +56,8 @@ try {
 
   step("A : création de l'entreprise, réglages, client et article");
   await A.page.goto(BASE);
+  await A.page.getByLabel("Nom de l'entreprise").waitFor();
+  await shot(A.page, "accueil.png");
   await A.page.getByLabel("Nom de l'entreprise").fill("Sodepsi");
   await A.page.getByLabel("Votre nom").fill("Johann");
   await A.page.getByLabel("E-mail").fill("admin@sodepsi.ga");
