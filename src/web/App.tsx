@@ -110,7 +110,7 @@ function PinScreen({ onPin, onForgot }: { onPin: (pin: string) => Promise<boolea
   return (
     <div className="auth">
       <form className="card auth-card" onSubmit={submit}>
-        <div className="brand"><span className="brand-mark">G</span><span>Gestion PME</span></div>
+        <div className="brand"><span className="brand-mark">G</span><span>Gestia</span></div>
         <h1>Appareil verrouillé</h1>
         <p className="muted">Saisissez votre code PIN pour ouvrir l'application.</p>
         <label>
@@ -161,7 +161,7 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
       <form className="card auth-card" onSubmit={submit}>
         <div className="brand">
           <span className="brand-mark">G</span>
-          <span>Gestion PME</span>
+          <span>Gestia</span>
         </div>
         {mode === "checking" ? (
           <p className="muted">Vérification…</p>

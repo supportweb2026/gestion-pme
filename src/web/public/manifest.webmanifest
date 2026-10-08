@@ -1,6 +1,6 @@
 {
-  "name": "Gestion PME",
-  "short_name": "Gestion",
+  "name": "Gestia",
+  "short_name": "Gestia",
   "description": "Factures, dépenses, comptabilité et projets, même sans connexion.",
   "lang": "fr",
   "start_url": "/",

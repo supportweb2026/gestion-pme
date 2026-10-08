@@ -1,6 +1,6 @@
-# Gestion PME
+# Gestia
 
-Logiciel de gestion pour PME (zone OHADA) : facturation, dépenses, comptabilité SYSCOHADA,
+Gestia : logiciel de gestion pour PME (zone OHADA) : facturation, dépenses, comptabilité SYSCOHADA,
 projets et tableau de bord, **utilisable sans connexion** et synchronisé entre appareils.
 Hébergement entièrement dans l'offre gratuite de Cloudflare.
 
