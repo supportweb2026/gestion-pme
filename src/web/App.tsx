@@ -12,6 +12,8 @@ import { Expenses } from "./screens/Expenses.tsx";
 import { Settings } from "./screens/Settings.tsx";
 import { Accounting } from "./screens/Accounting.tsx";
 import { Projects } from "./screens/Projects.tsx";
+import { MyDay } from "./screens/MyDay.tsx";
+import { useTeamReconcile } from "./screens/team.ts";
 import { Platform } from "./screens/Platform.tsx";
 import { useInstall } from "./device.ts";
 import { formatDate } from "./subscription.tsx";
@@ -326,8 +328,13 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
   }, [moreOpen]);
   const groups = navGroups(ready, soon);
   // Téléphone : quatre raccourcis en bas d'écran, le reste dans « Plus ».
-  const mobileMain = MOBILE_MAIN.filter((t) => ready.includes(t)).slice(0, 4);
+  // « Ma journée » d'abord quand c'est le premier écran du rôle (employé).
+  const mobileOrder: Tab[] = ready[0] === "my_day" ? ["my_day", ...MOBILE_MAIN] : MOBILE_MAIN;
+  const mobileMain = mobileOrder.filter((t) => ready.includes(t)).slice(0, 4);
   const mobileMore = tabs.filter((t) => !mobileMain.includes(t));
+
+  // Annuaire d'équipe : fiches créées pour chaque compte (direction, en ligne).
+  useTeamReconcile(db, session);
 
   useEffect(() => {
     sync.start();
@@ -472,7 +479,8 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
           {tab === "expenses" && !COMING_SOON.expenses && <Expenses />}
           {tab === "clients" && <Clients />}
           {tab === "articles" && <Articles />}
-          {tab === "projects" && !COMING_SOON.projects && <Projects />}
+          {tab === "my_day" && <MyDay />}
+          {tab === "projects" && !COMING_SOON.projects && <Projects open={open} />}
           {tab === "accounting" && !COMING_SOON.accounting && <Accounting />}
           {tab === "settings" && <Settings />}
           {tab === "platform" && session.user.platformAdmin && <Platform />}
@@ -547,7 +555,7 @@ function navGroups(ready: Tab[], soon: Tab[]): NavGroup[] {
 
 const TAB_ICONS: Record<Tab, IconName> = {
   dashboard: "home", gains: "chart", quotes: "quote", invoices: "invoice", credit_notes: "credit", expenses: "wallet",
-  clients: "users", articles: "box", projects: "folder", accounting: "ledger", settings: "gear", platform: "shield",
+  clients: "users", articles: "box", my_day: "today", projects: "folder", accounting: "ledger", settings: "gear", platform: "shield",
 };
 
 /** Lien du menu. Un module pas encore ouvert est grisé et porte la mention « Bientôt ». */
@@ -568,8 +576,9 @@ function NavItem({ tab, active, onClick, short = false, tip = false }: { tab: Ta
   );
 }
 
-type IconName = "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more" | "close" | "clock" | "chart" | "collapse" | "expand";
+type IconName = "today" | "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more" | "close" | "clock" | "chart" | "collapse" | "expand";
 const ICON_PATHS: Record<IconName, string[]> = {
+  today: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 7v5l3 2", "M12 3V1.5", "M9.5 1.5h5"],
   home: ["M3 10.5 12 3l9 7.5", "M5 9.5V20h14V9.5", "M10 20v-6h4v6"],
   quote: ["M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z", "M14 3v5h5", "M8.5 13h7", "M8.5 17h4"],
   invoice: ["M6 3h12v18l-3-2-3 2-3-2-3 2z", "M9 8h6", "M9 12h6", "M9 16h3"],
