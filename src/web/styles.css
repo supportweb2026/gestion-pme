@@ -1164,3 +1164,12 @@ button.reason.selected .radio-dot { border: 5px solid var(--accent); }
 .remind-tag { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #FDF1E7; color: #9A4A12; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
 .remind-step { margin: -4px 0 4px; font-size: 0.8125rem; color: var(--ink-2); }
 .remind-step .remind-tag { margin-left: 0; }
+
+/* ── Lot 5 : factures récurrentes ──────────────────────────────────── */
+.recur-tag { color: var(--brand-blue); }
+.recurrence-card .recur-status { margin: 0; font-size: 0.875rem; color: var(--ink-2); line-height: 1.5; }
+.recurrence-card .recur-status b { color: var(--ink); }
+.recur-form { display: grid; gap: 10px; }
+.recur-form .form-actions { margin-top: 2px; }
+.recur-list { margin-top: 4px; }
+.recur-origin .link { font-weight: 600; }

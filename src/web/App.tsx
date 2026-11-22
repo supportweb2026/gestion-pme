@@ -14,6 +14,7 @@ import { Accounting } from "./screens/Accounting.tsx";
 import { Projects } from "./screens/Projects.tsx";
 import { MyDay } from "./screens/MyDay.tsx";
 import { useTeamReconcile } from "./screens/team.ts";
+import { useRecurringInvoices } from "./recurring.ts";
 import { Platform } from "./screens/Platform.tsx";
 import { useInstall } from "./device.ts";
 import { formatDate } from "./subscription.tsx";
@@ -381,6 +382,8 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
 
   // Annuaire d'équipe : fiches créées pour chaque compte (direction, en ligne).
   useTeamReconcile(db, session);
+  // Factures récurrentes : brouillons préparés à chaque échéance.
+  useRecurringInvoices(db, session);
 
   useEffect(() => {
     sync.start();
