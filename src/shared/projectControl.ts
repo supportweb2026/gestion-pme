@@ -3,7 +3,7 @@
  * Fonctions pures, sans accès réseau ni stockage : la date du jour est passée en paramètre.
  */
 import type { Rec } from "./projects.ts";
-import { teamMemberIdOf } from "./projectRules.ts";
+import { decidedState, decisionsOfStage, teamMemberIdOf } from "./projectRules.ts";
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -181,17 +181,18 @@ export function averageCost(members: Rec[], costRates: Rec[]): number {
 // ======================================================================
 
 /** Statut calculé d'une étape (§3.7) : jamais stocké. */
-export type StageState = "upcoming" | "active" | "awaiting" | "approved" | "approved_reserves" | "stopped";
+export type StageState = "upcoming" | "active" | "awaiting" | "approved" | "approved_reserves" | "paused" | "stopped";
 export const STAGE_STATE_LABELS: Record<StageState, string> = {
   upcoming: "À venir",
   active: "En cours",
   awaiting: "À valider",
   approved: "Validée",
   approved_reserves: "Validée avec réserves",
+  paused: "En pause",
   stopped: "Arrêtée",
 };
 export const STAGE_STATE_TONES: Record<StageState, string> = {
-  upcoming: "", active: "info", awaiting: "warn", approved: "ok", approved_reserves: "ok", stopped: "danger",
+  upcoming: "", active: "info", awaiting: "warn", approved: "ok", approved_reserves: "ok", paused: "warn", stopped: "danger",
 };
 /** Plafond de l'avancement d'une étape non validée (CDC F8). */
 export const STAGE_CAP = 0.95;
@@ -206,24 +207,23 @@ export function stagesOf<T extends Rec>(projectId: string, stages: T[]): T[] {
     .sort((a, b) => num(a.data.rank) - num(b.data.rank) || str(a.data.name).localeCompare(str(b.data.name)) || a.id.localeCompare(b.id));
 }
 
-/** Décisions d'une étape, triées (decided_at, id). La table arrive au lot 3 : liste vide en attendant. */
+/** Décisions d'une étape, triées (decided_at, id) : la dernière fait foi. */
 export function stageDecisions(stageId: string, decisions: Rec[] = []): Rec[] {
-  return decisions.filter((d) => live(d) && d.data.stage_id === stageId)
-    .sort((a, b) => str(a.data.decided_at).localeCompare(str(b.data.decided_at)) || a.id.localeCompare(b.id));
+  return decisionsOfStage(stageId, decisions);
 }
 
 /**
- * Statut d'une étape : la dernière décision fait foi (une réouverture annule la validation) ;
- * sans décision, « À valider » si la validation a été demandée, « En cours » si elle a
+ * Statut d'une étape : la dernière décision fait foi (validée, arrêtée, en pause ; une
+ * réouverture ou une reprise annule la précédente). Sans décision en vigueur, « À valider »
+ * si la validation a été demandée (après la dernière décision), « En cours » si elle a
  * démarré (à la main, ou par une de ses tâches commencée, RG4.1), « À venir » sinon.
  */
 export function stageState(stage: Rec, tasks: Rec[], decisions: Rec[] = []): StageState {
+  const decided = decidedState(stage.id, decisions);
+  if (decided) return decided;
   const last = stageDecisions(stage.id, decisions).at(-1);
-  const kind = str(last?.data.kind);
-  if (kind === "stage_approved") return "approved";
-  if (kind === "stage_approved_with_reserves") return "approved_reserves";
-  if (kind === "stage_stopped" || kind === "project_stopped") return "stopped";
-  if (stage.data.review_requested_at) return "awaiting";
+  const requested = str(stage.data.review_requested_at);
+  if (requested && (!last || requested > str(last.data.decided_at))) return "awaiting";
   if (stage.data.started_at) return "active";
   const started = tasks.some((t) => live(t) && t.data.stage_id === stage.id && ["doing", "review", "done"].includes(str(t.data.status)));
   return started ? "active" : "upcoming";
@@ -574,13 +574,26 @@ export function projectOfQuote<T extends Rec>(quote: Rec, projects: T[]): T | nu
 /** Toutes les tâches de l'étape sont terminées (avancement au plafond, sans validation). */
 export const stageTasksDone = (i: StageInfo) => i.tasks > 0 && i.progress >= STAGE_CAP - 1e-9;
 
-export function nextDeadline(project: Rec, stages: StageInfo[], today: string): { label: string; date: string } | null {
-  // Une étape dont toutes les tâches sont terminées n'a plus d'échéance à tenir (elle attend sa validation).
-  const open = stages.filter((i) => !["approved", "approved_reserves", "stopped"].includes(i.state) && !stageTasksDone(i));
+/**
+ * Prochaine échéance de l'en-tête (lot 3) : la prochaine validation. Une validation demandée
+ * passe en premier, avec sa date de demande ; sinon la première étape non validée, dans l'ordre,
+ * à sa date de fin prévue. Une étape dont toutes les tâches sont terminées n'a plus d'échéance
+ * dépassée : elle attend qu'on demande sa validation. Sans étape : la fin du projet.
+ */
+export function nextDeadline(project: Rec, stages: StageInfo[], today: string): { label: string; date: string; note?: string } | null {
+  const open = stages.filter((i) => !["approved", "approved_reserves", "stopped"].includes(i.state));
   const awaiting = open.find((i) => i.state === "awaiting");
-  if (awaiting) return { label: `Validation de ${str(awaiting.stage.data.name)}`, date: str(awaiting.stage.data.end_date) };
-  const next = open.filter((i) => str(i.stage.data.end_date)).sort((a, b) => str(a.stage.data.end_date).localeCompare(str(b.stage.data.end_date)))[0];
-  if (next) return { label: `Fin de ${str(next.stage.data.name)}`, date: str(next.stage.data.end_date) };
+  if (awaiting) {
+    const asked = str(awaiting.stage.data.review_requested_at).slice(0, 10);
+    const note = str(awaiting.stage.data.review_note).trim();
+    return { label: `Validation de ${str(awaiting.stage.data.name)}`, date: "", note: note || (asked ? `demandée le ${asked.slice(8, 10)}/${asked.slice(5, 7)}` : "demandée") };
+  }
+  const next = open[0];
+  if (next) {
+    if (next.state === "paused") return { label: `${str(next.stage.data.name)} en pause`, date: "", note: "projet en pause" };
+    if (stageTasksDone(next)) return { label: `Validation de ${str(next.stage.data.name)}`, date: "", note: "tâches terminées, validation à demander" };
+    return { label: `Validation de ${str(next.stage.data.name)}`, date: str(next.stage.data.end_date) };
+  }
   if (str(project.data.end_date)) return { label: "Fin du projet", date: str(project.data.end_date) };
   void today;
   return null;

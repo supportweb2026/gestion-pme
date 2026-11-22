@@ -37,7 +37,7 @@ export async function prepareReceipt(file: File): Promise<Blob> {
 }
 
 /** Affiche un justificatif : copie locale, sinon téléchargé puis gardé pour la suite. */
-export function ReceiptViewer({ id, onClose }: { id: string; onClose: () => void }) {
+export function ReceiptViewer({ id, onClose, title = "Justificatif", alt = "Justificatif de dépense" }: { id: string; onClose: () => void; title?: string; alt?: string }) {
   const { db } = useApp();
   const [url, setUrl] = useState<string | null>(null);
   const [type, setType] = useState("");
@@ -62,16 +62,16 @@ export function ReceiptViewer({ id, onClose }: { id: string; onClose: () => void
     return () => { if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [db, id]);
   return (
-    <div className="print-overlay" role="dialog" aria-label="Justificatif" onClick={onClose}>
+    <div className="print-overlay" role="dialog" aria-label={title} onClick={onClose}>
       <div className="print-toolbar" onClick={(e) => e.stopPropagation()}>
-        <span>Justificatif</span>
+        <span>{title}</span>
         {url && <a className="button" href={url} download={`justificatif-${id}`}>Télécharger</a>}
         <button onClick={onClose}>Fermer</button>
       </div>
       <div className="receipt-view" onClick={(e) => e.stopPropagation()}>
         {error ? <p className="notice">{error}</p> : !url ? <p className="muted">Chargement…</p>
-          : type === "application/pdf" ? <iframe src={url} title="Justificatif PDF" />
-          : <img src={url} alt="Justificatif de dépense" />}
+          : type === "application/pdf" ? <iframe src={url} title={`${title} (PDF)`} />
+          : <img src={url} alt={alt} />}
       </div>
     </div>
   );

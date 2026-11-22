@@ -19,6 +19,7 @@ import {
   QUOTE_TYPES, quoteTypeOf, sectionSubtotals, type QuoteType,
 } from "../../shared/documents.ts";
 import { QuoteProjectBanner } from "./projects/QuoteProjectBanner.tsx";
+import { useValidateOnOpen } from "../projectInvoices.ts";
 import { canShareFiles, downloadFile, makePdfFile, shareFile } from "../pdfActions.ts";
 import { useStock } from "../stock.ts";
 import { defaultNote } from "../../shared/branding.ts";
@@ -385,6 +386,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       setBusy(false);
     }
   }
+
+  // Facture de jalon avec « Valider la facture tout de suite » (Projets, lot 3) : même validation, même confirmation.
+  useValidateOnOpen(kind === "invoices" && !numbered ? record?.id : undefined, validate);
 
   async function setQuoteStatus(status: "accepted" | "refused") {
     await db.write("quotes", id, { status, decided_at: new Date().toISOString() });
