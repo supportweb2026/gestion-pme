@@ -27,8 +27,11 @@ export const TASK_STATUS: [string, string][] = [
 ];
 
 export const BILLING_MODES: Record<string, string> = {
-  fixed: "Forfait",
+  stages: "Par étapes",
   time: "Au temps passé",
+  none: "Sans facturation",
+  // Anciens modes, lus comme « par étapes » (lot 2).
+  fixed: "Forfait",
   milestone: "Par jalons",
 };
 

@@ -272,7 +272,7 @@ function DayTask({ item, project, running, chronoBusy, onOpen, onStart }: {
       <button className="day-task-main" onClick={onOpen} aria-label={`${text(t.data.title)} : saisir du temps`}>
         <span className="day-title">{text(t.data.title)}</span>
         <span className="day-meta">
-          {item.reason === "priority" && <span className="tag"><PIcon name="flag" />Priorité de la semaine</span>}
+          {item.reason === "priority" && <span className="tag"><PIcon name="pushpin" />Priorité de la semaine</span>}
           {item.lateDays > 0 && <span className="tag danger"><PIcon name="clock" />En retard {item.lateDays === 1 ? "d'1 jour" : `de ${item.lateDays} jours`}</span>}
           {item.reason === "due" && <span className="tag warn">Échéance aujourd'hui</span>}
           {(text(t.data.status) === "doing") && <span className="tag info">En cours</span>}

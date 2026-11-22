@@ -6,6 +6,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { canRead, checkChange, checkPermission, type Change, type SyncRecord } from "../src/shared/sync.ts";
 import { encodeHlc } from "../src/shared/hlc.ts";
+import { sentence } from "../src/web/local/guard.ts";
 import {
   billingShareTotal, canPin, isoWeek, myDay, nextDeadline, pct100, periodPlanned, planStageDates, projectFromQuote, projectIdForQuote,
   projectOfQuote, projectProgress, projectSeed, quoteNet, soldOf, stageAmounts, stageProgress, stageState, stageWeights, taskWeight,
@@ -261,15 +262,15 @@ test("Étapes : contenu contrôlé (projet figé, nom, part entre 0 et 100, date
   assert.equal(checkChange(s, change("project_stages", "stg-1", { _deleted: true })), null);
 });
 
-test("Étapes : l'employé les lit mais ne les écrit pas ; le chef de projet les écrit", () => {
+test("Étapes : l'employé les lit mais ne les écrit pas ; qui gère le projet les écrit", () => {
   const emp = { userId: "u-j", role: "employee" };
   const pm = { userId: "u-o", role: "project_manager" };
   const c = change("project_stages", "stg-1", { project_id: "prj-1", name: "A" });
   assert.ok(checkPermission(emp, null, c));
   assert.equal(checkPermission(pm, null, c), null);
   assert.equal(canRead(emp, "project_stages", ""), true);
-  assert.match(checkPermission(emp, rec("tasks", "tsk-1", { project_id: "prj-1", status: "todo" }), change("tasks", "tsk-1", { stage_id: "stg-1" }))!, /suivi/, "un employé ne change pas l'étape (R9)");
-  assert.match(checkPermission(emp, rec("tasks", "tsk-1", { project_id: "prj-1", status: "todo" }), change("tasks", "tsk-1", { priority_week: "2026-W48" }))!, /suivi/);
+  assert.match(checkPermission(emp, rec("tasks", "tsk-1", { project_id: "prj-1", status: "todo" }), change("tasks", "tsk-1", { stage_id: "stg-1" }))!, /seulement l'avancement/, "un employé ne change pas l'étape (R9)");
+  assert.match(checkPermission(emp, rec("tasks", "tsk-1", { project_id: "prj-1", status: "todo" }), change("tasks", "tsk-1", { priority_week: "2026-W48" }))!, /seulement l'avancement/);
   assert.match(checkChange(null, change("tasks", "tsk-1", { priority_week: "semaine 48" }))!, /semaine/);
 });
 
@@ -280,4 +281,37 @@ test("RG3.2 : un devis envoyé reçoit son projet une seule fois, sans rien d'au
   assert.match(checkChange(linked, change("quotes", "dv-1", { project_id: "prj-autre" }))!, /déjà rattaché/);
   assert.match(checkChange(linked, change("quotes", "dv-1", { project_id: "" }))!, /déjà rattaché/);
   assert.match(checkChange(sent, change("quotes", "dv-1", { lines: [] }))!, /numéroté/, "le reste du devis reste figé");
+});
+
+test("Refus du lot 2 à l'écran : une phrase qui dit le fait, sans renvoyer vers un rôle", () => {
+  const emp = { userId: "u-j", role: "employee" };
+  const linked = rec("quotes", "dv-1", { number: "DV-2026-00001", status: "accepted", project_id: "prj-q-dv-1" });
+  const task = rec("tasks", "tsk-1", { project_id: "prj-1", status: "todo" });
+  const reasons = [
+    checkPermission(emp, null, change("project_stages", "stg-1", { project_id: "prj-1", name: "A" })),
+    checkPermission(emp, task, change("tasks", "tsk-1", { stage_id: "stg-1" })),
+    checkPermission(emp, task, change("tasks", "tsk-1", { priority_week: "2026-W48" })),
+    checkChange(linked, change("quotes", "dv-1", { project_id: "prj-autre" })),
+    checkChange(null, change("project_stages", "stg-1", { project_id: "prj-1", name: " " })),
+    checkChange(null, change("project_stages", "stg-1", { project_id: "prj-1", name: "A", billing_pct: 120 })),
+    checkChange(null, change("project_stages", "stg-1", { project_id: "prj-1", name: "A", owner_id: "x" })),
+    checkChange(null, change("project_stages", "stg-1", { project_id: "prj-1", name: "A", start_date: "2026-11-10", end_date: "2026-11-01" })),
+  ];
+  for (const r of reasons) {
+    assert.ok(r, "refus attendu");
+    assert.doesNotMatch(sentence(r!), /chef de projet|direction|demandez|responsable verra|un employé|réservée? /i, r!);
+    assert.match(sentence(r!), /^[A-ZÀ-Ý].*\.$/);
+  }
+});
+
+test("Étape aux tâches toutes terminées : plus d'échéance dépassée tant qu'elle attend sa validation", async () => {
+  const { nextDeadline, stageTasksDone } = await import("../src/shared/projectControl.ts");
+  const stage = (id: string, end: string) => ({ id, data: { project_id: "prj-1", name: id, end_date: end } });
+  const info = (s: Rec, tasks: number, progress: number) => ({ stage: s, state: "active" as const, progress, planned: null, weight: 1, tasks, deliverables: 0, deliverablesDone: 0 });
+  const a = info(stage("Démarrage", "2026-11-12"), 1, 0.95);
+  const b = info(stage("Réalisation", "2026-12-07"), 3, 0.33);
+  assert.equal(stageTasksDone(a), true);
+  assert.equal(stageTasksDone(b), false);
+  assert.equal(stageTasksDone(info(stage("Vide", "2026-11-12"), 0, 0)), false);
+  assert.deepEqual(nextDeadline({ id: "prj-1", data: {} }, [a, b], "2026-11-22"), { label: "Fin de Réalisation", date: "2026-12-07" });
 });

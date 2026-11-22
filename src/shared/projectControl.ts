@@ -571,8 +571,12 @@ export function projectOfQuote<T extends Rec>(quote: Rec, projects: T[]): T | nu
 
 // ---- Prochaine échéance (en-tête, F1) ----
 
+/** Toutes les tâches de l'étape sont terminées (avancement au plafond, sans validation). */
+export const stageTasksDone = (i: StageInfo) => i.tasks > 0 && i.progress >= STAGE_CAP - 1e-9;
+
 export function nextDeadline(project: Rec, stages: StageInfo[], today: string): { label: string; date: string } | null {
-  const open = stages.filter((i) => !["approved", "approved_reserves", "stopped"].includes(i.state));
+  // Une étape dont toutes les tâches sont terminées n'a plus d'échéance à tenir (elle attend sa validation).
+  const open = stages.filter((i) => !["approved", "approved_reserves", "stopped"].includes(i.state) && !stageTasksDone(i));
   const awaiting = open.find((i) => i.state === "awaiting");
   if (awaiting) return { label: `Validation de ${str(awaiting.stage.data.name)}`, date: str(awaiting.stage.data.end_date) };
   const next = open.filter((i) => str(i.stage.data.end_date)).sort((a, b) => str(a.stage.data.end_date).localeCompare(str(b.stage.data.end_date)))[0];
