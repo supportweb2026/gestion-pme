@@ -304,6 +304,11 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
     return saved && ready.includes(saved) ? saved : (ready[0] ?? tabs[0]);
   });
   const [open, setOpen] = useState<string | null>(null);
+  const [moreOpen, setMoreOpen] = useState(false);
+  const groups = navGroups(ready, soon);
+  // Téléphone : quatre raccourcis en bas d'écran, le reste dans « Plus ».
+  const mobileMain = MOBILE_MAIN.filter((t) => ready.includes(t)).slice(0, 4);
+  const mobileMore = tabs.filter((t) => !mobileMain.includes(t));
 
   useEffect(() => {
     sync.start();
@@ -351,40 +356,79 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
   return (
     <Ctx.Provider value={{ db, sync, session, logout, go }}>
       <div className="app">
-        <div className="app-head">
-          <header className="topbar">
-            <CompanyBrand fallback={session.company.name} />
+        <aside className="sidebar">
+          <div className="side-brand">
+            <GestiaLogo />
+            <CompanyName fallback={session.company.name} />
+          </div>
+          <nav className="side-nav" aria-label="Sections">
+            {groups.map((g) => (
+              <div className="nav-group" key={g.label}>
+                {g.label && <div className="nav-group-label" id={`grp-${g.key}`}>{g.label}</div>}
+                <ul aria-labelledby={g.label ? `grp-${g.key}` : undefined}>
+                  {g.tabs.map((t) => (
+                    <li key={t}><NavItem tab={t} active={tab === t} onClick={() => go(t)} /></li>
+                  ))}
+                </ul>
+              </div>
+            ))}
+          </nav>
+          <div className="side-foot">
+            <InstallButton />
             <SyncPill onAuthLost={(revoked) => { sync.stop(); onLogout(revoked); }} />
-            <div className="user">
-              <InstallButton />
+            <div className="user-id">
+              <span className="avatar" aria-hidden="true">{initials(session.user.name)}</span>
+              <span className="user-text">
+                <span className="user-name">{session.user.name}</span>
+                <span className="user-role">{ROLE_LABELS[session.user.role] ?? session.user.role}</span>
+              </span>
+              <button className="icon" onClick={logout} title="Se déconnecter" aria-label="Déconnexion">
+                <Icon name="logout" />
+              </button>
+            </div>
+          </div>
+        </aside>
+
+        <header className="mobile-head">
+          <GestiaLogo />
+          <CompanyName fallback={session.company.name} />
+          <SyncDot />
+        </header>
+        <nav className="bottom-nav" aria-label="Sections">
+          {mobileMain.map((t) => (
+            <NavItem key={t} tab={t} active={tab === t && !moreOpen} onClick={() => { setMoreOpen(false); go(t); }} short />
+          ))}
+          {mobileMore.length > 0 && (
+            <button className={moreOpen || (mobileMore.includes(tab)) ? "nav-item active" : "nav-item"} aria-expanded={moreOpen} onClick={() => setMoreOpen((o) => !o)}>
+              <Icon name="more" /><span className="nav-label">Plus</span>
+            </button>
+          )}
+          {moreOpen && (
+            <div className="more-sheet" role="dialog" aria-label="Autres sections">
+              {groups.map((g) => {
+                const items = g.tabs.filter((t) => mobileMore.includes(t));
+                if (items.length === 0) return null;
+                return (
+                  <div className="nav-group" key={g.label}>
+                    {g.label && <div className="nav-group-label">{g.label}</div>}
+                    {items.map((t) => <NavItem key={t} tab={t} active={tab === t} onClick={() => { setMoreOpen(false); go(t); }} />)}
+                  </div>
+                );
+              })}
               <div className="user-id">
                 <span className="avatar" aria-hidden="true">{initials(session.user.name)}</span>
                 <span className="user-text">
                   <span className="user-name">{session.user.name}</span>
                   <span className="user-role">{ROLE_LABELS[session.user.role] ?? session.user.role}</span>
                 </span>
-                <button className="icon" onClick={logout} title="Déconnexion" aria-label="Déconnexion">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" />
-                  </svg>
-                </button>
+                <button className="ghost small" onClick={logout}>Se déconnecter</button>
               </div>
             </div>
-          </header>
-          <nav className="tabs" aria-label="Sections">
-            {ready.map((t) => (
-              <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => go(t)} aria-current={tab === t}>
-                {TAB_LABELS[t]}
-              </button>
-            ))}
-            {soon.length > 0 && <span className="tab-sep" aria-hidden="true" />}
-            {soon.map((t) => (
-              <button key={t} className={tab === t ? "tab soon active" : "tab soon"} onClick={() => go(t)} aria-current={tab === t} title="Bientôt disponible">
-                {TAB_LABELS[t]} <span className="soon-badge">Bientôt</span>
-              </button>
-            ))}
-          </nav>
-        </div>
+          )}
+        </nav>
+        {moreOpen && <div className="sheet-backdrop" onClick={() => setMoreOpen(false)} aria-hidden="true" />}
+
+        <div className="main">
         <SubscriptionBanner />
         <main className="content">
           {tab === "dashboard" && <Dashboard />}
@@ -400,6 +444,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
           {tab === "settings" && <Settings />}
           {tab === "platform" && session.user.platformAdmin && <Platform />}
         </main>
+        </div>
         <RejectedNotice />
       </div>
     </Ctx.Provider>
@@ -438,20 +483,107 @@ function GestiaLogo({ full = false }: { full?: boolean }) {
   );
 }
 
-/** Gestia, puis le nom (ou le logo) de l'entreprise cliente tels que définis dans les réglages. */
-function CompanyBrand({ fallback }: { fallback: string }) {
+/** Nom (ou logo) de l'entreprise cliente tel que défini dans les réglages. */
+function CompanyName({ fallback }: { fallback: string }) {
   const s = useSettings();
   const logo = typeof s.logo === "string" && s.logo ? s.logo : null;
+  const name = text(s.name) || fallback;
   return (
-    <div className="brand">
-      <GestiaLogo />
-      <span className="brand-sep" aria-hidden="true" />
-      <span className="company">
-        {logo && <img src={logo} alt="" className="brand-logo" />}
-        <span>{text(s.name) || fallback}</span>
-      </span>
-    </div>
+    <span className="company" title={name}>
+      {logo && <img src={logo} alt="" className="brand-logo" />}
+      <span>{name}</span>
+    </span>
   );
+}
+
+/** Ordre des raccourcis en bas d'écran sur téléphone. */
+const MOBILE_MAIN: Tab[] = ["dashboard", "invoices", "quotes", "clients", "projects", "expenses"];
+
+type NavGroup = { key: string; label: string | null; tabs: Tab[] };
+
+/** Menu groupé par usage : accueil, ventes, fichiers, modules à venir, puis administration. */
+function navGroups(ready: Tab[], soon: Tab[]): NavGroup[] {
+  const pick = (list: Tab[]) => list.filter((t) => ready.includes(t));
+  const used = new Set<Tab>(["dashboard", "quotes", "invoices", "credit_notes", "clients", "articles", "settings", "platform"]);
+  const groups: NavGroup[] = [
+    { key: "home", label: null, tabs: pick(["dashboard"]) },
+    { key: "sales", label: "Ventes", tabs: pick(["quotes", "invoices", "credit_notes"]) },
+    { key: "files", label: "Fichiers", tabs: pick(["clients", "articles"]) },
+    { key: "other", label: "Gestion", tabs: ready.filter((t) => !used.has(t)) },
+    { key: "soon", label: "À venir", tabs: soon },
+    { key: "admin", label: "Administration", tabs: pick(["settings", "platform"]) },
+  ];
+  return groups.filter((g) => g.tabs.length > 0);
+}
+
+const TAB_ICONS: Record<Tab, IconName> = {
+  dashboard: "home", quotes: "quote", invoices: "invoice", credit_notes: "credit", expenses: "wallet",
+  clients: "users", articles: "box", projects: "folder", accounting: "ledger", settings: "gear", platform: "shield",
+};
+
+/** Lien du menu. Un module pas encore ouvert est grisé et porte la mention « Bientôt ». */
+function NavItem({ tab, active, onClick, short = false }: { tab: Tab; active: boolean; onClick: () => void; short?: boolean }) {
+  const soon = Boolean(COMING_SOON[tab]);
+  const label = short && tab === "dashboard" ? "Accueil" : TAB_LABELS[tab];
+  return (
+    <button
+      className={`nav-item${active ? " active" : ""}${soon ? " soon" : ""}`}
+      onClick={onClick}
+      aria-current={active ? "page" : undefined}
+      title={soon ? "Bientôt disponible" : undefined}
+    >
+      <Icon name={TAB_ICONS[tab]} />
+      <span className="nav-label">{label}</span>
+      {soon && <span className="soon-badge">Bientôt</span>}
+    </button>
+  );
+}
+
+type IconName = "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more";
+const ICON_PATHS: Record<IconName, string[]> = {
+  home: ["M3 10.5 12 3l9 7.5", "M5 9.5V20h14V9.5", "M10 20v-6h4v6"],
+  quote: ["M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z", "M14 3v5h5", "M8.5 13h7", "M8.5 17h4"],
+  invoice: ["M6 3h12v18l-3-2-3 2-3-2-3 2z", "M9 8h6", "M9 12h6", "M9 16h3"],
+  credit: ["M6 3h12v18l-3-2-3 2-3-2-3 2z", "M9 12h6"],
+  wallet: ["M4 7h15a1 1 0 0 1 1 1v11a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a2 2 0 0 1 2-2h11", "M16 13.5h.01"],
+  users: ["M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M2 21a7 7 0 0 1 14 0", "M16 3.5a4 4 0 0 1 0 7", "M19 14.5a7 7 0 0 1 3 6.5"],
+  box: ["M21 8 12 3 3 8v8l9 5 9-5z", "M3 8l9 5 9-5", "M12 13v8"],
+  folder: ["M3 6a1 1 0 0 1 1-1h5l2 2h9a1 1 0 0 1 1 1v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1z"],
+  ledger: ["M5 4h11a3 3 0 0 1 3 3v13H8a3 3 0 0 1-3-3z", "M5 17a3 3 0 0 1 3-3h11", "M9 8h6"],
+  gear: ["M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z", "M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"],
+  shield: ["M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"],
+  logout: ["M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", "M16 17l5-5-5-5", "M21 12H9"],
+  more: ["M4 6h16", "M4 12h16", "M4 18h16"],
+};
+
+function Icon({ name }: { name: IconName }) {
+  return (
+    <svg className="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {ICON_PATHS[name].map((d) => <path key={d} d={d} />)}
+    </svg>
+  );
+}
+
+/** Version compacte de l'état de synchronisation, pour l'en-tête du téléphone. */
+function SyncDot() {
+  const { sync } = useApp();
+  const s = useSyncStatus();
+  const { label, tone } = syncLabel(s);
+  return (
+    <button className={`sync-dot ${tone}`} onClick={() => sync.syncNow()} title={label} aria-label={label}>
+      <span className="dot" />
+      {s.pending > 0 && <span className="count">{s.pending}</span>}
+    </button>
+  );
+}
+
+/** Libellé et couleur de l'état de synchronisation. Des envois en attente sont normaux : ton neutre, pas d'alerte. */
+function syncLabel(s: ReturnType<typeof useSyncStatus>): { label: string; tone: string } {
+  if (s.state === "syncing") return { label: "Synchronisation…", tone: "info" };
+  if (s.state === "offline") return { label: s.pending > 0 ? `Hors ligne · ${s.pending} à envoyer` : "Hors ligne", tone: "muted" };
+  if (s.state === "error") return { label: s.message ?? "Synchronisation impossible", tone: "warn" };
+  if (s.pending > 0) return { label: `${s.pending} ${s.pending > 1 ? "modifications" : "modification"} à envoyer`, tone: "info" };
+  return { label: "À jour", tone: "ok" };
 }
 
 function SyncPill({ onAuthLost }: { onAuthLost: (revoked: boolean) => void }) {
@@ -461,24 +593,7 @@ function SyncPill({ onAuthLost }: { onAuthLost: (revoked: boolean) => void }) {
     // Compte désactivé ou appareil révoqué : les données locales sont effacées.
     if (s.state === "auth") onAuthLost(/révoqué/.test(s.message ?? ""));
   }, [s.state]);
-  let label: string;
-  let tone: string;
-  if (s.state === "syncing") {
-    label = "Synchronisation…";
-    tone = "info";
-  } else if (s.state === "offline") {
-    label = s.pending > 0 ? `Hors ligne · ${s.pending} en attente` : "Hors ligne";
-    tone = "muted";
-  } else if (s.state === "error") {
-    label = s.message ?? "Erreur de synchronisation";
-    tone = "warn";
-  } else if (s.pending > 0) {
-    label = `${s.pending} en attente`;
-    tone = "warn";
-  } else {
-    label = "À jour";
-    tone = "ok";
-  }
+  const { label, tone } = syncLabel(s);
   return (
     <button className={`pill ${tone}`} onClick={() => sync.syncNow()} title="Synchroniser maintenant" data-testid="sync-pill">
       <span className="dot" />

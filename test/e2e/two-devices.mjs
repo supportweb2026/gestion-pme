@@ -120,7 +120,7 @@ try {
   await B.page.getByLabel("Mode").selectOption("airtel");
   await B.page.getByRole("button", { name: "Enregistrer l'encaissement" }).click();
   await expectDue(B.page, "254 000 FCFA");
-  await pill(B.page).filter({ hasText: /Hors ligne · \d+ en attente/ }).waitFor();
+  await pill(B.page).filter({ hasText: /Hors ligne · \d+ à envoyer/ }).waitFor();
 
   step("B rouvre l'application sans réseau : tout est là");
   await B.page.reload();
