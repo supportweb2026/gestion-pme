@@ -10,13 +10,7 @@ import { computeTotals, lineDiscount, lineNet, lineVat, type InvoiceLine } from 
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../../shared/currency.ts";
 import type { DocTable, SyncRecord } from "../../shared/sync.ts";
 import type { Situation } from "../ledger.ts";
-
-const TITLES: Record<DocTable, string> = { invoices: "Facture", quotes: "Devis", credit_notes: "Avoir" };
-const ARRETE: Record<DocTable, string> = {
-  invoices: "Arrêtée la présente facture",
-  quotes: "Arrêté le présent devis",
-  credit_notes: "Arrêté le présent avoir",
-};
+import { docArrete, docTitle, isSection, quoteTypeOf } from "../../shared/documents.ts";
 
 function Lines({ children }: { children: (string | false | undefined)[] }) {
   return <>{children.filter(Boolean).map((l, i) => <div key={i}>{l}</div>)}</>;
@@ -34,10 +28,13 @@ export function PrintView({ kind, record, client, situation, onClose }: {
   const c = client?.data ?? {};
   const number = text(record.data.number);
   const hasDiscount = lines.some((l) => lineDiscount(l) > 0);
+  const title = docTitle(kind, record.data);
+  const delivery = kind === "quotes" && quoteTypeOf(record.data) === "delivery";
 
   // TVA ventilée par taux, comme l'exige une facture.
   const vatByRate = new Map<number, { base: number; vat: number }>();
   for (const l of lines) {
+    if (isSection(l)) continue;
     const cur = vatByRate.get(l.vatRate) ?? { base: 0, vat: 0 };
     vatByRate.set(l.vatRate, { base: cur.base + lineNet(l, decimals), vat: cur.vat + lineVat(l, decimals) });
   }
@@ -54,7 +51,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
 
   useEffect(() => {
     const previous = document.title;
-    document.title = `${TITLES[kind]} ${number}`; // nom proposé pour le fichier PDF
+    document.title = `${title} ${number}`; // nom proposé pour le fichier PDF
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", onKey);
     return () => {
@@ -64,7 +61,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
   }, [kind, number, onClose]);
 
   return (
-    <div className="print-overlay" role="dialog" aria-label={`Aperçu ${TITLES[kind]} ${number}`}>
+    <div className="print-overlay" role="dialog" aria-label={`Aperçu ${title} ${number}`}>
       <div className="print-toolbar">
         <span>Aperçu avant impression</span>
         <button className="primary" onClick={downloadPdf} disabled={busy}>Télécharger le PDF</button>
@@ -79,7 +76,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
             <Lines>{[text(s.address), text(s.city), text(s.phone) && `Tél. ${text(s.phone)}`, text(s.email)]}</Lines>
           </div>
           <div className="ps-title">
-            <div className="ps-doc">{TITLES[kind]}</div>
+            <div className="ps-doc">{title}</div>
             <div className="ps-number">N° {number}</div>
             <div>Date : {formatDate(record.data.date)}</div>
             {kind === "invoices" && record.data.due_date ? <div>Échéance : {formatDate(record.data.due_date)}</div> : null}
@@ -97,10 +94,16 @@ export function PrintView({ kind, record, client, situation, onClose }: {
 
         <table className="ps-lines">
           <thead>
-            <tr><th>Désignation</th><th className="r">Qté</th><th className="r">P.U. HT</th>{hasDiscount && <th className="r">Remise</th>}<th className="r">TVA</th><th className="r">Montant HT</th></tr>
+            {delivery
+              ? <tr><th>Désignation</th><th className="r">Quantité</th></tr>
+              : <tr><th>Désignation</th><th className="r">Qté</th><th className="r">P.U. HT</th>{hasDiscount && <th className="r">Remise</th>}<th className="r">TVA</th><th className="r">Montant HT</th></tr>}
           </thead>
           <tbody>
-            {lines.map((l, i) => (
+            {lines.map((l, i) => isSection(l) ? (
+              <tr key={i} className="ps-section"><td colSpan={delivery ? 2 : hasDiscount ? 6 : 5}><strong>{l.label}</strong></td></tr>
+            ) : delivery ? (
+              <tr key={i}><td>{l.label}</td><td className="r">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td></tr>
+            ) : (
               <tr key={i}>
                 <td>{l.label}</td>
                 <td className="r">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td>
@@ -113,9 +116,9 @@ export function PrintView({ kind, record, client, situation, onClose }: {
           </tbody>
         </table>
 
-        <div className="ps-bottom">
+        {!delivery && <div className="ps-bottom">
           <div className="ps-words">
-            {ARRETE[kind]} à la somme de <strong>{amountInWordsWithCurrency(totals.gross, currency)}</strong> toutes taxes comprises.
+            {docArrete(kind, record.data)} à la somme de <strong>{amountInWordsWithCurrency(totals.gross, currency)}</strong> toutes taxes comprises.
             {text(record.data.notes) && <p className="ps-notes">{text(record.data.notes)}</p>}
           </div>
           <table className="ps-totals">
@@ -139,16 +142,23 @@ export function PrintView({ kind, record, client, situation, onClose }: {
               )}
             </tbody>
           </table>
-        </div>
+        </div>}
 
-        {kind !== "credit_notes" && (text(s.bank) || text(s.mobile_money)) && (
+        {delivery && (
+          <section className="ps-sign">
+            <div className="ps-label">Reçu par le client</div>
+            <div className="muted">Nom, date, signature et cachet</div>
+          </section>
+        )}
+
+        {!delivery && kind !== "credit_notes" && (text(s.bank) || text(s.mobile_money)) && (
           <section className="ps-pay">
             <div className="ps-label">Règlement</div>
             <Lines>{[text(s.bank) && `Virement : ${text(s.bank)}`, text(s.mobile_money) && `Mobile money : ${text(s.mobile_money)}`]}</Lines>
           </section>
         )}
 
-        {kind === "quotes" && (
+        {kind === "quotes" && !delivery && (
           <section className="ps-sign">
             <div className="ps-label">Bon pour accord</div>
             <div className="muted">Date, signature et cachet du client</div>

@@ -12,6 +12,10 @@ import { CURRENCIES, decimalsOf, formatMoney, rateFor } from "../../shared/curre
 import { isNumbered, type DocTable, type SyncRecord } from "../../shared/sync.ts";
 import { currencyOf, invoiceSituations, linesOf, QUOTE_LABELS, quoteStatus, rateOf, SITUATION_LABELS, totalsOf, type Situation } from "../ledger.ts";
 import { PrintView } from "./PrintView.tsx";
+import {
+  applyGlobalDiscount, deductionLines, depositLines, docTitle, isDepositLine, isSection, percentForAmount,
+  QUOTE_TYPES, quoteTypeOf, sectionSubtotals, type QuoteType,
+} from "../../shared/documents.ts";
 import { canShareFiles, downloadFile, makePdfFile, shareFile } from "../pdfActions.ts";
 
 interface DocConfig {
@@ -157,13 +161,13 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
                 const dueDate = text(d.data.due_date ?? d.data.valid_until);
                 return (
                   <tr key={d.id} className="clickable">
-                    <td className="c-num mono"><button className="row-link" onClick={() => setOpen(d.id)}>{text(d.data.number) || <i className="draft-num">Brouillon</i>}</button></td>
+                    <td className="c-num mono"><button className="row-link" onClick={() => setOpen(d.id)}>{text(d.data.number) || <i className="draft-num">Brouillon</i>}</button>{(kind === "quotes" && quoteTypeOf(d.data) !== "quote") || d.data.deposit ? <span className="doc-type">{docTitle(kind, d.data)}</span> : null}</td>
                     <td className="c-client">{clientName(d.data.client_id)}</td>
                     <td className="c-date">{formatDate(d.data.date)}</td>
                     {withDue && <td className={`c-due-date ${st.key === "overdue" || st.key === "expired" ? "danger-text" : "muted"}`}>{dueDate ? formatDate(dueDate) : "—"}</td>}
                     <td className="c-status"><span className={`badge ${st.tone}`}>{st.label}</span></td>
                     {kind === "invoices" && <td className="c-due right mono">{st.key === "draft" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
-                    <td className="c-total right mono">{formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
+                    <td className="c-total right mono">{kind === "quotes" && quoteTypeOf(d.data) === "delivery" ? "—" : formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
                   </tr>
                 );
               })}
@@ -176,9 +180,10 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
 }
 
 function subtitle(kind: DocTable, n: number): string {
-  if (n === 0) return kind === "quotes" ? "Propositions commerciales envoyées à vos clients" : kind === "invoices" ? "Factures émises et suivi des encaissements" : "Corrections et annulations de factures";
-  const one = kind === "quotes" ? "devis" : kind === "invoices" ? "facture" : "avoir";
-  return `${n} ${one}${n > 1 && kind !== "quotes" ? "s" : ""}`;
+  if (n === 0) return kind === "quotes" ? "Devis, factures pro forma, bons de commande et de livraison" : kind === "invoices" ? "Factures émises et suivi des encaissements" : "Corrections et annulations de factures";
+  if (kind === "quotes") return `${n} document${n > 1 ? "s" : ""}`;
+  const one = kind === "invoices" ? "facture" : "avoir";
+  return `${n} ${one}${n > 1 ? "s" : ""}`;
 }
 
 /** Statut affiché d'un document, avec sa couleur : gris brouillon, bleu en cours, ambre partiel, vert réglé, rouge en retard. */
@@ -190,6 +195,11 @@ export function docStatus(kind: DocTable, d: SyncRecord, situations: Map<string,
   }
   if (kind === "quotes") {
     const s = quoteStatus(d);
+    // Un bon de livraison n'est ni accepté ni facturé : il est livré (ou à livrer).
+    if (quoteTypeOf(d.data) === "delivery") {
+      if (s === "draft") return { label: "Brouillon", tone: "", key: s };
+      return s === "accepted" ? { label: "Livré", tone: "ok", key: s } : { label: "À livrer", tone: "info", key: s };
+    }
     const tone = s === "accepted" || s === "invoiced" ? "ok" : s === "expired" ? "danger" : s === "sent" ? "info" : "";
     return { label: QUOTE_LABELS[s] ?? s, tone, key: s };
   }
@@ -222,6 +232,11 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const [message, setMessage] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [docType, setDocType] = useState<QuoteType>(() => quoteTypeOf(record?.data));
+  const [globalDiscount, setGlobalDiscount] = useState("");
+  const qt = QUOTE_TYPES[docType];
+  const one = kind === "quotes" ? qt.label : docTitle(kind, record?.data);
+  const isDelivery = kind === "quotes" && docType === "delivery";
 
   const numbered = isNumbered(record?.data);
   const closedUntil = text(settings.closed_until);
@@ -259,14 +274,18 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
         : Math.round((Number(a.data.cost) / (currency === "XAF" ? 1 : rate || 1)) * 10 ** decimals) / 10 ** decimals,
     });
   };
-  const cleanLines = () => lines.filter((l) => l.label.trim() !== "" || l.unitPrice !== 0);
+  const cleanLines = () => lines.filter((l) => (isSection(l) ? l.label.trim() !== "" : l.label.trim() !== "" || l.unitPrice !== 0));
+  const billable = () => cleanLines().filter((l) => !isSection(l));
 
   function contentPatch(): Record<string, unknown> {
     const p: Record<string, unknown> = {
       client_id: clientId, date, lines: cleanLines(), notes: notes.trim(), currency, rate: currency === "XAF" ? 1 : rate, project_id: projectId,
     };
     if (kind === "invoices") p.due_date = dueDate;
-    if (kind === "quotes") p.valid_until = dueDate;
+    if (kind === "quotes") {
+      p.valid_until = isDelivery ? "" : dueDate;
+      p.doc_type = docType;
+    }
     if (!record) Object.assign(p, { status: "draft", created_by: session.user.id, created_by_name: session.user.name });
     return p;
   }
@@ -279,10 +298,12 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   async function validate() {
     setMessage(null);
     if (!clientId) return setMessage("Choisissez un client.");
-    if (cleanLines().length === 0) return setMessage("Ajoutez au moins une ligne.");
-    if (cleanLines().some((l) => l.qty <= 0 || l.unitPrice < 0)) return setMessage("Vérifiez les quantités et les prix.");
-    if (cleanLines().some((l) => (l.discount ?? 0) < 0 || (l.discount ?? 0) > 100)) return setMessage("Une remise doit être comprise entre 0 et 100 %.");
-    if (cleanLines().some((l) => l.vatRate < 0 || l.vatRate > 100)) return setMessage("Vérifiez les taux de TVA.");
+    if (billable().length === 0) return setMessage("Ajoutez au moins une ligne.");
+    // Seule une déduction d'acompte peut avoir un prix négatif.
+    if (billable().some((l) => l.qty <= 0 || (l.unitPrice < 0 && !l.depositInvoiceId))) return setMessage("Vérifiez les quantités et les prix.");
+    if (billable().some((l) => (l.discount ?? 0) < 0 || (l.discount ?? 0) > 100)) return setMessage("Une remise doit être comprise entre 0 et 100 %.");
+    if (billable().some((l) => l.vatRate < 0 || l.vatRate > 100)) return setMessage("Vérifiez les taux de TVA.");
+    if (totals.gross < 0) return setMessage("Le total ne peut pas être négatif : vérifiez les acomptes déduits.");
     if (kind === "credit_notes" && sourceInvoice) {
       const others = credits
         .filter((c) => c.id !== id && c.data.invoice_id === sourceInvoice.id && c.data.status === "validated")
@@ -290,10 +311,10 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       const max = totalsOf(sourceInvoice).gross - others;
       if (totals.gross > max) return setMessage(`L'avoir dépasse le montant restant de la facture (${fm(max)}).`);
     }
-    if (!confirm(cfg.confirm)) return;
+    if (!confirm(kind === "quotes" && docType !== "quote" ? `${qt.label} : le document va être numéroté et ne pourra plus être modifié. Continuer ?` : cfg.confirm)) return;
     setBusy(true);
     try {
-      const number = await sync.takeNumber(cfg.prefix);
+      const number = await sync.takeNumber(kind === "quotes" ? qt.prefix : cfg.prefix);
       if (!number) {
         return setMessage("Plus de numéro en réserve sur cet appareil. Connectez-vous une fois à internet pour en obtenir.");
       }
@@ -310,14 +331,25 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     await db.write("quotes", id, { status, decided_at: new Date().toISOString() });
   }
 
+  /** Factures d'acompte validées rattachées à ce document. */
+  const deposits = kind === "quotes" && record
+    ? invoices.filter((i) => i.data.quote_id === record.id && i.data.deposit && i.data.status === "validated")
+    : [];
+  const draftDeposits = kind === "quotes" && record
+    ? invoices.filter((i) => i.data.quote_id === record.id && i.data.deposit && i.data.status !== "validated")
+    : [];
+
   async function quoteToInvoice() {
     const invId = db.newId("fa");
+    // Facture de solde : toutes les lignes, moins chaque acompte déjà facturé.
+    const deductions = deposits.flatMap((d) => deductionLines({ id: d.id, number: text(d.data.number), date: text(d.data.date), lines: linesOf(d) }));
     await db.write("invoices", invId, {
       status: "draft",
       client_id: record!.data.client_id,
       date: today(),
       due_date: addDays(today(), paymentDays),
-      lines: linesOf(record),
+      lines: [...linesOf(record).filter((l) => !isDepositLine(l)), ...deductions],
+      ...(deposits.length ? { final_invoice: true } : {}),
       notes: text(record!.data.notes),
       currency: currencyOf(record),
       rate: rateOf(record),
@@ -329,6 +361,54 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     });
     await db.write("quotes", id, { status: "invoiced", invoice_id: invId, decided_at: new Date().toISOString() });
     go("invoices", invId);
+  }
+
+  /** Facture d'acompte : un pourcentage (ou un montant TTC) du document d'origine. */
+  async function createDeposit(mode: "percent" | "amount", value: number) {
+    const source = linesOf(record);
+    const pct = mode === "percent" ? value : percentForAmount(source, value, decimals);
+    if (!(pct > 0 && pct <= 100)) return setMessage("L'acompte doit être compris entre 0 et 100 % du document.");
+    const invId = db.newId("fa");
+    await db.write("invoices", invId, {
+      status: "draft",
+      deposit: true,
+      client_id: record!.data.client_id,
+      date: today(),
+      due_date: today(),
+      lines: depositLines(source, pct, `${one.toLowerCase()} ${text(record!.data.number)}`, decimals),
+      notes: text(record!.data.notes),
+      currency: currencyOf(record),
+      rate: rateOf(record),
+      project_id: text(record!.data.project_id),
+      quote_id: id,
+      quote_number: record!.data.number,
+      created_by: session.user.id,
+      created_by_name: session.user.name,
+    });
+    if (record!.data.status === "sent") await db.write("quotes", id, { status: "accepted", decided_at: new Date().toISOString() });
+    go("invoices", invId);
+  }
+
+  /** Bon de livraison reprenant les articles du document (sans les acomptes). */
+  async function createDelivery() {
+    const blId = db.newId("bl");
+    await db.write("quotes", blId, {
+      status: "draft",
+      doc_type: "delivery",
+      client_id: record!.data.client_id,
+      date: today(),
+      valid_until: "",
+      lines: linesOf(record).filter((l) => !isDepositLine(l)),
+      currency: currencyOf(record),
+      rate: rateOf(record),
+      project_id: text(record!.data.project_id),
+      source_id: id,
+      source_number: record!.data.number,
+      notes: `Livraison${record!.data.number ? ` selon ${docTitle(kind, record!.data).toLowerCase()} ${text(record!.data.number)}` : ""}`,
+      created_by: session.user.id,
+      created_by_name: session.user.name,
+    });
+    go("quotes", blId);
   }
 
   async function createCreditNote() {
@@ -366,7 +446,10 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       created_by_name: session.user.name,
     };
     if (kind === "invoices") patch.due_date = addDays(today(), paymentDays);
-    if (kind === "quotes") patch.valid_until = addDays(today(), 30);
+    if (kind === "quotes") {
+      patch.doc_type = docType;
+      patch.valid_until = isDelivery ? "" : addDays(today(), 30);
+    }
     await db.write(kind, newId, patch);
     go(kind, newId);
   }
@@ -377,12 +460,14 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     onClose();
   }
 
-  const title = numbered ? `${cfg.one} ${text(record?.data.number)}` : record ? `${cfg.one} (brouillon)` : DOCS[kind].newLabel ?? cfg.one;
+  const title = numbered ? `${one} ${text(record?.data.number)}` : record ? `${one} (brouillon)` : kind === "quotes" ? qt.newLabel : DOCS[kind].newLabel ?? one;
   const linked = kind === "invoices" ? credits.filter((c) => c.data.invoice_id === id) : [];
   const invoicePayments = kind === "invoices" ? payments.filter((p) => p.data.invoice_id === id).sort((a, b) => text(a.data.date).localeCompare(text(b.data.date))) : [];
   const status = record ? docStatus(kind, record, situations) : null;
   const share = useShare({ kind, record, client, gross: totals.gross, situation, currency });
   const dueLabel = kind === "quotes" ? "Valable jusqu'au" : "Échéance";
+  const showDue = kind === "invoices" || (kind === "quotes" && !isDelivery);
+  const subtotals = sectionSubtotals(lines, decimals);
 
   const head = (
     <div className="page-head doc-head">
@@ -407,6 +492,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
         {numbered && <button onClick={() => setPrinting(true)}>Aperçu / imprimer</button>}
         {record && kind !== "credit_notes" && <button onClick={duplicate}>Dupliquer</button>}
         {numbered && <button onClick={() => share.pdf("download")} disabled={share.busy}>Télécharger le PDF</button>}
+        {numbered && (kind === "invoices" || (kind === "quotes" && !isDelivery)) && <button onClick={createDelivery}>Bon de livraison</button>}
       </div>
     </div>
   );
@@ -420,7 +506,12 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       )}
       {kind === "invoices" && record?.data.quote_id ? (
         <p className="muted small">
-          Issue du devis <button className="link" onClick={() => go("quotes", text(record.data.quote_id))}>{text(record.data.quote_number)}</button>
+          {originPhrase(text(record.data.quote_number))} <button className="link" onClick={() => go("quotes", text(record.data.quote_id))}>{text(record.data.quote_number)}</button>
+        </p>
+      ) : null}
+      {kind === "quotes" && record?.data.source_id ? (
+        <p className="muted small">
+          Établi d'après <button className="link" onClick={() => go(invoices.some((i) => i.id === record.data.source_id) ? "invoices" : "quotes", text(record.data.source_id))}>{text(record.data.source_number)}</button>
         </p>
       ) : null}
     </>
@@ -462,30 +553,35 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
               <dl className="doc-facts">
                 <div><dt>Client</dt><dd>{text(client?.data.name) || "—"}</dd></div>
                 <div><dt>Date</dt><dd>{formatDate(date)}</dd></div>
-                {kind !== "credit_notes" && <div><dt>{dueLabel}</dt><dd>{dueDate ? formatDate(dueDate) : "—"}</dd></div>}
-                <div><dt>Devise</dt><dd>{currency === "XAF" ? "Franc CFA (XAF)" : `${currency} · 1 ${currency} = ${rate} FCFA`}</dd></div>
+                {showDue && <div><dt>{dueLabel}</dt><dd>{dueDate ? formatDate(dueDate) : "—"}</dd></div>}
+                {!isDelivery && <div><dt>Devise</dt><dd>{currency === "XAF" ? "Franc CFA (XAF)" : `${currency} · 1 ${currency} = ${rate} FCFA`}</dd></div>}
                 {project && <div><dt>Projet</dt><dd>{text(project.data.name)}</dd></div>}
               </dl>
               <div className="lines-wrap">
                 <table className="lines readonly">
                   <thead>
                     <tr>
-                      <th>Désignation</th><th className="num right">Qté</th><th className="num right">Prix unitaire HT</th><th className="num right">Remise</th><th className="num right">TVA</th>
-                      <th className="right">Montant HT</th>
+                      <th>Désignation</th><th className="num right">Qté</th>
+                      {!isDelivery && <><th className="num right">Prix unitaire HT</th><th className="num right">Remise</th><th className="num right">TVA</th><th className="right">Montant HT</th></>}
                     </tr>
                   </thead>
                   <tbody>
-                    {lines.map((l, i) => (
+                    {lines.map((l, i) => isSection(l) ? (
+                      <tr key={i} className="section-row">
+                        <td colSpan={isDelivery ? 2 : 5}><span className="line-label">{l.label}</span></td>
+                        {!isDelivery && <td className="right mono line-total" title="Sous-total HT de la section">{fm(subtotals.get(i) ?? 0)}</td>}
+                      </tr>
+                    ) : (
                       <tr key={i}>
                         <td>
                           <span className="line-label">{l.label}</span>
-                          <span className="line-sub lines-mobile-meta mono">{l.qty} × {fm(l.unitPrice)}{l.discount ? ` · remise ${l.discount} %` : ""} · TVA {l.vatRate} %</span>
+                          {!isDelivery && <span className="line-sub lines-mobile-meta mono">{l.qty} × {fm(l.unitPrice)}{l.discount ? ` · remise ${l.discount} %` : ""} · TVA {l.vatRate} %</span>}
                         </td>
                         <td className="num right mono">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td>
-                        <td className="num right mono">{fm(l.unitPrice)}</td>
+                        {!isDelivery && <><td className="num right mono">{fm(l.unitPrice)}</td>
                         <td className="num right mono">{l.discount ? `${l.discount} %` : "—"}</td>
                         <td className="num right mono">{l.vatRate} %</td>
-                        <td className="right mono line-total">{fm(lineNet(l, decimals))}</td>
+                        <td className="right mono line-total">{fm(lineNet(l, decimals))}</td></>}
                       </tr>
                     ))}
                   </tbody>
@@ -495,13 +591,13 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                 <div className="notes">
                   {notes && (<><div className="aside-label">Note imprimée sur le document</div><p className="pre-line">{notes}</p></>)}
                 </div>
-                {totalsList}
+                {!isDelivery && totalsList}
               </div>
               {numbered && (
                 <p className="locked-note">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
                   {kind === "invoices" ? "Facture validée : elle ne peut plus être modifiée. Toute correction passe par un avoir."
-                    : kind === "quotes" ? "Devis finalisé : pour le modifier, dupliquez-le en nouveau brouillon."
+                    : kind === "quotes" ? `${qt.label} finalisé : pour le modifier, dupliquez-le en nouveau brouillon.`
                     : "Avoir validé : il est déduit de la facture et ne peut plus être modifié."}
                 </p>
               )}
@@ -518,14 +614,31 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                   <InvoiceSummary situation={situation} dueDate={dueDate} invoice={record!} />
                 ) : (
                   <>
-                    <div className="aside-label">{kind === "quotes" ? "Montant du devis (TTC)" : "Montant de l'avoir (TTC)"}</div>
-                    <div className="aside-amount mono">{fm(totals.gross)}</div>
-                    {kind === "quotes" && dueDate && <p className="aside-sub">Valable jusqu'au {formatDate(dueDate)}</p>}
-                    {kind === "quotes" && (
+                    {!isDelivery && <><div className="aside-label">{kind === "quotes" ? `Montant (TTC)` : "Montant de l'avoir (TTC)"}</div>
+                    <div className="aside-amount mono">{fm(totals.gross)}</div></>}
+                    {isDelivery && <><div className="aside-label">Articles livrés</div><div className="aside-amount mono">{billable().reduce((n, l) => n + l.qty, 0)}</div></>}
+                    {kind === "quotes" && showDue && dueDate && <p className="aside-sub">Valable jusqu'au {formatDate(dueDate)}</p>}
+                    {kind === "quotes" && deposits.length > 0 && (
+                      <ul className="deposit-list" aria-label="Acomptes facturés">
+                        {deposits.map((d) => (
+                          <li key={d.id}><button className="link" onClick={() => go("invoices", d.id)}>{text(d.data.number)}</button><span className="mono">{formatMoney(totalsOf(d).gross, currencyOf(d))}</span></li>
+                        ))}
+                      </ul>
+                    )}
+                    {kind === "quotes" && isDelivery && (
+                      <div className="aside-actions" style={{ marginTop: 16 }}>
+                        {record!.data.status === "sent" ? (
+                          <button className="primary" onClick={() => setQuoteStatus("accepted")}>Marquer livré</button>
+                        ) : <p className="status-line ok">Livraison confirmée.</p>}
+                      </div>
+                    )}
+                    {kind === "quotes" && !isDelivery && (
                       <div className="aside-actions" style={{ marginTop: 16 }}>
                         {["sent", "accepted"].includes(text(record!.data.status)) && (
-                          <button className="primary" onClick={quoteToInvoice}>Convertir en facture</button>
+                          <button className="primary" onClick={quoteToInvoice}>{deposits.length ? "Facture de solde" : "Convertir en facture"}</button>
                         )}
+                        {draftDeposits.length > 0 && <p className="hint">Un acompte en brouillon n'est pas déduit : validez-le d'abord.</p>}
+                        {["sent", "accepted"].includes(text(record!.data.status)) && <DepositForm onCreate={createDeposit} currency={currency} />}
                         {record!.data.status === "sent" && (
                           <>
                             <button onClick={() => setQuoteStatus("accepted")}>Marquer accepté</button>
@@ -573,6 +686,14 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       {links}
       <div className="card editor-card">
         <div className="doc-fields">
+          {kind === "quotes" && (
+            <label>
+              Type de document
+              <select value={docType} onChange={(e) => setDocType(e.target.value as QuoteType)}>
+                {(Object.keys(QUOTE_TYPES) as QuoteType[]).map((k) => <option key={k} value={k}>{QUOTE_TYPES[k].label}</option>)}
+              </select>
+            </label>
+          )}
           <label>
             Client
             <select value={clientId} onChange={(e) => setClientId(e.target.value)} disabled={kind === "credit_notes"}>
@@ -580,19 +701,19 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
             </select>
           </label>
           <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
-          {kind !== "credit_notes" && (
+          {showDue && (
             <label>
               {dueLabel}
               <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
             </label>
           )}
-          <label>
+          {!isDelivery && <label>
             Devise
             <select value={currency} onChange={(e) => changeCurrency(e.target.value)} disabled={kind === "credit_notes"}>
               {Object.values(CURRENCIES).map((c) => <option key={c.code} value={c.code}>{c.code} · {c.label}</option>)}
             </select>
-          </label>
-          {currency !== "XAF" && (
+          </label>}
+          {currency !== "XAF" && !isDelivery && (
             <label>
               Taux (1 {currency} = … FCFA)
               <input type="number" min="0" step="any" value={rate} onChange={(e) => setRate(Number(e.target.value))}
@@ -617,19 +738,29 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
           <table className="lines">
             <thead>
               <tr>
-                <th>Désignation</th><th className="num qty right">Qté</th><th className="num right">Prix unitaire HT</th><th className="num pct right">Remise %</th><th className="num pct right">TVA %</th>
-                <th className="right">Montant HT</th><th><span className="sr-only">Supprimer</span></th>
+                <th>Désignation</th><th className="num qty right">Qté</th>
+                {!isDelivery && <><th className="num right">Prix unitaire HT</th><th className="num pct right">Remise %</th><th className="num pct right">TVA %</th><th className="right">Montant HT</th></>}<th><span className="sr-only">Supprimer</span></th>
               </tr>
             </thead>
             <tbody>
-              {lines.map((l, i) => (
+              {lines.map((l, i) => isSection(l) ? (
+                <tr key={i} className="section-row">
+                  <td colSpan={isDelivery ? 2 : 5}><input aria-label="Titre de section" className="section-input" placeholder="Titre de section (ex. Lot 1 : fournitures)" value={l.label} onChange={(e) => update(i, { label: e.target.value })} /></td>
+                  {!isDelivery && <td className="right mono line-total" title="Sous-total HT de la section">{fm(subtotals.get(i) ?? 0)}</td>}
+                  <td className="del">
+                    <button className="ghost icon" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} aria-label={`Supprimer la ligne ${i + 1}`}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12" /><path d="M18 6 6 18" /></svg>
+                    </button>
+                  </td>
+                </tr>
+              ) : (
                 <tr key={i}>
                   <td><input aria-label="Désignation" list="articles-list" placeholder="Article du catalogue ou désignation libre" value={l.label} onChange={(e) => pickArticle(i, e.target.value)} /></td>
                   <td className="num qty" data-label="Qté"><input aria-label="Quantité" type="number" min="0" step="any" value={l.qty} onChange={(e) => update(i, { qty: Number(e.target.value) })} /></td>
-                  <td className="num" data-label="Prix unitaire HT"><input aria-label="Prix unitaire" type="number" min="0" step={decimals ? "0.01" : "1"} value={l.unitPrice} onChange={(e) => update(i, { unitPrice: Number(e.target.value) })} /></td>
+                  {!isDelivery && <><td className="num" data-label="Prix unitaire HT"><input aria-label="Prix unitaire" type="number" min="0" step={decimals ? "0.01" : "1"} value={l.unitPrice} onChange={(e) => update(i, { unitPrice: Number(e.target.value) })} /></td>
                   <td className="num pct" data-label="Remise %"><input aria-label="Remise" type="number" min="0" max="100" step="any" value={l.discount ?? 0} onChange={(e) => update(i, { discount: Number(e.target.value) || undefined })} /></td>
                   <td className="num pct" data-label="TVA %"><input aria-label="TVA" type="number" min="0" step="any" value={l.vatRate} onChange={(e) => update(i, { vatRate: Number(e.target.value) })} /></td>
-                  <td className="right mono line-total">{fm(lineNet(l, decimals))}</td>
+                  <td className="right mono line-total">{fm(lineNet(l, decimals))}</td></>}
                   <td className="del">
                     <button className="ghost icon" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} aria-label={`Supprimer la ligne ${i + 1}`} disabled={lines.length === 1}>
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12" /><path d="M18 6 6 18" /></svg>
@@ -640,26 +771,71 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
             </tbody>
           </table>
         </div>
-        <button className="ghost add-line" onClick={() => setLines((ls) => [...ls, emptyLine()])}>+ Ajouter une ligne</button>
+        <div className="line-tools">
+          <button className="ghost add-line" onClick={() => setLines((ls) => [...ls, emptyLine()])}>+ Ajouter une ligne</button>
+          <button className="ghost add-line" onClick={() => setLines((ls) => {
+            const title = { label: "", qty: 0, unitPrice: 0, vatRate: 0, section: true };
+            const last = ls[ls.length - 1];
+            // Ligne vide en fin de tableau : le titre se place au-dessus d'elle.
+            return last && !isSection(last) && !last.label.trim() ? [...ls.slice(0, -1), title, last] : [...ls, title];
+          })}>+ Ajouter un titre</button>
+          {!isDelivery && <span className="global-discount">
+            <label className="inline" htmlFor={`gd-${id}`}>Remise sur toutes les lignes</label>
+            <input id={`gd-${id}`} type="number" min="0" max="100" step="any" inputMode="decimal" placeholder="%" value={globalDiscount} onChange={(e) => setGlobalDiscount(e.target.value)} aria-label="Remise globale en %" />
+            <button className="small" onClick={() => {
+              const p = Number(globalDiscount);
+              if (!(p >= 0 && p <= 100)) return setMessage("Une remise doit être comprise entre 0 et 100 %.");
+              setLines((ls) => applyGlobalDiscount(ls, p));
+              setMessage(null);
+            }}>Appliquer</button>
+          </span>}
+        </div>
 
         <div className="doc-bottom">
           <label className="notes">
             Note imprimée sur le document
             <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Conditions, références de commande, coordonnées bancaires…" />
           </label>
-          {totalsList}
+          {!isDelivery && totalsList}
         </div>
 
         {message && <p className="error" role="alert">{message}</p>}
 
         <div className="editor-bar">
           {record && <button className="ghost danger" onClick={removeDraft}>Supprimer</button>}
-          <span className="total-preview"><small>Total TTC</small><b className="mono">{fm(totals.gross)}</b></span>
+          {!isDelivery && <span className="total-preview"><small>Total TTC</small><b className="mono">{fm(totals.gross)}</b></span>}
           <button onClick={() => saveDraft()}>Enregistrer le brouillon</button>
-          <button className="primary" onClick={validate} disabled={busy}>{cfg.validateLabel}</button>
+          <button className="primary" onClick={validate} disabled={busy}>{kind === "quotes" ? qt.validate : cfg.validateLabel}</button>
         </div>
       </div>
     </section>
+  );
+}
+
+/** Saisie d'une facture d'acompte : pourcentage du document, ou montant TTC. */
+function DepositForm({ onCreate, currency }: { onCreate: (mode: "percent" | "amount", value: number) => void; currency: string }) {
+  const [open, setOpen] = useState(false);
+  const [mode, setMode] = useState<"percent" | "amount">("percent");
+  const [value, setValue] = useState("30");
+  if (!open) return <button onClick={() => setOpen(true)}>Facture d'acompte</button>;
+  return (
+    <form className="aside-form" onSubmit={(e) => { e.preventDefault(); onCreate(mode, Number(value)); }}>
+      <h3>Facture d'acompte</h3>
+      <div className="row2">
+        <label>Calcul
+          <select value={mode} onChange={(e) => { setMode(e.target.value as "percent" | "amount"); setValue(""); }}>
+            <option value="percent">En % du total</option>
+            <option value="amount">Montant TTC</option>
+          </select>
+        </label>
+        <label>{mode === "percent" ? "Pourcentage" : `Montant (${currency === "XAF" ? "FCFA" : currency})`}
+          <input type="number" min="0" step="any" required value={value} onChange={(e) => setValue(e.target.value)} aria-label={mode === "percent" ? "Pourcentage d'acompte" : "Montant de l'acompte"} />
+        </label>
+      </div>
+      <p className="hint">La TVA de l'acompte suit celle des lignes. La facture de solde déduira l'acompte.</p>
+      <button className="primary">Créer la facture d'acompte</button>
+      <button type="button" className="ghost" onClick={() => setOpen(false)}>Annuler</button>
+    </form>
   );
 }
 
@@ -818,13 +994,13 @@ function useShare({ kind, record, client, gross, situation, currency }: {
   const number = text(record?.data.number);
   const due = situation?.due;
   const reminder = kind === "invoices" && situation?.status === "overdue";
-  const message = documentMessage({ kind, number, client: text(client?.data.name), company, gross, due, currency, dueDate: text(record?.data.due_date), validUntil: text(record?.data.valid_until), reminder });
+  const message = documentMessage({ kind, number, client: text(client?.data.name), company, gross, due, currency, dueDate: text(record?.data.due_date), validUntil: text(record?.data.valid_until), reminder, title: docTitle(kind, record?.data) });
 
   // Numéro au format international uniquement (+241…) : sinon WhatsApp laisse choisir le contact.
   const phone = text(client?.data.phone).replace(/[^\d+]/g, "");
   const intl = phone.startsWith("+") ? phone.slice(1) : phone.startsWith("00") ? phone.slice(2) : "";
   const wa = `https://wa.me/${intl}?text=${encodeURIComponent(message)}`;
-  const docName = kind === "quotes" ? "Devis" : kind === "credit_notes" ? "Avoir" : "Facture";
+  const docName = docTitle(kind, record?.data);
   const subject = `${reminder ? "Relance : " : ""}${docName} ${number}${company ? ` - ${company}` : ""}`;
   const mail = `mailto:${encodeURIComponent(text(client?.data.email))}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`;
 
@@ -872,7 +1048,7 @@ const canShare = canShareFiles();
 /** Message d'accompagnement d'un document, ou de relance d'une facture échue. */
 export function documentMessage(p: {
   kind: DocTable; number: string; client: string; company: string; gross: number; due?: number; currency: string;
-  dueDate?: string; validUntil?: string; reminder?: boolean;
+  dueDate?: string; validUntil?: string; reminder?: boolean; title?: string;
 }): string {
   const lines = [`Bonjour${p.client ? ` ${p.client}` : ""},`];
   if (p.reminder && p.due !== undefined) {
@@ -881,8 +1057,9 @@ export function documentMessage(p: {
       "Merci de bien vouloir procéder au règlement, ou de nous indiquer la date prévue. Si le paiement a déjà été effectué, merci de ne pas tenir compte de ce message.",
     );
   } else {
-    const what = p.kind === "quotes" ? "notre devis" : p.kind === "credit_notes" ? "notre avoir" : "notre facture";
-    lines.push(`Veuillez trouver ${what} ${p.number} d'un montant de ${formatMoney(p.gross, p.currency)}.`);
+    const what = `notre ${(p.title ?? (p.kind === "quotes" ? "Devis" : p.kind === "credit_notes" ? "Avoir" : "Facture")).toLowerCase()}`;
+    if (p.title === "Bon de livraison") lines.push(`Veuillez trouver ${what} ${p.number}.`);
+    else lines.push(`Veuillez trouver ${what} ${p.number} d'un montant de ${formatMoney(p.gross, p.currency)}.`);
     if (p.kind === "invoices" && p.due !== undefined && p.due > 0) {
       lines.push(`Reste à régler : ${formatMoney(p.due, p.currency)}${p.dueDate ? `, échéance le ${formatDate(p.dueDate)}` : ""}.`);
     }
@@ -890,4 +1067,12 @@ export function documentMessage(p: {
   }
   lines.push("Cordialement,", p.company);
   return lines.filter(Boolean).join("\n");
+}
+
+/** « Issue du devis », « Issue de la pro forma »… selon la série du document d'origine. */
+function originPhrase(number: string): string {
+  const prefix = number.split("-")[0];
+  if (prefix === "PF") return "Issue de la pro forma";
+  if (prefix === "BC") return "Issue du bon de commande";
+  return "Issue du devis";
 }

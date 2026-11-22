@@ -102,7 +102,7 @@ try {
   await page.getByRole("button", { name: "Nouvelle facture" }).click();
   await page.getByLabel("Désignation").fill("Développement logiciel (jour)");
   await page.getByLabel("Quantité").fill("4");
-  await page.getByLabel("Remise").fill("10");
+  await page.getByLabel("Remise", { exact: true }).fill("10");
   await page.getByRole("button", { name: "+ Ajouter une ligne" }).click();
   await page.getByLabel("Désignation").nth(1).fill("Frais de déplacement Moanda, billet d'avion aller-retour Libreville – Franceville et hébergement");
   await page.getByLabel("Prix unitaire").nth(1).fill("185000");
@@ -115,10 +115,10 @@ try {
   await shot("facture-saisie.png");
 
   step("Remise invalide refusée à la validation");
-  await page.getByLabel("Remise").first().fill("120");
+  await page.getByLabel("Remise", { exact: true }).first().fill("120");
   await page.getByRole("button", { name: "Valider la facture" }).click();
   await page.getByRole("alert").filter({ hasText: "entre 0 et 100 %" }).waitFor();
-  await page.getByLabel("Remise").first().fill("10");
+  await page.getByLabel("Remise", { exact: true }).first().fill("10");
 
   step("Validation : numéro FA-AAAA-00001, document figé");
   await page.getByRole("button", { name: "Valider la facture" }).click();

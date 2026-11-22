@@ -36,7 +36,7 @@ const DEBOUNCE_MS = 1_500;
 
 /** Série de l'année en cours pour un préfixe : FA (factures), AV (avoirs), DV (devis). */
 export const seriesFor = (prefix: string, date = new Date()) => `${prefix}-${date.getFullYear()}`;
-const PREFIXES = ["FA", "AV", "DV"];
+const PREFIXES = ["FA", "AV", "DV", "PF", "BC", "BL"];
 
 export class SyncEngine {
   private db: LocalDb;
