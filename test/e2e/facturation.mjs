@@ -180,6 +180,12 @@ try {
   await page.getByRole("row", { name: new RegExp(`FA-${YEAR}-00001.*Payée`) }).waitFor();
   await page.getByRole("row", { name: new RegExp(`FA-${YEAR}-00002.*En retard`) }).waitFor();
 
+  step("Modules pas finis : pastille « Bientôt » et page d'attente");
+  await page.getByRole("navigation").getByRole("button", { name: /^Comptabilité Bientôt$/ }).click();
+  await page.getByTestId("coming-soon").filter({ hasText: "Bientôt disponible" }).waitFor();
+  await page.getByRole("button", { name: "Retour au tableau de bord" }).click();
+  await page.getByRole("heading", { name: "Tableau de bord" }).waitFor();
+
   step("Sans réseau, application rouverte : le PDF se génère quand même");
   await page.evaluate(() => navigator.serviceWorker.ready);
   await page.waitForTimeout(4000); // préchargement du générateur de PDF

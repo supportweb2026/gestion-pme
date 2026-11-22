@@ -33,6 +33,8 @@ const errors = [];
 
 async function device(name) {
   const context = await browser.newContext({ viewport: { width: 1200, height: 860 }, locale: "fr-FR" });
+  // Modules « Bientôt » (projets, dépenses, comptabilité) ouverts pour la recette complète.
+  await context.addInitScript(() => localStorage.setItem("gestia:apercu-modules", "1"));
   const page = await context.newPage();
   page.on("dialog", (d) => d.accept());
   page.on("pageerror", (e) => errors.push(`[${name}] ${e.message}`));
@@ -118,7 +120,7 @@ try {
   await B.page.getByLabel("Mode").selectOption("airtel");
   await B.page.getByRole("button", { name: "Enregistrer l'encaissement" }).click();
   await expectDue(B.page, "254 000 FCFA");
-  await pill(B.page).filter({ hasText: /Hors ligne · \d+ en attente/ }).waitFor();
+  await pill(B.page).filter({ hasText: /Hors ligne · \d+ à envoyer/ }).waitFor();
 
   step("B rouvre l'application sans réseau : tout est là");
   await B.page.reload();

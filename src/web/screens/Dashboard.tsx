@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { formatDate, text, today, useApp, useSyncStatus, useTable } from "../context.ts";
+import { COMING_SOON, formatDate, text, today, useApp, useSyncStatus, useTable } from "../context.ts";
 import { formatXaf } from "../../shared/invoice.ts";
 import { invoiceSituations, netXafOf, quoteStatus } from "../ledger.ts";
 
@@ -98,34 +98,47 @@ export function Dashboard() {
 
   const clientName = (id: string) => text(clients.find((c) => c.id === id)?.data.name) || "—";
 
-  const kpis = [
-    { label: "Chiffre d'affaires du mois (HT)", value: formatXaf(data.revenueMonth) },
+  // Tant que le module Dépenses n'est pas ouvert, le tableau de bord ne parle que des ventes.
+  const withExpenses = !COMING_SOON.expenses;
+  const kpis: { label: string; value: string; sub?: string; subTone?: string; tone?: string }[] = [
+    { label: "Chiffre d'affaires du mois (HT)", value: formatXaf(data.revenueMonth), tone: "accent" },
     { label: "Encaissé ce mois", value: formatXaf(data.collected) },
-    { label: "Reste à encaisser (TTC)", value: formatXaf(data.due) },
-    { label: "Dont en retard", value: formatXaf(data.overdue), tone: data.overdue > 0 ? "danger" : "" },
-    { label: "Dépenses du mois (HT)", value: formatXaf(data.spendingMonth) },
-    { label: "Devis en attente (HT)", value: `${formatXaf(data.openQuotesAmount)}`, sub: `${data.openQuotes} devis` },
+    {
+      label: "Reste à encaisser (TTC)", value: formatXaf(data.due),
+      sub: data.overdue > 0 ? `dont ${formatXaf(data.overdue)} en retard` : "aucun retard",
+      subTone: data.overdue > 0 ? "danger" : "",
+    },
+    withExpenses
+      ? { label: "Dépenses du mois (HT)", value: formatXaf(data.spendingMonth) }
+      : { label: "Devis en attente (HT)", value: formatXaf(data.openQuotesAmount), sub: `${data.openQuotes} devis` },
   ];
+  const synced = sync.lastSync
+    ? `Synchronisé à ${new Date(sync.lastSync).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`
+    : "Pas encore synchronisé";
 
   return (
     <section>
-      <div className="section-head">
-        <h2>Tableau de bord</h2>
-        <span className="muted small">
-          {sync.lastSync ? `Synchronisé à ${new Date(sync.lastSync).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}` : "Pas encore synchronisé"}
-        </span>
+      <div className="page-head">
+        <div>
+          <h2>Tableau de bord</h2>
+          <p className="muted small">{synced}</p>
+        </div>
+        <div className="quick">
+          <button onClick={() => go("quotes", "new")}>Nouveau devis</button>
+          <button className="primary" onClick={() => go("invoices", "new")}>Nouvelle facture</button>
+        </div>
       </div>
-      <div className="kpis">
+      <div className="card kpis">
         {kpis.map((k) => (
-          <div className={`card kpi ${k.tone ?? ""}`} key={k.label}>
+          <div className={`kpi ${k.tone ?? ""}`} key={k.label}>
             <div className="kpi-label">{k.label}</div>
             <div className="kpi-value mono">{k.value}</div>
-            {k.sub && <div className="muted small">{k.sub}</div>}
+            {k.sub && <div className={`kpi-sub ${k.subTone ?? ""}`}>{k.sub}</div>}
           </div>
         ))}
       </div>
 
-      <RevenueChart months={data.months} revenue={data.revenue} spending={data.spending} />
+      <RevenueChart months={data.months} revenue={data.revenue} spending={withExpenses ? data.spending : null} />
 
       <div className="two-cols">
         <div className="card section-card">
@@ -166,7 +179,9 @@ export function Dashboard() {
 }
 
 /** Chiffre d'affaires et dépenses HT par mois : barres groupées, un seul axe, info-bulle au survol. */
-function RevenueChart({ months, revenue, spending }: { months: string[]; revenue: Map<string, number>; spending: Map<string, number> }) {
+function RevenueChart({ months, revenue, spending: spendingOrNull }: { months: string[]; revenue: Map<string, number>; spending: Map<string, number> | null }) {
+  const withSpending = spendingOrNull !== null;
+  const spending = spendingOrNull ?? new Map<string, number>();
   const [hover, setHover] = useState<number | null>(null);
   const [asTable, setAsTable] = useState(false);
   const W = 720, H = 240, left = 48, right = 8, top = 12, bottom = 28;
@@ -180,30 +195,30 @@ function RevenueChart({ months, revenue, spending }: { months: string[]; revenue
   const ticks = Array.from({ length: Math.round(ceiling / step) + 1 }, (_, i) => i * step);
   const y = (v: number) => top + plotH - (Math.max(0, v) / ceiling) * plotH;
   const band = plotW / months.length;
-  const barW = Math.min(18, (band - 10) / 2);
+  const barW = withSpending ? Math.min(18, (band - 10) / 2) : Math.min(28, band - 16);
   const empty = months.every((m) => !revenue.get(m) && !spending.get(m));
 
   return (
     <div className="card section-card chart-card">
       <div className="section-head">
-        <h3>Chiffre d'affaires et dépenses, 12 derniers mois (HT)</h3>
+        <h3>{withSpending ? "Chiffre d'affaires et dépenses, 12 derniers mois (HT)" : "Chiffre d'affaires, 12 derniers mois (HT)"}</h3>
         <div className="legend">
-          <span><i className="swatch s1" /> Chiffre d'affaires</span>
-          <span><i className="swatch s2" /> Dépenses</span>
+          {withSpending && <span><i className="swatch s1" /> Chiffre d'affaires</span>}
+          {withSpending && <span><i className="swatch s2" /> Dépenses</span>}
           <button className="ghost small" onClick={() => setAsTable((t) => !t)}>{asTable ? "Voir le graphique" : "Voir le tableau"}</button>
         </div>
       </div>
-      {empty ? <p className="muted small">Les chiffres apparaîtront avec vos premières factures et dépenses.</p> : asTable ? (
+      {empty ? <p className="muted small">Les chiffres apparaîtront avec vos premières factures.</p> : asTable ? (
         <div className="table-wrap">
           <table>
-            <thead><tr><th>Mois</th><th className="right">Chiffre d'affaires</th><th className="right">Dépenses</th><th className="right">Écart</th></tr></thead>
+            <thead><tr><th>Mois</th><th className="right">Chiffre d'affaires</th>{withSpending && <><th className="right">Dépenses</th><th className="right">Écart</th></>}</tr></thead>
             <tbody>
               {months.map((m) => (
                 <tr key={m}>
                   <td>{monthLabel(m)} {m.slice(0, 4)}</td>
                   <td className="right mono">{formatXaf(revenue.get(m) ?? 0)}</td>
-                  <td className="right mono">{formatXaf(spending.get(m) ?? 0)}</td>
-                  <td className="right mono">{formatXaf((revenue.get(m) ?? 0) - (spending.get(m) ?? 0))}</td>
+                  {withSpending && <td className="right mono">{formatXaf(spending.get(m) ?? 0)}</td>}
+                  {withSpending && <td className="right mono">{formatXaf((revenue.get(m) ?? 0) - (spending.get(m) ?? 0))}</td>}
                 </tr>
               ))}
             </tbody>
@@ -211,7 +226,7 @@ function RevenueChart({ months, revenue, spending }: { months: string[]; revenue
         </div>
       ) : (
         <div className="chart-wrap">
-          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label="Chiffre d'affaires et dépenses par mois" onMouseLeave={() => setHover(null)}>
+          <svg viewBox={`0 0 ${W} ${H}`} role="img" aria-label={withSpending ? "Chiffre d'affaires et dépenses par mois" : "Chiffre d'affaires par mois"} onMouseLeave={() => setHover(null)}>
             {ticks.map((t) => (
               <g key={t}>
                 <line x1={left} x2={W - right} y1={y(t)} y2={y(t)} className="grid" />
@@ -233,8 +248,8 @@ function RevenueChart({ months, revenue, spending }: { months: string[]; revenue
               return (
                 <g key={m} onMouseEnter={() => setHover(i)}>
                   <rect x={x0} y={top} width={band} height={plotH} className={hover === i ? "hover-band" : "hit"} />
-                  {bar(r, cx - barW - 1, "bar s1")}
-                  {bar(s, cx + 1, "bar s2")}
+                  {withSpending ? bar(r, cx - barW - 1, "bar s1") : bar(r, cx - barW / 2, "bar s1")}
+                  {withSpending && bar(s, cx + 1, "bar s2")}
                   <text x={cx} y={H - 8} textAnchor="middle" className="axis">{monthLabel(m)}</text>
                 </g>
               );
@@ -245,7 +260,7 @@ function RevenueChart({ months, revenue, spending }: { months: string[]; revenue
             <div className="tooltip" style={{ left: `${((left + (hover + 0.5) * band) / W) * 100}%` }}>
               <strong>{monthLabel(months[hover])} {months[hover].slice(0, 4)}</strong>
               <div><i className="swatch s1" /> {formatXaf(revenue.get(months[hover]) ?? 0)}</div>
-              <div><i className="swatch s2" /> {formatXaf(spending.get(months[hover]) ?? 0)}</div>
+              {withSpending && <div><i className="swatch s2" /> {formatXaf(spending.get(months[hover]) ?? 0)}</div>}
             </div>
           )}
         </div>

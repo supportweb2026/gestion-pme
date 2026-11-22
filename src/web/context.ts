@@ -74,6 +74,36 @@ export const TAB_LABELS: Record<Tab, string> = {
   platform: "Plateforme",
 };
 
+/**
+ * Modules pas encore finalisés (le MVP couvre la facturation) : visibles avec
+ * une pastille « Bientôt », ils affichent une page d'attente au lieu de l'écran.
+ * Retirer une ligne ici suffit pour ouvrir le module.
+ */
+const COMING_SOON_MODULES: Partial<Record<Tab, { title: string; points: string[] }>> = {
+  projects: {
+    title: "Projets et suivi du temps",
+    points: ["Projets liés aux clients, budget et rentabilité", "Tâches en Kanban et planning", "Temps passés et facturation du temps"],
+  },
+  expenses: {
+    title: "Dépenses",
+    points: ["Saisie des dépenses par catégorie", "Justificatifs photographiés, même hors ligne", "Validation par la direction"],
+  },
+  accounting: {
+    title: "Comptabilité SYSCOHADA",
+    points: ["Journal, grand livre et balance générés depuis vos factures", "Déclaration de TVA", "Export pour le cabinet comptable"],
+  },
+};
+
+/** Aperçu interne (recette) : localStorage « gestia:apercu-modules » = « 1 » ouvre tous les modules. */
+const previewAll = (() => {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem("gestia:apercu-modules") === "1";
+  } catch {
+    return false;
+  }
+})();
+export const COMING_SOON: Partial<Record<Tab, { title: string; points: string[] }>> = previewAll ? {} : COMING_SOON_MODULES;
+
 /** Écrans visibles selon le rôle (les droits sont aussi vérifiés côté serveur au fil des lots). */
 const ALL: Tab[] = ["dashboard", "quotes", "invoices", "credit_notes", "projects", "expenses", "clients", "articles", "accounting", "settings"];
 export const TABS_BY_ROLE: Record<string, Tab[]> = {
