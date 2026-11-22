@@ -84,7 +84,7 @@ export const TAB_LABELS: Record<Tab, string> = {
 const COMING_SOON_MODULES: Partial<Record<Tab, { title: string; points: string[] }>> = {
   expenses: {
     title: "Dépenses",
-    points: ["Saisie des dépenses par catégorie", "Justificatifs photographiés, même hors ligne", "Validation par la direction"],
+    points: ["Saisie des dépenses par catégorie", "Justificatifs photographiés, même hors ligne", "Circuit de validation avant paiement"],
   },
   accounting: {
     title: "Comptabilité SYSCOHADA",
