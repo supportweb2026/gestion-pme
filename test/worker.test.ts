@@ -236,3 +236,63 @@ test("justificatifs : envoi idempotent, lecture limitée à l'entreprise", async
   const anon = await worker.fetch(new Request("http://local/api/files/rcpt-00000001"), env);
   assert.equal(anon.status, 401);
 });
+
+test("projets (CA1.4, CA1.5) : aucun montant envoyé à l'employé, historique compris ; Terminé réservé au chef de projet", async () => {
+  const lea = (await call("/api/login", { email: "lea@sodepsi.ga", password: "employee12", deviceId: "device-ffff-0008" })).data;
+  const leaClock = new HlcClock("device-ffff-0008");
+  // Ancien projet (montants dans `projects`), puis reprise dans les tables protégées.
+  const pushA = (changes: Change[]) => call("/api/sync", { changes, since: 0 }, tokenA);
+  await pushA([
+    change(clockA, "projects", "prj-secret", { name: "Rénovation BGFI", status: "active", budget: 18_000_000, hourly_rate: 25_000, cost_rate: 9_000 }),
+    change(clockA, "projects", "prj-secret", { budget: 19_000_000 }),
+    change(clockA, "project_finance", "fin-prj-secret", { project_id: "prj-secret", legacy_budget: 19_000_000, hourly_rate: 25_000, cost_rate: 9_000 }),
+    change(clockA, "cost_rates", `cr-tm-${lea.user.id}`, { team_member_id: `tm-${lea.user.id}`, hourly_cost: 3_500 }),
+    change(clockA, "cost_rates", "cr-company", { hourly_cost: 4_000 }),
+    change(clockA, "team_members", `tm-${lea.user.id}`, { user_id: lea.user.id, name: "Léa", active: true }),
+    change(clockA, "tasks", "tsk-review", { project_id: "prj-secret", title: "Cloisons", status: "review", assignee_id: `tm-${lea.user.id}` }),
+  ]);
+
+  const all: Change[] = [];
+  let since = 0;
+  for (;;) {
+    const r: SyncResponse = (await call("/api/sync", { changes: [], since }, lea.token)).data;
+    assert.equal(r.dataEpoch, 1);
+    all.push(...r.changes);
+    since = r.cursor;
+    if (!r.more) break;
+  }
+  const raw = JSON.stringify(all);
+  for (const field of ["budget", "hourly_rate", "cost_rate", "hourly_cost", "legacy_budget"]) assert.ok(!raw.includes(`"${field}"`), `${field} absent de la réponse`);
+  assert.ok(!all.some((c) => c.tbl === "project_finance" || c.tbl === "cost_rates"));
+  assert.ok(all.some((c) => c.row === "prj-secret" && c.patch.name === "Rénovation BGFI"), "le projet reste visible, sans montant");
+  assert.ok(all.some((c) => c.tbl === "team_members"), "l'annuaire est lisible");
+
+  // Une écriture refusée ne renvoie pas non plus les montants.
+  const forced = await call("/api/sync", { changes: [change(leaClock, "projects", "prj-secret", { name: "X" })], since }, lea.token);
+  assert.ok(forced.data.rejected[0].record);
+  assert.equal(forced.data.rejected[0].record.data.budget, undefined);
+
+  // CA1.5 : passage forcé à Terminé refusé pour l'employé, accepté pour le chef de projet.
+  const done = await call("/api/sync", { changes: [change(leaClock, "tasks", "tsk-review", { status: "done" })], since }, lea.token);
+  assert.match(done.data.rejected[0].reason, /Terminé/);
+  const back = await call("/api/sync", { changes: [change(leaClock, "tasks", "tsk-review", { status: "doing" })], since }, lea.token);
+  assert.equal(back.data.accepted.length, 1, "il peut reprendre sa tâche");
+  // Désignée cheffe de ce projet dans l'équipe, elle contrôle.
+  await pushA([change(clockA, "project_members", `pm-prj-secret-tm-${lea.user.id}`, { project_id: "prj-secret", team_member_id: `tm-${lea.user.id}`, user_id: lea.user.id, name: "Léa", role: "manager" })]);
+  const lead = await call("/api/sync", { changes: [change(leaClock, "tasks", "tsk-review", { status: "done" })], since }, lea.token);
+  assert.equal(lead.data.accepted.length, 1);
+
+  // Le chef de projet (rôle Gestia) ne reçoit que le coût moyen.
+  await call("/api/users", { name: "Ornella", email: "ornella@sodepsi.ga", role: "project_manager", password: "chefprojet1" }, tokenA);
+  const pm = (await call("/api/login", { email: "ornella@sodepsi.ga", password: "chefprojet1", deviceId: "device-gggg-0009" })).data.token;
+  const pmAll: Change[] = [];
+  since = 0;
+  for (;;) {
+    const r: SyncResponse = (await call("/api/sync", { changes: [], since }, pm)).data;
+    pmAll.push(...r.changes);
+    since = r.cursor;
+    if (!r.more) break;
+  }
+  assert.deepEqual(pmAll.filter((c) => c.tbl === "cost_rates").map((c) => c.row), ["cr-company"]);
+  assert.ok(pmAll.some((c) => c.tbl === "project_finance"), "marge et budget du projet visibles");
+});
