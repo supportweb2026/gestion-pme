@@ -1257,3 +1257,21 @@ label.people-filter { flex-direction: row; align-items: center; gap: 8px; font-w
 .doc-preview-strip { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--line); background: #fff; }
 .doc-preview-strip .t { font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
 .doc-preview-strip .bar { flex: 1; margin-left: 16px; height: 18px; border-radius: 4px; }
+
+/* ── Lot 8 : double authentification ───────────────────────────────── */
+.two-factor { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
+.two-factor h4 { margin: 0 0 4px; font-size: 0.9375rem; }
+.two-factor .section-head { align-items: flex-start; gap: 16px; }
+.two-factor-setup { display: grid; grid-template-columns: 168px 1fr; gap: 12px 24px; align-items: start; margin-top: 12px; }
+.two-factor-setup .qr { width: 168px; height: 168px; grid-row: span 3; border: 1px solid var(--line); border-radius: 8px; }
+.two-factor-setup .steps { margin: 0; padding-left: 18px; font-size: 0.875rem; color: var(--ink-2); display: grid; gap: 6px; }
+.two-factor-setup code { background: var(--hover, #F3F5F8); padding: 2px 6px; border-radius: 4px; word-break: break-all; }
+.two-factor-setup label { max-width: 220px; }
+.two-factor-setup .form-actions { grid-column: 2; justify-content: flex-start; }
+.recovery-codes { margin-top: 12px; padding: 16px; border-radius: 10px; background: var(--ok-soft); }
+.recovery-codes ul { list-style: none; padding: 0; margin: 12px 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); gap: 6px 16px; font-size: 0.9375rem; }
+@media (max-width: 640px) {
+  .two-factor-setup { grid-template-columns: 1fr; }
+  .two-factor-setup .qr { grid-row: auto; justify-self: center; }
+  .two-factor-setup .form-actions { grid-column: 1; }
+}
