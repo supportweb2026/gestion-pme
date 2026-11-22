@@ -164,13 +164,19 @@ test("code d'autorisation : mauvais code_verifier et code expiré refusés", asy
   assert.match(((await late.json()) as any).error_description, /expiré/);
 });
 
-test("rafraîchissement : rotation ; ancien jeton rejoué = connexion coupée ; jeton d'accès expiré refusé", async () => {
+test("rafraîchissement : rotation ; nouvelle tentative < 60 s tolérée ; rejeu tardif = connexion coupée ; jeton d'accès expiré refusé", async () => {
   const c = await connect("dnt@ido.ga");
   const r1 = await raw("/oauth/token", form({ grant_type: "refresh_token", refresh_token: c.refresh!, client_id: c.client.client_id }));
   const t1 = (await r1.json()) as any;
   assert.equal(r1.status, 200);
   assert.notEqual(t1.refresh_token, c.refresh);
   assert.equal((await rpc(t1.access_token, "ping")).status, 200);
+  // Nouvelle tentative réseau dans les 60 s : renouvelée sans couper la connexion.
+  const retry = await raw("/oauth/token", form({ grant_type: "refresh_token", refresh_token: c.refresh!, client_id: c.client.client_id }));
+  assert.equal(retry.status, 200);
+  assert.equal((await rpc(t1.access_token, "ping")).status, 200);
+  // Rejeu tardif (au-delà de 60 s) : vol probable, connexion coupée.
+  await env.DB.prepare(`UPDATE oauth_tokens SET used_at = '2000-01-01T00:00:00.000Z' WHERE kind = 'refresh' AND used_at IS NOT NULL`).run();
   const replay = await raw("/oauth/token", form({ grant_type: "refresh_token", refresh_token: c.refresh!, client_id: c.client.client_id }));
   assert.equal(replay.status, 400);
   assert.equal((await rpc(t1.access_token, "ping")).status, 401);

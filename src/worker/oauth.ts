@@ -45,6 +45,8 @@ export async function pkceMatches(verifier: string, challenge: string): Promise<
   return (await sha256(verifier)) === challenge;
 }
 
+const REFRESH_GRACE_MS = 60_000;
+
 function secret(env: Env): string {
   const s = env.JWT_SECRET;
   if (!s || s.length < 32) throw new Error("secret JWT_SECRET absent ou trop court");
@@ -60,6 +62,31 @@ async function hmac(env: Env, data: string): Promise<string> {
 export async function seal(env: Env, payload: Record<string, unknown>, ttlS = FORM_TTL_S): Promise<string> {
   const body = b64url(enc.encode(JSON.stringify({ ...payload, exp: Date.now() + ttlS * 1000 })));
   return `${body}.${await hmac(env, body)}`;
+}
+
+/** Secret court chiffré (AES-GCM) et daté : le mot de passe ne circule jamais en clair dans la page. */
+async function aesKey(env: Env): Promise<CryptoKey> {
+  const raw = await crypto.subtle.digest("SHA-256", enc.encode(`oauth-enc:${secret(env)}`));
+  return crypto.subtle.importKey("raw", raw, { name: "AES-GCM" }, false, ["encrypt", "decrypt"]);
+}
+
+export async function encryptSecret(env: Env, value: string, ttlS = 300): Promise<string> {
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const data = enc.encode(JSON.stringify({ v: value, exp: Date.now() + ttlS * 1000 }));
+  const ct = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv }, await aesKey(env), data));
+  return `${b64url(iv)}.${b64url(ct)}`;
+}
+
+export async function decryptSecret(env: Env, value: string): Promise<string | null> {
+  const [iv, ct] = value.split(".");
+  if (!iv || !ct) return null;
+  try {
+    const plain = await crypto.subtle.decrypt({ name: "AES-GCM", iv: fromB64url(iv) }, await aesKey(env), fromB64url(ct));
+    const data = JSON.parse(new TextDecoder().decode(plain));
+    return typeof data.exp === "number" && data.exp > Date.now() && typeof data.v === "string" ? data.v : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function unseal<T = Record<string, unknown>>(env: Env, value: unknown): Promise<T | null> {
@@ -284,7 +311,9 @@ async function handleAuthorizePost(req: Request, env: Env): Promise<Response> {
     const client = await getClient(env, ctx.client_id);
     if (!client) return errorPage("Application inconnue", "Cette application n'est plus enregistrée auprès de Gestia.", 400);
     const email = field(form, "email").trim();
-    const password = field(form, "password");
+    const sealedPw = field(form, "pw");
+    const password = sealedPw ? (await decryptSecret(env, sealedPw)) : field(form, "password");
+    if (password === null) return loginPage(client.name, field(form, "ctx"), { email, error: "Le délai est dépassé. Saisissez à nouveau votre mot de passe." });
     const otp = field(form, "otp").trim();
     const sealedCtx = field(form, "ctx");
     // La vraie connexion Gestia : mot de passe, blocage après échecs, double authentification.
@@ -298,7 +327,7 @@ async function handleAuthorizePost(req: Request, env: Env): Promise<Response> {
     };
     if (!res.ok) {
       if (data.otpRequired) {
-        return otpPage(client.name, sealedCtx, email, password, otp ? sentence(data.error ?? "code incorrect") : "");
+        return otpPage(client.name, sealedCtx, email, await encryptSecret(env, password), otp ? sentence(data.error ?? "code incorrect") : "");
       }
       return loginPage(client.name, sealedCtx, { email, error: sentence(data.error ?? "connexion impossible") });
     }
@@ -445,7 +474,12 @@ async function handleToken(req: Request, env: Env): Promise<Response> {
     const row = results[0];
     if (!row) {
       // Jeton de rafraîchissement déjà échangé puis présenté à nouveau : vol probable, connexion coupée.
-      const reused = await env.DB.prepare(`SELECT grant_id FROM oauth_tokens WHERE hash = ? AND kind = 'refresh'`).bind(hash).first<{ grant_id: string }>();
+      const reused = await env.DB.prepare(`SELECT grant_id, used_at FROM oauth_tokens WHERE hash = ? AND kind = 'refresh'`).bind(hash).first<{ grant_id: string; used_at: string | null }>();
+      // Simple nouvelle tentative réseau du client (moins de 60 s) : on renouvelle sans couper la connexion.
+      if (reused?.used_at && Date.parse(at) - Date.parse(reused.used_at) < REFRESH_GRACE_MS) {
+        const g = await liveGrant(env, reused.grant_id, client.id);
+        if (g && !g.revoked_at && g.active && !g.drev) return issueTokens(env, g.id, g.scope);
+      }
       if (reused) await revokeGrant(env, reused.grant_id);
       return oauthError("invalid_grant", "jeton de rafraîchissement inconnu ou déjà utilisé");
     }
@@ -630,13 +664,13 @@ ${o.error ? `<p class="error" role="alert">${esc(o.error)}</p>` : ""}
 </form>`, o.error ? 401 : 200);
 }
 
-function otpPage(client: string, ctx: string, email: string, password: string, error: string): Response {
+function otpPage(client: string, ctx: string, email: string, sealedPw: string, error: string): Response {
   return page("Vérification en deux étapes", `<form class="card" method="post" action="/oauth/authorize" autocomplete="off">
 ${LOGO}
 <h1>Vérification en deux étapes</h1>
 <p class="muted">Saisissez le code à 6 chiffres affiché par votre application d'authentification pour ${esc(email)}, ou un de vos codes de secours.</p>
 <input type="hidden" name="step" value="login"><input type="hidden" name="ctx" value="${esc(ctx)}">
-<input type="hidden" name="email" value="${esc(email)}"><input type="hidden" name="password" value="${esc(password)}">
+<input type="hidden" name="email" value="${esc(email)}"><input type="hidden" name="pw" value="${esc(sealedPw)}">
 <label>Code de vérification<input name="otp" required autofocus inputmode="numeric" autocomplete="one-time-code" maxlength="12" placeholder="123 456"></label>
 ${error ? `<p class="error" role="alert">${esc(error)}</p>` : ""}
 <button class="primary">Vérifier</button>
