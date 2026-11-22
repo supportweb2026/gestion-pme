@@ -5,7 +5,8 @@ import { DEFAULT_VAT_RATE, formatXaf } from "../../shared/invoice.ts";
 import type { SyncRecord } from "../../shared/sync.ts";
 import { savePatch } from "./Clients.tsx";
 import { useStock } from "../stock.ts";
-import { isTracked, qtyFr, STOCK_MOVE_LABELS, weightedCost, type StockLevel, type StockMoveKind } from "../../shared/stock.ts";
+import { OpenOrders, PurchaseOrderForm } from "./PurchaseOrders.tsx";
+import { isTracked, onOrder, qtyFr, STOCK_MOVE_LABELS, weightedCost, type StockLevel, type StockMoveKind } from "../../shared/stock.ts";
 
 const UNITS = ["", "u", "h", "jour", "mois", "forfait", "kg", "m", "m²", "l"];
 
@@ -19,11 +20,15 @@ export function Articles() {
   const [lowOnly, setLowOnly] = useState(false);
   const [stockOf, setStockOf] = useState<string | null>(null);
   const { levels } = useStock();
+  const purchaseOrders = useTable("purchase_orders");
+  const ordered = onOrder(purchaseOrders);
+  const [ordering, setOrdering] = useState<string[] | null>(null);
   const lowCount = [...levels.values()].filter((l) => l.low).length;
   const stockValue = [...levels.values()].reduce((n, l) => n + l.value, 0);
   const openForm = (target: SyncRecord | "new") => {
     setKind(target === "new" ? "service" : text(target.data.kind) || "service");
     setStockOf(null);
+    setOrdering(null);
     setEditing(target);
   };
 
@@ -72,6 +77,11 @@ export function Articles() {
         </div>
         <div className="actions">
           <ImportCsv kind="articles" />
+          {levels.size > 0 && (
+            <button onClick={() => { setEditing(null); setStockOf(null); setOrdering([...levels].filter(([, l]) => l.low).map(([id]) => id)); }}>
+              Commander{lowCount > 0 ? ` (${lowCount} en stock bas)` : ""}
+            </button>
+          )}
           <button className="primary" onClick={() => openForm("new")}>Nouvel article</button>
         </div>
       </div>
@@ -112,6 +122,9 @@ export function Articles() {
         </form>
       )}
 
+      {ordering && <PurchaseOrderForm articles={articles} levels={levels} preset={ordering} onClose={() => setOrdering(null)} />}
+      <OpenOrders articles={articles} levels={levels} />
+
       {stockOf && articles.some((a) => a.id === stockOf) && (
         <StockPanel key={stockOf} article={articles.find((a) => a.id === stockOf)!} level={levels.get(stockOf)} onClose={() => setStockOf(null)} />
       )}
@@ -148,6 +161,7 @@ export function Articles() {
                     return (
                       <button className="link stock-link mono" onClick={() => { setEditing(null); setStockOf(a.id); }} aria-label={`Stock de ${text(a.data.label)} : ${qtyFr(l.qty)}`}>
                         {qtyFr(l.qty)}{l.low && <span className="badge danger stock-low">Stock bas</span>}
+                        {ordered.get(a.id) ? <span className="on-order" title="Commandé, pas encore reçu">+{qtyFr(ordered.get(a.id)!)} en commande</span> : null}
                       </button>
                     );
                   })()}</td>}
