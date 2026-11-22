@@ -36,5 +36,18 @@ Dégradé de l'icône : `#0386FB` → `#0255C6` → `#04347D`.
 
 ## Typographie
 
-Montserrat (Google Fonts, licence libre) : Bold / SemiBold pour les titres, Regular / Medium
-pour le texte. Chiffres tabulaires pour les montants. Repli : Poppins, puis police système.
+- **Montserrat** (police de la marque) : titres de page et de carte, Bold / SemiBold.
+- **Manrope** : textes de l'interface, tableaux et montants (chiffres tabulaires). Plus étroite que
+  Montserrat, elle garde les montants en FCFA lisibles dans les colonnes.
+- Repli : police système.
+
+## Interface (système de design)
+
+Les jetons sont en tête de `src/web/styles.css` :
+
+- fond des pages blanc ; texte `#101D36` ; textes secondaires `#3B4760` et `#5B6579` (contraste ≥ 5,9:1) ;
+- une seule couleur d'action, le bleu Gestia `#0255C6` (boutons principaux, liens, menu actif sur fond `#EDF3FD`) ;
+- états : brouillon gris, à encaisser bleu, partiellement payée ambre, payée vert, en retard rouge ;
+- modules pas encore ouverts : groupe « Bientôt disponible » et pastille bleue « Bientôt » ;
+- logo : toujours en hauteur fixe (26 px dans le menu, 40 px à la connexion), largeur proportionnelle ;
+  sur téléphone, l'icône seule (28 px) suivie du nom de l'entreprise.

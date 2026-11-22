@@ -123,7 +123,7 @@ try {
   step("Validation : numéro FA-AAAA-00001, document figé");
   await page.getByRole("button", { name: "Valider la facture" }).click();
   await page.getByRole("heading", { name: `Facture FA-${YEAR}-00001` }).waitFor();
-  assert.equal(await page.getByLabel("Quantité").first().isDisabled(), true, "facture validée non modifiable");
+  assert.equal(await page.getByLabel("Quantité").count(), 0, "facture validée non modifiable : plus aucun champ de saisie");
 
   step("PDF : numéro, client, lignes, remise, TVA ventilée, montant en lettres, mentions légales");
   const pdf1 = await pdfText("facture-1.pdf");

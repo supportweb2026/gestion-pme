@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { preloadPdf } from "./pdfActions.ts";
 import { LocalDb } from "./local/db.ts";
 import { SyncEngine } from "./local/sync.ts";
@@ -217,6 +217,7 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
     <div className="auth">
       <form className="card auth-card" onSubmit={submit} key={mode}>
         <GestiaLogo full />
+        <p className="auth-tagline">Le système de gestion de votre entreprise</p>
         <h1>{mode === "signup" ? "Créer mon entreprise" : "Connexion"}</h1>
         {mode === "signup" ? (
           <>
@@ -248,6 +249,11 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
         ) : (
           <p className="auth-switch">Déjà un compte ? <button type="button" className="link" onClick={() => switchTo("login")}>Se connecter</button></p>
         )}
+        <ul className="auth-points" aria-label="Points forts">
+          <li>Devis, factures et relances en quelques clics</li>
+          <li>Fonctionne même sans connexion</li>
+          <li>Envoi par WhatsApp et e-mail</li>
+        </ul>
       </form>
     </div>
   );
@@ -305,6 +311,13 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
   });
   const [open, setOpen] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  const moreBtn = useRef<HTMLButtonElement>(null);
+  const sheet = useRef<HTMLDivElement>(null);
+  const closeMore = () => { setMoreOpen(false); moreBtn.current?.focus(); };
+  // Feuille « Plus » : le focus entre dans la feuille à l'ouverture.
+  useEffect(() => {
+    if (moreOpen) sheet.current?.querySelector<HTMLElement>(".nav-item")?.focus();
+  }, [moreOpen]);
   const groups = navGroups(ready, soon);
   // Téléphone : quatre raccourcis en bas d'écran, le reste dans « Plus ».
   const mobileMain = MOBILE_MAIN.filter((t) => ready.includes(t)).slice(0, 4);
@@ -382,7 +395,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
                 <span className="user-name">{session.user.name}</span>
                 <span className="user-role">{ROLE_LABELS[session.user.role] ?? session.user.role}</span>
               </span>
-              <button className="icon" onClick={logout} title="Se déconnecter" aria-label="Déconnexion">
+              <button className="icon" onClick={logout} title="Se déconnecter" aria-label="Se déconnecter">
                 <Icon name="logout" />
               </button>
             </div>
@@ -390,7 +403,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
         </aside>
 
         <header className="mobile-head">
-          <GestiaLogo />
+          <img src="/brand/gestia-icone.png" alt="Gestia" className="gestia-mark" width={298} height={309} />
           <CompanyName fallback={session.company.name} />
           <SyncDot />
         </header>
@@ -399,12 +412,20 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
             <NavItem key={t} tab={t} active={tab === t && !moreOpen} onClick={() => { setMoreOpen(false); go(t); }} short />
           ))}
           {mobileMore.length > 0 && (
-            <button className={moreOpen || (mobileMore.includes(tab)) ? "nav-item active" : "nav-item"} aria-expanded={moreOpen} onClick={() => setMoreOpen((o) => !o)}>
+            <button ref={moreBtn} className={moreOpen || (mobileMore.includes(tab)) ? "nav-item active" : "nav-item"} aria-expanded={moreOpen} aria-controls="more-sheet" onClick={() => setMoreOpen((o) => !o)}>
               <Icon name="more" /><span className="nav-label">Plus</span>
             </button>
           )}
+        </nav>
           {moreOpen && (
-            <div className="more-sheet" role="dialog" aria-label="Autres sections">
+            <div className="more-sheet" id="more-sheet" role="dialog" aria-modal="true" aria-labelledby="more-title" ref={sheet}
+              onKeyDown={(e) => { if (e.key === "Escape") closeMore(); }}>
+              <div className="sheet-grip" aria-hidden="true" />
+              <div className="sheet-head">
+                <h2 id="more-title">Plus</h2>
+                <button className="icon" onClick={closeMore} aria-label="Fermer"><Icon name="close" /></button>
+              </div>
+              <nav aria-label="Autres sections">
               {groups.map((g) => {
                 const items = g.tabs.filter((t) => mobileMore.includes(t));
                 if (items.length === 0) return null;
@@ -415,6 +436,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
                   </div>
                 );
               })}
+              </nav>
               <div className="user-id">
                 <span className="avatar" aria-hidden="true">{initials(session.user.name)}</span>
                 <span className="user-text">
@@ -425,10 +447,9 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
               </div>
             </div>
           )}
-        </nav>
-        {moreOpen && <div className="sheet-backdrop" onClick={() => setMoreOpen(false)} aria-hidden="true" />}
+        {moreOpen && <div className="sheet-backdrop" onClick={closeMore} aria-hidden="true" />}
 
-        <div className="main">
+        <div className="main" inert={moreOpen || undefined}>
         <SubscriptionBanner />
         <main className="content">
           {tab === "dashboard" && <Dashboard />}
@@ -462,9 +483,10 @@ function ComingSoon({ tab, onBack }: { tab: Tab; onBack: () => void }) {
   const info = COMING_SOON[tab]!;
   return (
     <section className="card coming-soon" data-testid="coming-soon">
-      <span className="soon-badge">Bientôt disponible</span>
+      <div className="coming-soon-ico" aria-hidden="true"><Icon name={TAB_ICONS[tab]} /></div>
+      <span className="soon-badge"><Icon name="clock" /> Bientôt disponible</span>
       <h2>{info.title}</h2>
-      <p>Ce module est en cours de finalisation. Il arrive dans une prochaine version de Gestia.</p>
+      <p>Ce module est en cours de finalisation et arrivera dans une prochaine version de Gestia. Voici ce qu'il vous permettra de faire :</p>
       <ul>{info.points.map((p) => <li key={p}>{p}</li>)}</ul>
       <div><button className="primary" onClick={onBack}>Retour au tableau de bord</button></div>
     </section>
@@ -473,14 +495,9 @@ function ComingSoon({ tab, onBack }: { tab: Tab; onBack: () => void }) {
 
 /** Logo Gestia, en version claire ou sombre selon le thème de l'appareil. */
 function GestiaLogo({ full = false }: { full?: boolean }) {
-  const base = full ? "gestia-logo" : "gestia-logo-sans-slogan";
-  const cls = full ? "auth-logo" : "gestia-logo";
-  return (
-    <>
-      <img src={`/brand/${base}.png`} alt="Gestia" className={`${cls} light`} />
-      <img src={`/brand/${base}-blanc.png`} alt="Gestia" className={`${cls} dark`} />
-    </>
-  );
+  // Logo sans slogan partout : le slogan devient illisible sous 300 px de large.
+  // Hauteur fixe en CSS, largeur proportionnelle (700 × 172).
+  return <img src="/brand/gestia-logo-sans-slogan.png" alt="Gestia" className={full ? "auth-logo" : "gestia-logo"} width={700} height={172} />;
 }
 
 /** Nom (ou logo) de l'entreprise cliente tel que défini dans les réglages. */
@@ -490,7 +507,7 @@ function CompanyName({ fallback }: { fallback: string }) {
   const name = text(s.name) || fallback;
   return (
     <span className="company" title={name}>
-      {logo && <img src={logo} alt="" className="brand-logo" />}
+      {logo ? <img src={logo} alt="" className="brand-logo" /> : <span className="company-mark" aria-hidden="true">{name.replace(/[^A-Za-zÀ-ÿ0-9]/g, "").slice(0, 2).toUpperCase()}</span>}
       <span>{name}</span>
     </span>
   );
@@ -508,9 +525,9 @@ function navGroups(ready: Tab[], soon: Tab[]): NavGroup[] {
   const groups: NavGroup[] = [
     { key: "home", label: null, tabs: pick(["dashboard"]) },
     { key: "sales", label: "Ventes", tabs: pick(["quotes", "invoices", "credit_notes"]) },
-    { key: "files", label: "Fichiers", tabs: pick(["clients", "articles"]) },
+    { key: "files", label: "Répertoire", tabs: pick(["clients", "articles"]) },
     { key: "other", label: "Gestion", tabs: ready.filter((t) => !used.has(t)) },
-    { key: "soon", label: "À venir", tabs: soon },
+    { key: "soon", label: "Bientôt disponible", tabs: soon },
     { key: "admin", label: "Administration", tabs: pick(["settings", "platform"]) },
   ];
   return groups.filter((g) => g.tabs.length > 0);
@@ -539,7 +556,7 @@ function NavItem({ tab, active, onClick, short = false }: { tab: Tab; active: bo
   );
 }
 
-type IconName = "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more";
+type IconName = "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more" | "close" | "clock";
 const ICON_PATHS: Record<IconName, string[]> = {
   home: ["M3 10.5 12 3l9 7.5", "M5 9.5V20h14V9.5", "M10 20v-6h4v6"],
   quote: ["M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z", "M14 3v5h5", "M8.5 13h7", "M8.5 17h4"],
@@ -554,6 +571,8 @@ const ICON_PATHS: Record<IconName, string[]> = {
   shield: ["M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"],
   logout: ["M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4", "M16 17l5-5-5-5", "M21 12H9"],
   more: ["M4 6h16", "M4 12h16", "M4 18h16"],
+  close: ["M6 6l12 12", "M18 6 6 18"],
+  clock: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 7v5l3 2"],
 };
 
 function Icon({ name }: { name: IconName }) {
@@ -571,8 +590,8 @@ function SyncDot() {
   const { label, tone } = syncLabel(s);
   return (
     <button className={`sync-dot ${tone}`} onClick={() => sync.syncNow()} title={label} aria-label={label}>
-      <span className="dot" />
-      {s.pending > 0 && <span className="count">{s.pending}</span>}
+      <span className="dot" aria-hidden="true" />
+      <span className="sync-text">{s.state === "offline" ? "Hors ligne" : s.state === "syncing" ? "Envoi…" : s.pending > 0 ? `${s.pending} à envoyer` : "À jour"}</span>
     </button>
   );
 }
@@ -668,7 +687,7 @@ function SubscriptionBanner() {
         <p>{msg}</p>
         <SupportLine support={support} prefix={sub.state === "trial" || sub.state === "active" ? "Pour vous abonner :" : "Contact :"} />
       </div>
-      {!sub.readOnly && <button className="ghost small" onClick={() => setClosed(true)} aria-label="Fermer">×</button>}
+      {!sub.readOnly && <button className="icon" onClick={() => setClosed(true)} aria-label="Fermer le bandeau"><Icon name="close" /></button>}
     </div>
   );
 }
