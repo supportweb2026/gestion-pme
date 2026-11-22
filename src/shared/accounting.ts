@@ -6,7 +6,7 @@
  * l'appareil. Une seule source de vérité, aucune double saisie, et les états
  * restent disponibles hors ligne. Seules les opérations diverses (OD) sont saisies.
  */
-import { lineNet, lineVat, type InvoiceLine } from "./invoice.ts";
+import { computeTotals, docTaxes, lineNet, lineVat, type InvoiceLine } from "./invoice.ts";
 import { decimalsOf, toXaf } from "./currency.ts";
 
 /** Ligne minimale d'une table synchronisée (même forme que SyncRecord). */
@@ -39,6 +39,8 @@ export const CHART: Record<string, string> = {
   "4452": "État, TVA récupérable sur achats",
   "4454": "État, TVA récupérable sur services extérieurs",
   "447": "État, impôts retenus à la source",
+  "4478": "État, contribution spéciale de solidarité (CSS) facturée",
+  "4492": "État, retenues à la source subies (à imputer)",
   "471": "Comptes d'attente",
   "521": "Banques",
   "5215": "Airtel Money",
@@ -163,7 +165,8 @@ function salesSplit(r: Rec, productIds: Set<string>) {
     vatCurrency += lineVat(l, decimals);
   }
   const byAccount = new Map([...inCurrency].map(([a, v]) => [a, toXaf(v, rate)]));
-  return { byAccount, vat: toXaf(vatCurrency, rate) };
+  const t = computeTotals(lines, decimals, docTaxes(r.data));
+  return { byAccount, vat: toXaf(vatCurrency, rate), css: toXaf(t.css, rate), withholding: toXaf(t.withholding, rate) };
 }
 
 export interface LedgerInput {
@@ -185,9 +188,9 @@ export function generateEntries(input: LedgerInput): Entry[] {
 
   const sale = (r: Rec, tbl: "invoices" | "credit_notes", sign: 1 | -1) => {
     if (r.data.status !== "validated") return;
-    const { byAccount, vat } = salesSplit(r, products);
+    const { byAccount, vat, css, withholding } = salesSplit(r, products);
     const net = [...byAccount.values()].reduce((a, b) => a + b, 0);
-    const gross = net + vat;
+    const gross = net + vat + css;
     if (gross === 0) return;
     const client = str(r.data.client_id);
     const name = clientName.get(client) ?? "Client";
@@ -196,10 +199,13 @@ export function generateEntries(input: LedgerInput): Entry[] {
     // Une facture : débit client, crédit produits et TVA. Un avoir : l'inverse.
     const dc = (amount: number, debitSide: boolean) =>
       (debitSide === (sign === 1)) ? { debit: amount, credit: 0 } : { debit: 0, credit: amount };
-    const out: EntryLine[] = [{ account: "411", aux: client, label, ...dc(gross, true) }];
+    // Retenue à la source : le client paie le net, l'impôt retenu est une créance sur l'État.
+    const out: EntryLine[] = [{ account: "411", aux: client, label, ...dc(gross - withholding, true) }];
+    if (withholding) out.push({ account: "4492", label: `Retenue à la source ${str(r.data.number)}`, ...dc(withholding, true) });
     // Un montant négatif (déduction d'acompte) passe de l'autre côté de l'écriture.
     for (const [account, amount] of byAccount) if (amount) out.push({ account, label, ...(amount > 0 ? dc(amount, false) : dc(-amount, true)) });
     if (vat) out.push({ account: "4431", label, ...dc(vat, false) });
+    if (css) out.push({ account: "4478", label, ...dc(css, false) });
     entries.push({ id: `${tbl}/${r.id}`, journal: "VE", date: str(r.data.date), ref: str(r.data.number), label, source: { tbl, id: r.id }, lines: out });
   };
   input.invoices.forEach((r) => sale(r, "invoices", 1));
