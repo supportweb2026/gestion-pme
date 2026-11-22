@@ -15,6 +15,18 @@ const PATHS = {
   flag: ["M5 21V4", "M5 4h11l-2 4 2 4H5"],
   folder: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
   list: ["M9 6h11", "M9 12h11", "M9 18h11", "M4 6h.01", "M4 12h.01", "M4 18h.01"],
+  doc: ["M7 3h7l5 5v13H7z", "M14 3v5h5", "M10 13h6", "M10 17h6"],
+  chevron: ["M9 6l6 6-6 6"],
+  diamond: ["M12 3.5l8.5 8.5-8.5 8.5L3.5 12z"],
+  building: ["M4 21V5l8-2v18", "M12 9h8v12", "M8 8h.01", "M8 12h.01", "M8 16h.01", "M16 13h.01", "M16 17h.01", "M2 21h20"],
+  image: ["M4 5h16v14H4z", "M4 16l5-5 4 4 3-3 4 4", "M15.5 9.5h.01"],
+  layers: ["M12 3l9 5-9 5-9-5z", "M3 13l9 5 9-5"],
+  coins: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M14.8 9.2A3 3 0 0 0 12 8c-1.7 0-3 .9-3 2s1.3 2 3 2 3 .9 3 2-1.3 2-3 2a3 3 0 0 1-2.8-1.2", "M12 6.5V8", "M12 16v1.5"],
+  copy: ["M9 9h11v11H9z", "M5 15H4V4h11v1"],
+  pushpin: ["M9 3h6l-1 6 4 4H6l4-4z", "M12 13v8"],
+  calendar: ["M4 6h16v15H4z", "M4 10h16", "M8 3v5", "M16 3v5"],
+  arrowUp: ["M12 19V5", "M6 11l6-6 6 6"],
+  arrowDown: ["M12 5v14", "M6 13l6 6 6-6"],
 } as const;
 
 export type ProjectIconName = keyof typeof PATHS;

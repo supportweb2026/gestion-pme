@@ -18,6 +18,7 @@ import {
   applyGlobalDiscount, deductionLines, depositLines, docTitle, isDepositLine, isSection, percentForAmount,
   QUOTE_TYPES, quoteTypeOf, sectionSubtotals, type QuoteType,
 } from "../../shared/documents.ts";
+import { QuoteProjectBanner } from "./projects/QuoteProjectBanner.tsx";
 import { canShareFiles, downloadFile, makePdfFile, shareFile } from "../pdfActions.ts";
 import { useStock } from "../stock.ts";
 import { defaultNote } from "../../shared/branding.ts";
@@ -615,7 +616,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
 
   // ---------- Document numéroté (ou date en période clôturée) : lecture seule ----------
   if (!editable) {
-    const project = projects.find((p) => p.id === projectId);
+    const project = projects.find((p) => p.id === (text(record?.data.project_id) || projectId));
     return (
       <section>
         {head}
@@ -626,6 +627,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
           </>
         )}
         {links}
+        {kind === "quotes" && numbered && <QuoteProjectBanner quote={record!} />}
         <div className={`doc-layout${numbered ? "" : " single"}`}>
           <div className="doc-main">
             <div className="card section-card">

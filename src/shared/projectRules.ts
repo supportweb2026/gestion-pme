@@ -20,6 +20,10 @@ export const TASK_STATUSES = ["todo", "doing", "review", "done"] as const;
 export const BLOCK_REASONS = ["material", "client", "info", "other"] as const;
 /** Rôles dans un projet. */
 export const MEMBER_ROLES = ["sponsor", "manager", "member"] as const;
+/** Natures d'étape (lot 2) : Démarrage, ordinaire, Levée des réserves. */
+export const STAGE_KINDS = ["start", "normal", "reserves"] as const;
+/** Semaine ISO d'une priorité de la semaine : `2026-W48`. */
+const WEEK = /^\d{4}-W\d{2}$/;
 
 /** Identifiants déterministes (R6). */
 export const teamMemberIdOf = (userId: string) => `tm-${userId}`;
@@ -93,7 +97,33 @@ export function checkProjectChange(existing: SyncRecord | null, change: Change):
       if (has(p, "role") && !(MEMBER_ROLES as readonly string[]).includes(str(p.role))) return "rôle dans le projet inconnu";
       return null;
     }
+    case "project_stages": {
+      if (frozen(existing, p, "project_id")) return "une ligne ne change pas de projet";
+      if (!existing && !str(p.project_id)) return "cette étape n'est rattachée à aucun projet";
+      if ((!existing || has(p, "name")) && !str(value("name")).trim() && !p[DELETED]) return "donnez un nom à l'étape";
+      if (has(p, "kind") && !(STAGE_KINDS as readonly string[]).includes(str(p.kind))) return "nature d'étape inconnue";
+      if (has(p, "billing_pct")) {
+        const v = p.billing_pct;
+        if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 100) return "la part du vendu doit être comprise entre 0 et 100 %";
+      }
+      if (has(p, "rank") && (typeof p.rank !== "number" || !Number.isFinite(p.rank))) return "ordre invalide";
+      if (has(p, "owner_id") && p.owner_id !== "" && !str(p.owner_id).startsWith("tm-")) return "personne introuvable dans l'annuaire";
+      for (const k of ["start_date", "end_date"]) if (has(p, k) && p[k] !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(str(p[k]))) return "date invalide";
+      const start = str(value("start_date"));
+      const end = str(value("end_date"));
+      if (start && end && end < start) return "la fin de l'étape précède son début";
+      return null;
+    }
+    case "quotes": {
+      // Un devis envoyé ne reçoit son projet qu'une fois : de vide à une valeur (RG3.2, RG3.6).
+      const numbered = typeof existing?.data.number === "string" && existing.data.number !== "";
+      if (numbered && has(p, "project_id") && frozen(existing, p, "project_id")) return "ce devis est déjà rattaché à un autre projet";
+      if (numbered && has(p, "project_id") && !str(p.project_id) && str(existing?.data.project_id)) return "ce devis est déjà rattaché à un autre projet";
+      return null;
+    }
     case "tasks": {
+      if (has(p, "priority_week") && p.priority_week !== "" && !WEEK.test(str(p.priority_week))) return "semaine invalide";
+      if (has(p, "stage_id") && typeof p.stage_id !== "string") return "étape inconnue";
       if (has(p, "status") && !(TASK_STATUSES as readonly string[]).includes(str(p.status))) return "statut de tâche inconnu";
       if (has(p, "blocked_reason") && p.blocked_reason !== "" && !(BLOCK_REASONS as readonly string[]).includes(str(p.blocked_reason))) return "motif de blocage inconnu";
       if (has(p, "assignee_id") && p.assignee_id !== "" && !str(p.assignee_id).startsWith("tm-")) return "personne introuvable dans l'annuaire";
@@ -142,6 +172,9 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
       return direction ? null : "vous ne pouvez pas modifier l'annuaire ni les coûts horaires";
     case "project_members":
       return ["admin", "director", "sales", "project_manager"].includes(role) ? null : "vous ne pouvez pas modifier l'équipe de ce projet";
+    case "project_stages":
+      // Écriture ouverte aux rôles qui gèrent les projets (WRITABLE, comptable compris) ; jamais l'employé.
+      return role === "employee" ? "vous ne pouvez pas modifier les étapes de ce projet" : null;
     case "projects":
       if (has(p, DELETED) && p[DELETED] === true && !direction) return "vous ne pouvez pas supprimer ce projet";
       return null;

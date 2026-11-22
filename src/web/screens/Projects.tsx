@@ -6,13 +6,20 @@
  * À vérifier → Terminé par le responsable ou le commanditaire, aucun montant pour
  * l'employé, montants rangés dans la table protégée `project_finance`.
  *
+ * Lot 2 : étapes (frise, onglet Étapes, filtre des tâches, Gantt), avancement pondéré
+ * et prévu à date dans l'en-tête, création depuis un modèle ou un devis accepté,
+ * priorités de la semaine.
+ *
  * Rédaction : dire ce qui se passe et son effet, sans renvoyer vers une hiérarchie.
  */
 import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from "react";
 import { can, formatDate, normalize, text, today, useApp, useSettings, useTable } from "../context.ts";
 import { addDays, DEFAULT_PAYMENT_DAYS, DEFAULT_VAT_RATE, formatXaf } from "../../shared/invoice.ts";
 import { BILLING_MODES, financeOf, PROJECT_STATUS, projectStats, TASK_STATUS, timeToInvoiceLines } from "../../shared/projects.ts";
-import { assigneeOf, BLOCK_LABELS, checkDayHours, daysBetween, hoursOn, matchTeamMember, MEMBER_ROLE_LABELS } from "../../shared/projectControl.ts";
+import {
+  assigneeOf, BLOCK_LABELS, canPin, checkDayHours, daysBetween, hoursOn, isoWeek, matchTeamMember, MAX_WEEK_PRIORITIES, MEMBER_ROLE_LABELS,
+  nextDeadline, pct100, projectProgress, soldOf, stagesOf, type StageInfo,
+} from "../../shared/projectControl.ts";
 import { canCloseTask, financeIdOf, memberIdOf, teamMemberIdOf } from "../../shared/projectRules.ts";
 import type { SyncRecord } from "../../shared/sync.ts";
 import { currencyOf, totalsOf } from "../ledger.ts";
@@ -21,6 +28,10 @@ import { localProjectContext } from "../local/guard.ts";
 import { migrateFinance, useGuardedWrite, useTeam } from "./team.ts";
 import { Team } from "./Team.tsx";
 import { Initials, PIcon } from "./ProjectIcons.tsx";
+import { NewProject } from "./projects/NewProject.tsx";
+import { StageStrip, StagesTab } from "./projects/Stages.tsx";
+import { WeekPriorities } from "./projects/WeekPriorities.tsx";
+import { NEW_FROM_QUOTE } from "./projects/QuoteProjectBanner.tsx";
 
 const PRIORITY: Record<string, string> = { low: "Basse", normal: "Normale", high: "Haute" };
 const hoursLabel = (h: number) => `${(Math.round(h * 100) / 100).toLocaleString("fr-FR")} h`;
@@ -35,7 +46,9 @@ function useProjectData() {
   const credit_notes = useTable("credit_notes");
   const project_finance = useTable("project_finance");
   const cost_rates = useTable("cost_rates");
-  return { tasks, time_entries, expenses, invoices, credit_notes, project_finance, cost_rates };
+  const project_stages = useTable("project_stages");
+  const quotes = useTable("quotes");
+  return { tasks, time_entries, expenses, invoices, credit_notes, project_finance, cost_rates, project_stages, quotes };
 }
 
 /** Membres (non retirés) de l'équipe d'un projet. */
@@ -58,9 +71,11 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
   const tasks = useTable("tasks");
   const members = useMembers();
   const data = useProjectData();
-  const [open, setOpen] = useState<string | null>(initialOpen);
+  const fromQuote = (o: string | null) => (o && o.startsWith(NEW_FROM_QUOTE) ? o.slice(NEW_FROM_QUOTE.length) : null);
+  const [open, setOpen] = useState<string | null>(fromQuote(initialOpen) === null ? initialOpen : null);
   const [view, setView] = useState<"list" | "team">("list");
-  const [editing, setEditing] = useState<SyncRecord | "new" | null>(null);
+  // Nouveau projet : "" = sans devis ; sinon l'identifiant du devis à lancer.
+  const [creating, setCreating] = useState<string | null>(fromQuote(initialOpen));
   const [status, setStatus] = useState("open");
   const [query, setQuery] = useState("");
   const role = session.user.role;
@@ -71,8 +86,15 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
 
   // Reprise des montants des anciens projets (direction, idempotent).
   useEffect(() => { migrateFinance(db, session).catch(() => {}); }, [db, session, projects.length]);
-  useEffect(() => { if (initialOpen) setOpen(initialOpen); }, [initialOpen]);
+  useEffect(() => {
+    if (!initialOpen) return;
+    const q = fromQuote(initialOpen);
+    if (q !== null) { setCreating(q); setOpen(null); } else setOpen(initialOpen);
+  }, [initialOpen]);
 
+  if (creating !== null && manager) {
+    return <NewProject quoteId={creating || undefined} onClose={(id) => { setCreating(null); if (id) setOpen(id); }} />;
+  }
   if (open) {
     const project = projects.find((p) => p.id === open);
     if (project) return <ProjectDetail project={project} clientName={clientName(project.data.client_id)} onBack={() => setOpen(null)} />;
@@ -103,12 +125,11 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
               <button role="tab" aria-selected={view === "team"} className={view === "team" ? "active" : ""} onClick={() => setView("team")}>Personnes</button>
             </div>
           )}
-          {manager && view === "list" && visibleProjects.length > 0 && !editing && <button className="primary" onClick={() => setEditing("new")}>Nouveau projet</button>}
+          {manager && view === "list" && visibleProjects.length > 0 && <button className="primary" onClick={() => setCreating("")}>Nouveau projet</button>}
         </div>
       </div>
       {view === "team" ? <Team /> : (
         <>
-          {editing && <ProjectForm record={editing === "new" ? null : editing} clients={clients} onClose={(id) => { setEditing(null); if (id) setOpen(id); }} />}
           {visibleProjects.length > 0 && (
             <div className="toolbar">
               <input type="search" placeholder="Rechercher un projet ou un client" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher un projet" />
@@ -121,7 +142,7 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
           )}
           {rows.length === 0 ? (
             visibleProjects.length === 0 ? (
-              !editing && (
+              (
                 <div className="empty-state">
                   <span className="empty-ico" aria-hidden="true"><PIcon name="folder" /></span>
                   <h3 className="empty-title">{manager ? "Aucun projet pour l'instant" : "Aucun projet pour vous pour l'instant"}</h3>
@@ -130,7 +151,7 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
                       ? "Un projet regroupe les tâches, le temps passé et la facturation d'un chantier ou d'une mission."
                       : "Les projets sur lesquels vous travaillez apparaîtront ici, avec vos tâches."}
                   </p>
-                  {manager && <button className="primary" onClick={() => setEditing("new")}>Nouveau projet</button>}
+                  {manager && <button className="primary" onClick={() => setCreating("")}>Nouveau projet</button>}
                 </div>
               )
             ) : (
@@ -144,6 +165,7 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
             <div className="project-grid">
               {rows.map((p) => {
                 const s = projectStats(p, data, today());
+                const prog = projectProgress(p, data, today());
                 const lead = managerName(p, members);
                 const blocked = tasks.filter((t) => t.data.project_id === p.id && t.data.blocked && t.data.status !== "done").length;
                 return (
@@ -156,7 +178,7 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
                       <span>{[clientName(p.data.client_id) || (amounts ? "Projet interne" : ""), p.data.end_date ? `fin prévue le ${formatDate(p.data.end_date)}` : ""].filter(Boolean).join(" · ")}</span>
                       {lead && <span>Responsable : {lead.name}</span>}
                     </div>
-                    {s.tasks > 0 ? <Progress value={s.progress} label={`${s.tasksDone}/${s.tasks} tâches terminées`} /> : <p className="muted small project-card-empty">Aucune tâche pour l'instant</p>}
+                    {s.tasks > 0 ? <Progress value={pct100(prog.A)} label={prog.method === "stages" ? `${prog.stages.length} étapes · ${s.tasksDone}/${s.tasks} tâches terminées` : `${s.tasksDone}/${s.tasks} tâches terminées`} /> : <p className="muted small project-card-empty">Aucune tâche pour l'instant</p>}
                     {amounts ? (
                       <dl className="mini-stats">
                         <div><dt>Heures</dt><dd>{hoursLabel(s.hours)}</dd></div>
@@ -206,6 +228,7 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
   const legacyLead = record && !currentLead ? matchTeamMember(record.data.manager, team) : null;
   const defaultLead = currentLead ? text(currentLead.data.team_member_id) : legacyLead ? legacyLead.id : record ? "" : teamMemberIdOf(session.user.id);
   const amounts = can.seeAmounts(session.user.role);
+  const soldManual = Number(finances.find((x) => record && x.id === financeIdOf(record.id))?.data.sold_manual) || 0;
 
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -224,10 +247,11 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
 
     // Montants : ligne protégée, jamais envoyée à l'employé.
     if (amounts && "budget" in f) {
-      const money = { legacy_budget: Math.round(Number(f.budget) || 0), hourly_rate: Math.round(Number(f.hourly_rate) || 0), cost_rate: Math.round(Number(f.cost_rate) || 0) };
-      const before = { legacy_budget: fin?.budget ?? 0, hourly_rate: fin?.hourlyRate ?? 0, cost_rate: fin?.costRate ?? 0 };
+      const money: Record<string, number> = { legacy_budget: Math.round(Number(f.budget) || 0), hourly_rate: Math.round(Number(f.hourly_rate) || 0), cost_rate: Math.round(Number(f.cost_rate) || 0) };
+      const before: Record<string, number> = { legacy_budget: fin?.budget ?? 0, hourly_rate: fin?.hourlyRate ?? 0, cost_rate: fin?.costRate ?? 0 };
+      if ("sold_manual" in f) { money.sold_manual = Math.round(Number(f.sold_manual) || 0); before.sold_manual = soldManual; }
       const finPatch: Record<string, unknown> = {};
-      for (const [k, val] of Object.entries(money)) if (before[k as keyof typeof before] !== val || !finances.some((x) => x.id === financeIdOf(id))) finPatch[k] = val;
+      for (const [k, val] of Object.entries(money)) if (before[k] !== val || !finances.some((x) => x.id === financeIdOf(id))) finPatch[k] = val;
       if (Object.keys(finPatch).length) {
         if (!finances.some((x) => x.id === financeIdOf(id))) Object.assign(finPatch, { project_id: id, created_by: session.user.id, created_at: new Date().toISOString() });
         await db.write("project_finance", financeIdOf(id), finPatch);
@@ -264,7 +288,7 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
       <label>
         Facturation
         <select name="billing" defaultValue={v("billing", "time")}>
-          {Object.entries(BILLING_MODES).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          {Object.entries(BILLING_MODES).filter(([k]) => !["fixed", "milestone"].includes(k) || v("billing") === k).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
       </label>
       <label>
@@ -279,6 +303,7 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
       <label className="wide">Adresse ou site<input name="site_address" defaultValue={v("site_address")} placeholder="Ex. : Agence BGFI, carrefour SNI, Owendo" /></label>
       {amounts && (
         <>
+          {record?.data.quote_id ? null : <label>Montant vendu HT (FCFA)<input type="number" min="0" name="sold_manual" defaultValue={soldManual || ""} /></label>}
           <label>Budget HT (FCFA)<input type="number" min="0" name="budget" defaultValue={fin?.budget || ""} /></label>
           <label>Taux de facturation (FCFA / h)<input type="number" min="0" name="hourly_rate" defaultValue={fin?.hourlyRate || ""} /></label>
           <label>Coût horaire interne (FCFA / h)<input type="number" min="0" name="cost_rate" defaultValue={fin?.costRate || ""} /></label>
@@ -294,7 +319,12 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
   );
 }
 
-type DetailView = "tasks" | "gantt" | "time" | "team" | "finance";
+type DetailView = "tasks" | "stages" | "gantt" | "time" | "team" | "finance";
+
+const dayMonth = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit" });
+
+/** Rôles qui découpent un projet en étapes (l'employé les consulte). */
+const canPlan = (role: string) => role !== "employee" && can.manageProjects(role);
 
 function ProjectDetail({ project, clientName, onBack }: { project: SyncRecord; clientName: string; onBack: () => void }) {
   const { session } = useApp();
@@ -302,24 +332,43 @@ function ProjectDetail({ project, clientName, onBack }: { project: SyncRecord; c
   const clients = useTable("clients");
   const members = useMembers(project.id);
   const [view, setView] = useState<DetailView>("tasks");
+  const [stageFilter, setStageFilter] = useState<string>("all");
+  const [pickedStage, setPickedStage] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
-  const s = projectStats(project, data, today());
+  const day = today();
+  const s = projectStats(project, data, day);
+  const prog = projectProgress(project, data, day);
+  const sold = soldOf(project, data);
   const role = session.user.role;
   const manager = can.manageProjects(role);
+  const planner = canPlan(role);
   const amounts = can.seeAmounts(role);
-  const tasks = data.tasks.filter((t) => t.data.project_id === project.id);
+  const me = teamMemberIdOf(session.user.id);
+  const tasks = data.tasks.filter((t) => live(t) && t.data.project_id === project.id);
   const entries = data.time_entries.filter((t) => t.data.project_id === project.id);
+  const stages = prog.stages;
+  const stageRecords = stagesOf(project.id, data.project_stages);
   const lead = managerName(project, members);
+  const leadId = text(members.find((m) => m.data.role === "manager")?.data.team_member_id);
   const estimated = amounts && !can.seePersonCosts(role) && s.hours > 0;
-  // Projet qui démarre : des indicateurs à zéro n'apprennent rien, on les montre dès qu'il y a de l'activité.
+  // Indicateurs à zéro : rien à apprendre ; chaque bloc n'apparaît que s'il dit quelque chose.
   const started = s.tasksDone > 0 || s.hours > 0 || s.costs > 0 || s.invoiced > 0;
+  const deadline = nextDeadline(project, stages, day);
+  const mineOpen = tasks.filter((t) => t.data.assignee_id === me && t.data.status !== "done").length;
   const tabs: [DetailView, string, string?][] = [
     ["tasks", "Tâches", tasks.length ? String(tasks.length) : undefined],
+    ...(stages.length ? [["stages", "Étapes", String(stages.length)]] as [DetailView, string, string][] : []),
     ["gantt", "Planning"],
     ["time", "Temps", s.hours ? hoursLabel(s.hours) : undefined],
     ["team", "Équipe", members.length ? String(members.length) : undefined],
     ...(amounts ? [["finance", "Facturation"]] as [DetailView, string][] : []),
   ];
+  const openStage = (id: string) => { setPickedStage(id); setView("stages"); };
+  const A = pct100(prog.A);
+  const P = prog.P === null ? null : pct100(prog.P);
+  const showProgress = tasks.length > 0 || stages.length > 0;
+  const showMargin = amounts && (started || sold.VXaf > 0);
+  const blocks = [showProgress, s.hours > 0, showMargin || (!amounts && mineOpen > 0), !!deadline].filter(Boolean).length;
 
   return (
     <section>
@@ -340,19 +389,67 @@ function ProjectDetail({ project, clientName, onBack }: { project: SyncRecord; c
       </div>
       {editing && <ProjectForm record={project} clients={clients} onClose={() => setEditing(false)} />}
 
-      {started && (
-        <div className={`kpis ${amounts ? "five" : "two"}`}>
-          <div className="card kpi"><div className="kpi-label">Avancement</div><div className="kpi-value">{s.progress} %</div><Progress value={s.progress} label={`${s.tasksDone}/${s.tasks} tâches terminées`} hideValue /></div>
-          <div className="card kpi"><div className="kpi-label">Temps passé</div><div className="kpi-value mono">{hoursLabel(s.hours)}</div><div className="muted small">{s.hoursEstimated ? `sur ${hoursLabel(s.hoursEstimated)} estimées` : "aucune estimation sur les tâches"}</div></div>
-          {amounts && (
-            <>
-              <div className="card kpi"><div className="kpi-label">Coûts (temps + dépenses)</div><div className="kpi-value mono">{formatXaf(s.costs)}</div>{s.budget > 0 ? <div className={`small ${s.budgetUsed > 100 ? "danger-text" : "muted"}`}>{s.budgetUsed} % du budget de {formatXaf(s.budget)}</div> : estimated ? <div className="small muted">Temps estimé au coût moyen</div> : null}</div>
-              <div className="card kpi"><div className="kpi-label">Facturé (HT)</div><div className="kpi-value mono">{formatXaf(s.invoiced)}</div>{s.unbilledHours > 0 && <div className="small warn-text">{hoursLabel(s.unbilledHours)} pas encore facturées</div>}</div>
-              <div className={`card kpi ${s.margin < 0 ? "danger" : ""}`}><div className="kpi-label">Marge</div><div className="kpi-value mono" data-testid="project-margin">{formatXaf(s.margin)}</div>{estimated ? <div className="small muted">Estimation au coût moyen</div> : s.margin < 0 && s.invoiced === 0 ? <div className="small muted">Rien n'est encore facturé</div> : null}</div>
-            </>
+      {blocks > 0 && (
+        <div className="card head-blocks" style={{ ["--cols" as string]: blocks }} data-testid="project-head">
+          {showProgress && (
+            <div className="head-block">
+              <div className="kpi-label">Avancement</div>
+              <div className="head-value" data-testid="project-progress"><span className="mono">{A} %</span><span className="muted"> fait</span></div>
+              <div className="progress-plan" role="progressbar" aria-valuenow={A} aria-valuemin={0} aria-valuemax={100} aria-label={`Avancement ${A} %${P !== null ? `, ${P} % prévu à date` : ""}`}>
+                <span className="fill" style={{ width: `${Math.min(100, A)}%` }} />
+                {P !== null && <span className="plan" style={{ left: `${Math.min(100, P)}%` }} />}
+              </div>
+              <div className="muted small" data-testid="project-planned">
+                {P !== null ? `${P} % prévu à date` : prog.method === "stages" ? "Datez les étapes pour comparer au prévu" : project.data.end_date ? "" : "Ajoutez une fin prévue pour comparer au prévu"}
+                {prog.method === "tasks" && s.tasks ? `${P !== null || !project.data.end_date ? " · " : ""}${s.tasksDone}/${s.tasks} tâches terminées` : ""}
+              </div>
+            </div>
+          )}
+          {s.hours > 0 && (
+            <div className="head-block">
+              <div className="kpi-label">Temps passé</div>
+              <div className="head-value mono">{hoursLabel(s.hours)}</div>
+              <div className="muted small">{s.hoursEstimated ? `sur ${hoursLabel(s.hoursEstimated)} estimées` : "aucune estimation sur les tâches"}</div>
+            </div>
+          )}
+          {showMargin ? (
+            <div className={`head-block${s.margin < 0 && s.invoiced > 0 ? " danger" : ""}`}>
+              <div className="kpi-label">{started ? "Marge" : "Montant vendu"}</div>
+              {started ? (
+                <>
+                  <div className={`head-value mono${s.margin < 0 ? " danger-text" : ""}`} data-testid="project-margin">{formatXaf(s.margin)}</div>
+                  <div className="muted small">
+                    {s.invoiced === 0 ? "Rien n'est encore facturé" : `facturé ${formatXaf(s.invoiced)} · coûts ${formatXaf(s.costs)}`}
+                    {sold.VXaf > 0 ? ` · vendu ${formatXaf(sold.VXaf)} HT` : ""}{estimated ? " · coût moyen" : ""}
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="head-value mono" data-testid="project-sold">{formatXaf(sold.VXaf)}</div>
+                  <div className="muted small">HT{sold.source === "quotes" ? ", repris du devis" : sold.source === "legacy" ? ", ancien budget du forfait" : ""}</div>
+                </>
+              )}
+            </div>
+          ) : !amounts && mineOpen > 0 ? (
+            <div className="head-block">
+              <div className="kpi-label">Mes tâches</div>
+              <div className="head-value mono">{mineOpen}</div>
+              <div className="muted small">à faire sur ce projet</div>
+            </div>
+          ) : null}
+          {deadline && (
+            <div className="head-block">
+              <div className="kpi-label">Prochaine échéance</div>
+              <div className="head-value head-deadline">{deadline.label}</div>
+              <div className={`small ${deadline.date && deadline.date < day ? "danger-text strong" : "muted"}`}>
+                {!deadline.date ? "Date à définir" : deadline.date === day ? `aujourd'hui, ${dayMonth(deadline.date)}` : deadline.date < day ? `dépassée de ${daysBetween(deadline.date, day)} j (${dayMonth(deadline.date)})` : dayMonth(deadline.date)}
+              </div>
+            </div>
           )}
         </div>
       )}
+
+      <StageStrip stages={stages} showPct={amounts} onPick={openStage} />
 
       <div className="segmented subnav" role="tablist" aria-label="Rubriques du projet">
         {tabs.map(([v, l, n]) => (
@@ -362,8 +459,15 @@ function ProjectDetail({ project, clientName, onBack }: { project: SyncRecord; c
         ))}
       </div>
 
-      {view === "tasks" && <Kanban project={project} tasks={tasks} members={members} onTeam={() => setView("team")} />}
-      {view === "gantt" && <Gantt project={project} tasks={tasks} />}
+      {view === "tasks" && (
+        <Kanban project={project} tasks={tasks} members={members} stages={stages} stageFilter={stageFilter} setStageFilter={setStageFilter}
+          onTeam={() => setView("team")} onStages={planner && stages.length === 0 ? () => setView("stages") : undefined} />
+      )}
+      {view === "stages" && (
+        <StagesTab project={project} stages={stages} tasks={tasks} entries={entries} sold={sold} amounts={amounts} canEdit={planner}
+          selected={pickedStage} onSelect={setPickedStage} managerId={leadId} />
+      )}
+      {view === "gantt" && <Gantt project={project} tasks={tasks} stages={stageRecords} />}
       {view === "time" && <TimeEntries project={project} tasks={tasks} entries={entries} invoices={data.invoices} />}
       {view === "team" && <ProjectTeam project={project} members={members} />}
       {view === "finance" && amounts && <Finance project={project} data={data} />}
@@ -464,7 +568,10 @@ function stepsOf(status: string, canClose: boolean, mine: boolean): { to: string
   }
 }
 
-function Kanban({ project, tasks, members, onTeam }: { project: SyncRecord; tasks: SyncRecord[]; members: SyncRecord[]; onTeam: () => void }) {
+function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, onTeam, onStages }: {
+  project: SyncRecord; tasks: SyncRecord[]; members: SyncRecord[]; stages: StageInfo<SyncRecord>[];
+  stageFilter: string; setStageFilter: (v: string) => void; onTeam: () => void; onStages?: () => void;
+}) {
   const { db, session } = useApp();
   const write = useGuardedWrite();
   const team = useTeam();
@@ -482,7 +589,10 @@ function Kanban({ project, tasks, members, onTeam }: { project: SyncRecord; task
   const [picked, setWho] = useState<string | null>(null);
   const who = picked ?? (employee && tasks.some((t) => t.data.assignee_id === me) ? me : "all");
   const [error, setError] = useState<string | null>(null);
-  const order = TASK_STATUS.map(([k]) => k);
+  const week = isoWeek(today());
+  const stageName = (id: unknown) => text(stages.find((i) => i.stage.id === id)?.stage.data.name);
+  const unstaged = tasks.filter((t) => !t.data.stage_id || !stages.some((i) => i.stage.id === t.data.stage_id)).length;
+  const stageOf = stages.some((i) => i.stage.id === stageFilter) ? stageFilter : "";
 
   // Personnes du filtre : l'équipe du projet et les personnes chargées des tâches.
   const people = useMemo(() => {
@@ -507,6 +617,8 @@ function Kanban({ project, tasks, members, onTeam }: { project: SyncRecord; task
       await write("tasks", db.newId("tsk"), {
         project_id: project.id, title: name, status: "todo", priority: "normal", created_by: session.user.id, created_at: new Date().toISOString(),
         ...(assignTo ? { assignee_id: assignTo } : {}),
+        // Filtre sur une étape : la nouvelle tâche y est rangée.
+        ...(stageOf ? { stage_id: stageOf } : {}),
       });
     } catch (err) {
       setTitle(name);
@@ -533,7 +645,15 @@ function Kanban({ project, tasks, members, onTeam }: { project: SyncRecord; task
     const t = tasks.find((x) => x.id === e.dataTransfer.getData("text/plain"));
     if (t) move(t, status);
   };
-  const visible = tasks.filter((t) => who === "all" || (who === "none" ? !t.data.assignee_id && !t.data.assignee : t.data.assignee_id === who));
+  async function togglePin(t: SyncRecord) {
+    const pinned = t.data.priority_week === week;
+    if (!pinned && !canPin(project.id, tasks, today())) {
+      return setError(`Déjà ${MAX_WEEK_PRIORITIES} priorités cette semaine : retirez-en une pour en épingler une autre.`);
+    }
+    return patch(t, { priority_week: pinned ? "" : week });
+  }
+  const inStage = (t: SyncRecord) => stageFilter === "all" || (stageFilter === "none" ? !t.data.stage_id || !stages.some((i) => i.stage.id === t.data.stage_id) : t.data.stage_id === stageFilter);
+  const visible = tasks.filter((t) => inStage(t) && (who === "all" || (who === "none" ? !t.data.assignee_id && !t.data.assignee : t.data.assignee_id === who)));
   const day = today();
 
   return (
@@ -560,16 +680,34 @@ function Kanban({ project, tasks, members, onTeam }: { project: SyncRecord; task
           </label>
         )}
       </div>
+      {stages.length > 0 && tasks.length > 0 && (
+        <div className="stage-filter" role="group" aria-label="Filtrer par étape">
+          <button aria-pressed={stageFilter === "all"} className={stageFilter === "all" ? "on" : ""} onClick={() => setStageFilter("all")}>Toutes<span className="seg-count">{tasks.length}</span></button>
+          {stages.map((i) => {
+            const n = tasks.filter((t) => t.data.stage_id === i.stage.id).length;
+            return <button key={i.stage.id} aria-pressed={stageFilter === i.stage.id} className={stageFilter === i.stage.id ? "on" : ""} onClick={() => setStageFilter(i.stage.id)}>{text(i.stage.data.name)}<span className="seg-count">{n}</span></button>;
+          })}
+          {unstaged > 0 && <button aria-pressed={stageFilter === "none"} className={stageFilter === "none" ? "on" : ""} onClick={() => setStageFilter("none")}>Sans étape<span className="seg-count">{unstaged}</span></button>}
+        </div>
+      )}
+      {stageOf && <p className="muted small stage-filter-note">Les tâches ajoutées maintenant vont dans l'étape « {stageName(stageOf)} ».</p>}
       {error && <p className="error" role="alert">{error}</p>}
+      {tasks.length > 0 && (
+        <WeekPriorities project={project} tasks={tasks} team={team} stages={stages.map((i) => i.stage)} canPinTasks={canClose}
+          onUnpin={(t) => togglePin(t)} onOpen={(t) => { setStageFilter("all"); setWho("all"); setEditing(t.id); }} />
+      )}
       {tasks.length === 0 ? (
         <div className="card empty-state kanban-empty">
           <span className="empty-ico" aria-hidden="true"><PIcon name="list" /></span>
           <h3 className="empty-title">Aucune tâche pour l'instant</h3>
           <p className="muted">
-            Ajoutez une première tâche avec le champ ci-dessus : elle arrive dans « À faire ».
+            Ajoutez une première tâche avec le champ ci-dessus : elle arrive dans « À faire »{stageOf ? `, dans l'étape « ${stageName(stageOf)} »` : ""}.
             {members.length === 0 && !employee ? " Pour attribuer des tâches, ajoutez d'abord les personnes du projet." : ""}
           </p>
-          {members.length === 0 && !employee && <button onClick={onTeam}>Ajouter des personnes au projet</button>}
+          <div className="actions center-actions">
+            {members.length === 0 && !employee && <button onClick={onTeam}>Ajouter des personnes au projet</button>}
+            {onStages && <button onClick={onStages}>Découper le projet en étapes</button>}
+          </div>
         </div>
       ) : (
       <div className="kanban">
@@ -594,10 +732,10 @@ function Kanban({ project, tasks, members, onTeam }: { project: SyncRecord; task
                   <div key={t.id} className={`task-card${t.data.blocked ? " blocked" : ""}`} draggable={editing !== t.id} onDragStart={(e) => e.dataTransfer.setData("text/plain", t.id)}>
                     {editing === t.id ? (employee
                       ? <EmployeeTaskForm task={t} onClose={() => setEditing(null)} />
-                      : <TaskForm task={t} members={members} onClose={() => setEditing(null)} />) : (
+                      : <TaskForm task={t} members={members} stages={stages} onClose={() => setEditing(null)} />) : (
                       <>
                         <button className="task-title" onClick={() => setEditing(t.id)} title={employee ? "Voir la tâche" : "Modifier la tâche"}>{text(t.data.title)}</button>
-                        {(t.data.priority === "high") && <div className="task-tags"><span className="tag danger">Priorité haute</span></div>}
+                        <TaskTags task={t} stage={stageFilter === "all" ? stageName(t.data.stage_id) : ""} pinned={t.data.priority_week === week} />
                         {t.data.blocked ? (
                           <div className="task-blocked"><PIcon name="alert" />Bloquée : {BLOCK_LABELS[text(t.data.blocked_reason)] ?? "motif non précisé"}{t.data.blocked_note ? ` (${text(t.data.blocked_note)})` : ""}</div>
                         ) : null}
@@ -612,8 +750,13 @@ function Kanban({ project, tasks, members, onTeam }: { project: SyncRecord; task
                             {t.data.estimate_hours ? <span title="Estimation">{hoursLabel(Number(t.data.estimate_hours))}</span> : null}
                           </span>
                         </div>
-                        {(steps.length > 0 || (status === "review" && !canClose) || (t.data.blocked && (canClose || mine))) && (
+                        {(steps.length > 0 || (status === "review" && !canClose) || (t.data.blocked && (canClose || mine)) || (canClose && status !== "done")) && (
                           <div className="task-move">
+                            {canClose && status !== "done" && (
+                              <button className={`ghost small icon pin-btn${t.data.priority_week === week ? " on" : ""}`} onClick={() => togglePin(t)} aria-pressed={t.data.priority_week === week}
+                                aria-label="Priorité de la semaine"
+                                title={t.data.priority_week === week ? "Retirer des priorités de la semaine" : "Épingler en priorité de la semaine"}><PIcon name="pushpin" /></button>
+                            )}
                             {status === "review" && !canClose && <span className="muted small">En attente de vérification</span>}
                             {t.data.blocked && (canClose || mine) ? <button className="ghost small" onClick={() => patch(t, { blocked: false, blocked_reason: "", blocked_note: "" })}>Débloquer</button> : null}
                             {steps.map((s) => (
@@ -635,7 +778,21 @@ function Kanban({ project, tasks, members, onTeam }: { project: SyncRecord; task
   );
 }
 
-function TaskForm({ task, members, onClose }: { task: SyncRecord; members: SyncRecord[]; onClose: () => void }) {
+/** Étiquettes d'une carte : étape, priorité de la semaine, livrable, priorité haute. Toujours un mot, pas seulement une couleur. */
+function TaskTags({ task, stage, pinned }: { task: SyncRecord; stage: string; pinned: boolean }) {
+  const done = task.data.status === "done";
+  if (!stage && !pinned && !task.data.deliverable && task.data.priority !== "high") return null;
+  return (
+    <div className="task-tags">
+      {stage && <span className="tag stage-tag"><PIcon name="diamond" />{stage}</span>}
+      {pinned && <span className="tag"><PIcon name="pushpin" />Priorité</span>}
+      {task.data.deliverable ? <span className={`tag ${done ? "ok" : "info"}`}>{done ? "Remis au client" : "À remettre au client"}</span> : null}
+      {task.data.priority === "high" && <span className="tag danger">Priorité haute</span>}
+    </div>
+  );
+}
+
+function TaskForm({ task, members, stages, onClose }: { task: SyncRecord; members: SyncRecord[]; stages: StageInfo<SyncRecord>[]; onClose: () => void }) {
   const write = useGuardedWrite();
   const team = useTeam();
   const [error, setError] = useState<string | null>(null);
@@ -652,11 +809,13 @@ function TaskForm({ task, members, onClose }: { task: SyncRecord; members: SyncR
     const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
     const values: Record<string, unknown> = {
       title: f.title, description: f.description, assignee_id: assignee, start_date: f.start_date, due_date: f.due_date,
-      estimate_hours: Number(f.estimate_hours) || 0, priority: f.priority,
+      estimate_hours: Number(f.estimate_hours) || 0, priority: f.priority, deliverable: f.deliverable === "on",
+      ...(stages.length ? { stage_id: f.stage_id ?? "" } : {}),
     };
     const patch: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(values)) if ((task.data[k] ?? "") !== v) patch[k] = v;
     if (task.data.estimate_hours === undefined && values.estimate_hours === 0) delete patch.estimate_hours;
+    if (task.data.deliverable === undefined && values.deliverable === false) delete patch.deliverable;
     try {
       if (Object.keys(patch).length) await write("tasks", task.id, patch);
       onClose();
@@ -694,6 +853,15 @@ function TaskForm({ task, members, onClose }: { task: SyncRecord; members: SyncR
         <label>Début<input type="date" name="start_date" defaultValue={text(task.data.start_date)} /></label>
         <label>Échéance<input type="date" name="due_date" defaultValue={text(task.data.due_date)} /></label>
       </div>
+      {stages.length > 0 && (
+        <label>
+          Étape
+          <select name="stage_id" defaultValue={text(task.data.stage_id)}>
+            <option value="">Sans étape</option>
+            {stages.map((i) => <option key={i.stage.id} value={i.stage.id}>{text(i.stage.data.name)}</option>)}
+          </select>
+        </label>
+      )}
       <div className="task-form-row">
         <label>Estimation (h)<input type="number" min="0" step="0.5" name="estimate_hours" defaultValue={text(task.data.estimate_hours)} /></label>
         <label>
@@ -703,6 +871,7 @@ function TaskForm({ task, members, onClose }: { task: SyncRecord; members: SyncR
           </select>
         </label>
       </div>
+      <label className="inline check-line"><input type="checkbox" name="deliverable" defaultChecked={Boolean(task.data.deliverable)} /> Livrable à remettre</label>
       {task.data.blocked ? (
         <button type="button" className="ghost small" onClick={() => write("tasks", task.id, { blocked: false, blocked_reason: "", blocked_note: "" })}>Débloquer la tâche</button>
       ) : null}
@@ -754,25 +923,31 @@ function EmployeeTaskForm({ task, onClose }: { task: SyncRecord; onClose: () => 
   );
 }
 
-/** Planning : une barre par tâche, du début à l'échéance, avec la date du jour. */
-function Gantt({ project, tasks }: { project: SyncRecord; tasks: SyncRecord[] }) {
+/**
+ * Planning : les étapes (barre fine terminée par un losange) puis leurs tâches,
+ * une barre par tâche, du début à l'échéance, avec la date du jour.
+ */
+function Gantt({ project, tasks, stages }: { project: SyncRecord; tasks: SyncRecord[]; stages: SyncRecord[] }) {
+  const span = (t: SyncRecord) => ({ start: text(t.data.start_date || t.data.due_date), end: text(t.data.due_date || t.data.start_date) });
   const dated = tasks.filter((t) => t.data.start_date || t.data.due_date)
-    .map((t) => ({ t, start: text(t.data.start_date || t.data.due_date), end: text(t.data.due_date || t.data.start_date) }))
+    .map((t) => ({ t, ...span(t) }))
     .sort((a, b) => a.start.localeCompare(b.start));
-  if (dated.length === 0) {
+  const datedStages = stages.filter((s) => s.data.start_date || s.data.end_date);
+  if (dated.length === 0 && datedStages.length === 0) {
     return (
       <div className="card empty-state">
         <h3 className="empty-title">Aucune tâche datée</h3>
-        <p className="muted">Le planning montre les tâches qui ont une date de début ou une échéance. Ouvrez une tâche pour lui donner des dates.</p>
+        <p className="muted">Le planning montre les étapes et les tâches qui ont une date de début ou une échéance. Ouvrez une tâche pour lui donner des dates.</p>
       </div>
     );
   }
-  const dates = [...dated.flatMap((d) => [d.start, d.end]), text(project.data.start_date), text(project.data.end_date), today()].filter(Boolean).sort();
+  const stageSpan = (s: SyncRecord) => ({ start: text(s.data.start_date || s.data.end_date), end: text(s.data.end_date || s.data.start_date) });
+  const dates = [...dated.flatMap((d) => [d.start, d.end]), ...datedStages.flatMap((s) => [stageSpan(s).start, stageSpan(s).end]), text(project.data.start_date), text(project.data.end_date), today()].filter(Boolean).sort();
   const from = dates[0];
   const to = addDays(dates[dates.length - 1], 1);
   const day = (d: string) => Date.parse(`${d}T00:00:00Z`) / 864e5;
-  const span = Math.max(1, day(to) - day(from));
-  const x = (d: string) => ((day(d) - day(from)) / span) * 100;
+  const width = Math.max(1, day(to) - day(from));
+  const x = (d: string) => ((day(d) - day(from)) / width) * 100;
   // Repères de mois.
   const months: string[] = [];
   for (let d = new Date(`${from.slice(0, 7)}-01T00:00:00Z`); d.toISOString().slice(0, 10) < to; d.setUTCMonth(d.getUTCMonth() + 1)) {
@@ -780,6 +955,28 @@ function Gantt({ project, tasks }: { project: SyncRecord; tasks: SyncRecord[] })
     if (iso >= from) months.push(iso);
   }
   const fmtMonth = (d: string) => new Date(`${d}T12:00:00Z`).toLocaleDateString("fr-FR", { month: "short", year: "2-digit" });
+  const grid = (
+    <>
+      {months.map((m) => <span key={m} className="gantt-grid" style={{ left: `${x(m)}%` }} />)}
+      <span className="gantt-today" style={{ left: `${x(today())}%` }} />
+    </>
+  );
+  const taskRow = ({ t, start, end }: { t: SyncRecord; start: string; end: string }) => {
+    const status = text(t.data.status) || "todo";
+    const late = status !== "done" && end < today();
+    return (
+      <div key={t.id} className={`gantt-row${stages.length ? " nested" : ""}`}>
+        <div className="gantt-label" title={text(t.data.title)}>{text(t.data.title)}</div>
+        <div className="gantt-track">
+          {grid}
+          <span className={`gantt-bar ${status} ${late ? "late" : ""}`} style={{ left: `${x(start)}%`, width: `${Math.max(1.2, x(addDays(end, 1)) - x(start))}%` }}
+            title={`${formatDate(start)} → ${formatDate(end)}`} />
+        </div>
+      </div>
+    );
+  };
+  const known = new Set(stages.map((s) => s.id));
+  const loose = dated.filter((d) => !known.has(text(d.t.data.stage_id)));
   return (
     <div className="card gantt">
       <div className="gantt-row gantt-axis">
@@ -788,22 +985,28 @@ function Gantt({ project, tasks }: { project: SyncRecord; tasks: SyncRecord[] })
           {months.map((m) => <span key={m} className="gantt-month" style={{ left: `${x(m)}%` }}>{fmtMonth(m)}</span>)}
         </div>
       </div>
-      {dated.map(({ t, start, end }) => {
-        const status = text(t.data.status) || "todo";
-        const late = status !== "done" && end < today();
+      {stages.map((st) => {
+        const own = dated.filter((d) => d.t.data.stage_id === st.id);
+        const { start, end } = stageSpan(st);
         return (
-          <div key={t.id} className="gantt-row">
-            <div className="gantt-label" title={text(t.data.title)}>{text(t.data.title)}</div>
-            <div className="gantt-track">
-              {months.map((m) => <span key={m} className="gantt-grid" style={{ left: `${x(m)}%` }} />)}
-              <span className="gantt-today" style={{ left: `${x(today())}%` }} />
-              <span className={`gantt-bar ${status} ${late ? "late" : ""}`} style={{ left: `${x(start)}%`, width: `${Math.max(1.2, x(addDays(end, 1)) - x(start))}%` }}
-                title={`${formatDate(start)} → ${formatDate(end)}`} />
+          <div key={st.id} className="gantt-group">
+            <div className="gantt-row gantt-stage">
+              <div className="gantt-label" title={text(st.data.name)}><PIcon name="diamond" />{text(st.data.name)}</div>
+              <div className="gantt-track">
+                {grid}
+                {start ? (
+                  <span className="gantt-stage-bar" style={{ left: `${x(start)}%`, width: `${Math.max(0.8, x(addDays(end, 1)) - x(start))}%` }} title={`${text(st.data.name)} : ${formatDate(start)} → ${formatDate(end)}`} />
+                ) : <span className="gantt-undated muted small">Dates à définir</span>}
+              </div>
             </div>
+            {own.map(taskRow)}
           </div>
         );
       })}
+      {stages.length > 0 && loose.length > 0 && <div className="gantt-row gantt-stage"><div className="gantt-label muted">Sans étape</div><div className="gantt-track">{grid}</div></div>}
+      {loose.map(taskRow)}
       <div className="legend gantt-legend">
+        {stages.length > 0 && <span><i className="swatch gl-stage" /> Étape</span>}
         <span><i className="swatch gl-todo" /> À faire</span><span><i className="swatch gl-doing" /> En cours ou à vérifier</span>
         <span><i className="swatch gl-done" /> Terminé</span><span><i className="swatch gl-late" /> En retard</span><span><i className="swatch gl-today" /> Aujourd'hui</span>
       </div>

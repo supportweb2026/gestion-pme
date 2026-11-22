@@ -113,6 +113,8 @@ try {
   await a.getByRole("button", { name: "Nouveau projet" }).click();
   await a.getByLabel("Nom du projet").fill("Rénovation agence BGFI Owendo");
   await a.getByLabel("Responsable du projet").selectOption({ label: "Ornella Mba" });
+  await a.getByRole("button", { name: /^Adresse du site/ }).click();
+  await a.getByRole("button", { name: /^Montant vendu et taux/ }).click();
   await a.getByLabel("Adresse ou site").fill("Agence BGFI, carrefour SNI, Owendo");
   await a.getByLabel("Budget HT (FCFA)").fill("5000000");
   await a.getByLabel("Taux de facturation (FCFA / h)").fill("25000");
