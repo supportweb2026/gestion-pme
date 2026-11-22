@@ -10,7 +10,7 @@ export const SYNC_TABLES = [
   // Module Projets, lot 1 : annuaire, coûts horaires (protégés), données financières (protégées), équipe du projet.
   "team_members", "cost_rates", "project_finance", "project_members",
   // Stock (lot 7 facturation) : entrées, inventaires, retours ; les sorties se déduisent des ventes.
-  "stock_moves",
+  "stock_moves", "purchase_orders",
 ] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
@@ -130,7 +130,7 @@ const WRITABLE: Record<string, readonly string[] | "all"> = {
   director: "all",
   accountant: "all",
   sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses", "projects", "tasks", "time_entries",
-    "project_finance", "project_members", "stock_moves"],
+    "project_finance", "project_members", "stock_moves", "purchase_orders"],
   project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks", "time_entries",
     "project_finance", "project_members"],
   employee: ["expenses", "tasks", "time_entries"],

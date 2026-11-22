@@ -1275,3 +1275,17 @@ label.people-filter { flex-direction: row; align-items: center; gap: 8px; font-w
   .two-factor-setup .qr { grid-row: auto; justify-self: center; }
   .two-factor-setup .form-actions { grid-column: 1; }
 }
+
+/* ── Lot 7 suite : commandes fournisseurs ──────────────────────────── */
+.purchase-form, .open-orders { margin-bottom: 16px; }
+.purchase-form .lines-wrap { margin-top: 12px; }
+.purchase-lines select { min-width: 200px; }
+.purchase-form .line-tools { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.purchase-total { font-size: 0.9375rem; color: var(--ink-2); }
+.purchase-total b { color: var(--ink); margin-left: 8px; }
+.purchase-form > label { margin-top: 12px; }
+.open-orders ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.open-order { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 12px 16px; padding: 12px 0; border-top: 1px solid var(--line); }
+.open-order-main { display: grid; gap: 2px; min-width: 0; flex: 1 1 320px; }
+.open-order .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.on-order { font-family: var(--font); font-size: 0.75rem; color: var(--ink-3); white-space: nowrap; }

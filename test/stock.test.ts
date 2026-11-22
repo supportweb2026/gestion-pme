@@ -53,3 +53,21 @@ test("stock : mouvements synchronisés, saisis par la vente mais pas par un empl
   assert.match(String(checkPermission({ userId: "u1", role: "employee" }, null, change)), /rôle/);
   assert.match(String(checkPermission({ userId: "u1", role: "admin" }, null, change, "2026-11-30")), /clôturée/);
 });
+
+test("commandes fournisseurs : quantité proposée, en commande, message", async () => {
+  const { suggestedQty, onOrder, orderMessage, orderTotal } = await import("../src/shared/stock.ts");
+  assert.equal(suggestedQty({ qty: 2, alert: 5 }), 8, "remonter au double du seuil");
+  assert.equal(suggestedQty({ qty: -3, alert: 0 }), 4);
+  assert.equal(suggestedQty({ qty: 50, alert: 5 }), 1);
+  const lines = [{ articleId: "art-1", label: "Ciment", qty: 8, unitCost: 4500 }];
+  const orders = [
+    { id: "cf-1", data: { status: "ordered", lines } },
+    { id: "cf-2", data: { status: "received", lines } },
+    { id: "cf-3", data: { status: "ordered", lines: [{ ...lines[0], qty: 2 }] } },
+  ];
+  assert.equal(onOrder(orders).get("art-1"), 10);
+  assert.equal(orderTotal(lines), 36000);
+  const msg = orderMessage({ company: "IDO", supplier: "CIMGABON", reference: "CF-221126-1", lines, units: new Map([["art-1", "sac"]]) });
+  assert.match(msg, /commande CF-221126-1/);
+  assert.match(msg, /- 8 sac × Ciment/);
+});

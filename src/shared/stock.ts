@@ -127,3 +127,47 @@ export function weightedCost(stockQty: number, stockCost: number | null, inQty: 
 
 /** Quantité au format français (« 12 », « 2,5 »). */
 export const qtyFr = (n: number) => n.toLocaleString("fr-FR", { maximumFractionDigits: 3 });
+
+/* ── Commandes fournisseurs ──────────────────────────────────────────── */
+
+export interface PurchaseLine {
+  articleId: string;
+  label: string;
+  qty: number;
+  /** Coût d'achat unitaire HT prévu (FCFA). */
+  unitCost: number;
+}
+
+export type PurchaseStatus = "ordered" | "received" | "cancelled";
+
+/** Quantité proposée pour réapprovisionner : remonter au double du seuil d'alerte (au moins 1). */
+export function suggestedQty(level: Pick<StockLevel, "qty" | "alert">): number {
+  const target = Math.max(level.alert * 2, level.alert + 1, 1);
+  return Math.max(1, Math.ceil(target - level.qty));
+}
+
+/** Quantités déjà commandées et pas encore reçues, par article. */
+export function onOrder(orders: Rec[]): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const o of orders) {
+    if (o.data.status !== "ordered") continue;
+    for (const l of (o.data.lines as PurchaseLine[]) ?? []) out.set(l.articleId, (out.get(l.articleId) ?? 0) + (Number(l.qty) || 0));
+  }
+  return out;
+}
+
+/** Montant HT d'une commande. */
+export const orderTotal = (lines: PurchaseLine[]) => lines.reduce((n, l) => n + Math.round((Number(l.qty) || 0) * (Number(l.unitCost) || 0)), 0);
+
+/** Message de commande à envoyer au fournisseur (WhatsApp ou e-mail). */
+export function orderMessage(p: { company: string; supplier: string; reference: string; lines: PurchaseLine[]; units: Map<string, string> }): string {
+  return [
+    `Bonjour${p.supplier ? ` ${p.supplier}` : ""},`,
+    "",
+    `Merci de nous livrer la commande ${p.reference} :`,
+    ...p.lines.map((l) => `- ${qtyFr(l.qty)}${p.units.get(l.articleId) ? ` ${p.units.get(l.articleId)}` : ""} × ${l.label}`),
+    "",
+    "Merci de confirmer le délai de livraison.",
+    p.company,
+  ].join("\n");
+}
