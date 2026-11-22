@@ -3,8 +3,9 @@
  *  - découverte : 401 avec resource_metadata, métadonnées OAuth ;
  *  - enregistrement dynamique du client, autorisation PKCE S256 avec la vraie page de connexion
  *    Gestia puis l'écran de consentement, échange du code, rafraîchissement ;
- *  - MCP : initialize, tools/list, create_task puis update_task ;
- *  - la tâche apparaît dans l'application ; Réglages › Connexions : déconnexion, jeton refusé.
+ *  - MCP : initialize, tools/list, create_task (avec sa catégorie) puis update_task, add_comment,
+ *    get_task (discussion, historique, catégorie) ;
+ *  - la tâche et le commentaire de Claude apparaissent dans l'application ; Réglages › Connexions : déconnexion, jeton refusé.
  *
  * Prérequis : `npm run build`, Playwright.
  *   node test/e2e/connecteur-mcp.mjs        (SHOTS_DIR=… pour des captures)
@@ -199,7 +200,10 @@ try {
   assert.equal(init.body.result.protocolVersion, "2025-06-18");
   assert.equal((await call("POST", "/mcp", token, { jsonrpc: "2.0", method: "notifications/initialized" })).status, 202);
   const tools = (await mcp(token, "tools/list")).body.result.tools;
-  assert.equal(tools.length, 8);
+  assert.equal(tools.length, 11);
+  assert.equal(tools.find((t) => t.name === "get_task").annotations.readOnlyHint, true);
+  assert.equal(tools.find((t) => t.name === "add_comment").annotations.readOnlyHint, false);
+  assert.equal(tools.find((t) => t.name === "add_comment").annotations.destructiveHint, false);
   assert.equal(tools.find((t) => t.name === "list_projects").annotations.readOnlyHint, true);
   assert.equal(tools.find((t) => t.name === "update_task").annotations.destructiveHint, false);
 
@@ -207,10 +211,26 @@ try {
   const projects = await tool(token, "list_projects", {});
   assert.equal(projects.projects[0].name, "Portail SEEG");
   assert.equal(projects.projects[0].manager, "Jimmy");
-  const created = await tool(token, "create_task", { project: "Portail SEEG", title: "Recette avec le client", assignee: "moi", due_date: "2026-12-15", priority: "high" });
+  const created = await tool(token, "create_task", { project: "Portail SEEG", title: "Recette avec le client", assignee: "moi", due_date: "2026-12-15", priority: "high", category: "client" });
   const taskId = created.task.id;
+  assert.equal(created.task.category, "Client");
   const updated = await tool(token, "update_task", { task_id: taskId, status: "review", description: "Cahier de recette envoyé" });
   assert.equal(updated.task.status_label, "À vérifier");
+
+  step("Outils du lot 5 : list_categories, add_comment, get_task (discussion, historique)");
+  const cats = await tool(token, "list_categories", {});
+  assert.ok(cats.categories.some((c) => c.id === "cat-client" && c.open_tasks === 1));
+  const comment = await tool(token, "add_comment", { task_id: taskId, body: "Recette prévue le 15/12 avec la SEEG, salle de réunion réservée." });
+  assert.equal(comment.comment.author, "Jimmy");
+  const fiche = await tool(token, "get_task", { task_id: taskId });
+  assert.equal(fiche.task.category, "Client");
+  assert.equal(fiche.task.comments, 1);
+  assert.equal(fiche.comments[0].body, "Recette prévue le 15/12 avec la SEEG, salle de réunion réservée.");
+  assert.equal(fiche.comments[0].editable, true);
+  assert.ok(fiche.history.some((h) => h.label === "Déplacée de « À faire » vers « À vérifier »"), JSON.stringify(fiche.history));
+  assert.equal(fiche.history.at(-1).label, "Tâche créée");
+  const inCat = await tool(token, "list_tasks", { category: "Client" });
+  assert.deepEqual(inCat.tasks.map((t) => [t.id, t.comments]), [[taskId, 1]]);
   await tool(token, "log_time", { task_id: taskId, hours: 1.5, note: "Préparation" });
   const day = await tool(token, "my_day", {});
   assert.ok(day.today.some((t) => t.id === "tsk-maquettes"));
@@ -256,8 +276,18 @@ try {
   await nav("Projets");
   await page.getByText("Portail SEEG", { exact: true }).first().click();
   await page.getByRole("heading", { name: "Portail SEEG" }).waitFor();
-  await page.getByTestId("col-review").locator(".task-card", { hasText: "Recette avec le client" }).waitFor({ timeout: 10_000 });
+  const reviewCard = page.getByTestId("col-review").locator(".task-card", { hasText: "Recette avec le client" });
+  await reviewCard.waitFor({ timeout: 10_000 });
   await shot(page, "08-tache-dans-gestia.png");
+  step("Le commentaire de Claude est dans la discussion de la tâche, au nom de Jimmy");
+  await reviewCard.getByRole("button", { name: "1 commentaire" }).click();
+  const talk = page.getByTestId("task-discussion");
+  await talk.getByText("Recette prévue le 15/12 avec la SEEG, salle de réunion réservée.").waitFor();
+  await talk.getByTestId("comment").first().getByText("Jimmy").first().waitFor();
+  await page.getByTestId("task-panel").getByRole("tab", { name: "Historique" }).click();
+  await page.getByTestId("task-history").getByText("Déplacée de « À faire » vers « À vérifier »").waitFor();
+  await shot(page, "12-commentaire-claude-dans-gestia.png");
+  await page.getByRole("button", { name: "Fermer la tâche" }).click();
 
   step("Réglages › Connexions : l'administrateur voit les deux connexions et les retire");
   await nav("Réglages");
