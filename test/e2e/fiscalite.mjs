@@ -86,7 +86,7 @@ try {
 
   step("Facture d'un million HT avec précompte de 9,5 % : CSS, TTC, retenue, net à payer");
   await nav("Factures");
-  await page.getByRole("button", { name: "Nouvelle facture" }).click();
+  await page.getByRole("button", { name: "Nouvelle facture" }).first().click();
   await line(0, "Audit de sécurité", 1, 1_000_000);
   await page.getByLabel("Retenue à la source").selectOption({ label: "Précompte prestataire local (9,5 %)" });
   assert.equal(await page.getByTestId("total-css").textContent(), "10 000 FCFA");

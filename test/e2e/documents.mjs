@@ -75,7 +75,7 @@ try {
 
   step("Devis avec un titre de section, deux lignes et 10 % de remise sur toutes les lignes");
   await nav("Devis");
-  await page.getByRole("button", { name: "Nouveau devis" }).click();
+  await page.getByRole("button", { name: "Nouveau devis" }).first().click();
   await page.getByRole("button", { name: "+ Ajouter un titre" }).click();
   // Le titre s'ajoute en fin de tableau : on le saisit puis on remplit les lignes.
   await page.getByLabel("Titre de section").fill("Lot 1 : fournitures et pose");
@@ -131,7 +131,7 @@ try {
 
   step("Facture pro forma (série PF) convertie en facture");
   await nav("Devis");
-  await page.getByRole("button", { name: "Nouveau devis" }).click();
+  await page.getByRole("button", { name: "Nouveau devis" }).first().click();
   await page.getByLabel("Type de document").selectOption("proforma");
   await line(0, "Audit réseau", 1, 500_000);
   await page.getByRole("button", { name: "Finaliser la pro forma" }).click();
