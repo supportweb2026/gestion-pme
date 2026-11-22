@@ -70,7 +70,7 @@ async function newArticle(label, price, kind, cost) {
 }
 async function invoice(client, label, qty, payments) {
   await nav("Factures");
-  await page.getByRole("button", { name: "Nouvelle facture" }).click();
+  await page.getByRole("button", { name: "Nouvelle facture" }).first().click();
   await page.locator(".doc-fields label").filter({ hasText: /^\s*Client/ }).locator("select").selectOption({ label: client });
   await page.getByLabel("Désignation").fill(label);
   await page.getByLabel("Quantité").fill(String(qty));
