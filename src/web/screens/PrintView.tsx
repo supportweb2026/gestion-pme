@@ -6,11 +6,12 @@
 import { useEffect, useState } from "react";
 import { downloadFile, makePdfFile } from "../pdfActions.ts";
 import { formatDate, text, useSettings } from "../context.ts";
-import { computeTotals, lineDiscount, lineNet, lineVat, type InvoiceLine } from "../../shared/invoice.ts";
+import { computeTotals, docTaxes, lineDiscount, lineNet, lineVat, type InvoiceLine } from "../../shared/invoice.ts";
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../../shared/currency.ts";
 import type { DocTable, SyncRecord } from "../../shared/sync.ts";
 import type { Situation } from "../ledger.ts";
 import { docArrete, docTitle, isSection, quoteTypeOf } from "../../shared/documents.ts";
+import { fiscalMentions, pct } from "../../shared/taxes.ts";
 
 function Lines({ children }: { children: (string | false | undefined)[] }) {
   return <>{children.filter(Boolean).map((l, i) => <div key={i}>{l}</div>)}</>;
@@ -23,7 +24,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
   const lines = (record.data.lines as InvoiceLine[]) ?? [];
   const currency = text(record.data.currency) || "XAF";
   const decimals = decimalsOf(currency);
-  const totals = computeTotals(lines, decimals);
+  const totals = computeTotals(lines, decimals, docTaxes(record.data));
   const formatXaf = (n: number) => formatMoney(n, currency);
   const c = client?.data ?? {};
   const number = text(record.data.number);
@@ -120,6 +121,11 @@ export function PrintView({ kind, record, client, situation, onClose }: {
           <div className="ps-words">
             {docArrete(kind, record.data)} à la somme de <strong>{amountInWordsWithCurrency(totals.gross, currency)}</strong> toutes taxes comprises.
             {text(record.data.notes) && <p className="ps-notes">{text(record.data.notes)}</p>}
+            {fiscalMentions({
+              kind, settings: s, data: record.data,
+              hasZeroVat: lines.some((l) => !isSection(l) && !l.deposit && !l.depositInvoiceId && l.vatRate === 0 && lineNet(l, decimals) !== 0),
+              payableXaf: Math.round(totals.payable * (currency === "XAF" ? 1 : Number(record.data.rate) || 1)),
+            }).map((m) => <p key={m} className="ps-notes">{m}</p>)}
           </div>
           <table className="ps-totals">
             <tbody>
@@ -133,7 +139,14 @@ export function PrintView({ kind, record, client, situation, onClose }: {
               {[...vatByRate.entries()].map(([rate, v]) => (
                 <tr key={rate}><td>TVA {rate} % sur {formatXaf(v.base)}</td><td className="r">{formatXaf(v.vat)}</td></tr>
               ))}
+              {totals.css !== 0 && <tr><td>CSS {pct(Number(record.data.css_rate))}</td><td className="r">{formatXaf(totals.css)}</td></tr>}
               <tr className="ps-strong"><td>Total TTC</td><td className="r">{formatXaf(totals.gross)}</td></tr>
+              {totals.withholding !== 0 && (
+                <>
+                  <tr><td>Retenue à la source {pct(Number(record.data.withholding_rate))}</td><td className="r">-{formatXaf(totals.withholding)}</td></tr>
+                  <tr className="ps-strong"><td>Net à payer</td><td className="r">{formatXaf(totals.payable)}</td></tr>
+                </>
+              )}
               {situation && situation.status !== "draft" && situation.paid + situation.credited > 0 && (
                 <>
                   <tr><td>Déjà réglé</td><td className="r">{formatXaf(situation.paid + situation.credited)}</td></tr>

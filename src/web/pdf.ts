@@ -8,10 +8,11 @@
  * une fois l'application ouverte pour qu'il soit disponible sans réseau.
  */
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFPage } from "pdf-lib";
-import { computeTotals, lineDiscount, lineNet, lineVat, type InvoiceLine } from "../shared/invoice.ts";
+import { computeTotals, docTaxes, lineDiscount, lineNet, lineVat, type InvoiceLine } from "../shared/invoice.ts";
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../shared/currency.ts";
 import type { DocTable } from "../shared/sync.ts";
 import { docArrete, docTitle, isSection, quoteTypeOf, sectionSubtotals } from "../shared/documents.ts";
+import { fiscalMentions, pct } from "../shared/taxes.ts";
 
 export interface PdfInput {
   kind: DocTable;
@@ -66,7 +67,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   const lines = (doc.lines as InvoiceLine[]) ?? [];
   const currency = str(doc.currency) || "XAF";
   const decimals = decimalsOf(currency);
-  const totals = computeTotals(lines, decimals);
+  const totals = computeTotals(lines, decimals, docTaxes(doc));
   const money = (n: number) => formatMoney(n, currency);
   const hasDiscount = lines.some((l) => lineDiscount(l) > 0);
 
@@ -296,7 +297,12 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   }
   rows.push(["Total HT", money(totals.net), false]);
   for (const [rate, v] of vatByRate) rows.push([`TVA ${rate} % sur ${money(v.base)}`, money(v.vat), false]);
+  if (totals.css) rows.push([`CSS ${pct(Number(doc.css_rate))}`, money(totals.css), false]);
   rows.push(["Total TTC", money(totals.gross), true]);
+  if (totals.withholding) {
+    rows.push([`Retenue à la source ${pct(Number(doc.withholding_rate))}`, `-${money(totals.withholding)}`, false]);
+    rows.push(["Net à payer", money(totals.payable), true]);
+  }
   if (situation && situation.status !== "draft" && situation.paid + situation.credited > 0) {
     rows.push(["Déjà réglé", money(situation.paid + situation.credited), false]);
     rows.push(["Reste à payer", money(situation.due), true]);
@@ -307,7 +313,12 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   const totW = 250;
   const totX = xr - totW;
   const words = wrap(`${docArrete(kind, doc)} à la somme de ${amountInWordsWithCurrency(totals.gross, currency)} toutes taxes comprises.`, 9.5, totX - M - 20);
-  const notes = str(doc.notes) ? wrap(str(doc.notes), 9, totX - M - 20) : [];
+  const mentions = fiscalMentions({
+    kind, settings: s, data: doc, delivery,
+    hasZeroVat: lines.some((l) => !isSection(l) && !l.deposit && !l.depositInvoiceId && l.vatRate === 0 && lineNet(l, decimals) !== 0),
+    payableXaf: Math.round(totals.payable * (currency === "XAF" ? 1 : Number(doc.rate) || 1)),
+  });
+  const notes = [str(doc.notes), ...mentions].filter(Boolean).flatMap((n) => wrap(n, 9, totX - M - 20));
   const blockH = Math.max(rows.length * 18, words.length * 12 + (notes.length ? notes.length * 11 + 10 : 0));
   if (y - blockH < M + FOOT) newPage();
   let ty = y;

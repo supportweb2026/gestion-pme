@@ -1,5 +1,5 @@
 /** Calculs dérivés des données locales : situation des factures, chiffres du tableau de bord. */
-import { computeTotals, invoiceBalance, type InvoiceLine } from "../shared/invoice.ts";
+import { computeTotals, docTaxes, invoiceBalance, type InvoiceLine } from "../shared/invoice.ts";
 import { decimalsOf, toXaf } from "../shared/currency.ts";
 import type { SyncRecord } from "../shared/sync.ts";
 import { today } from "./context.ts";
@@ -10,7 +10,11 @@ export interface Situation {
   rate: number;
   net: number;
   vat: number;
+  css: number;
   gross: number;
+  withholding: number;
+  /** Net à payer (TTC moins la retenue à la source) : base du reste dû. */
+  payable: number;
   paid: number;
   credited: number;
   due: number;
@@ -20,8 +24,8 @@ export interface Situation {
 export const linesOf = (r: SyncRecord | null | undefined): InvoiceLine[] => ((r?.data.lines as InvoiceLine[]) ?? []);
 export const currencyOf = (r: SyncRecord | null | undefined) => String(r?.data.currency || "XAF");
 export const rateOf = (r: SyncRecord | null | undefined) => (currencyOf(r) === "XAF" ? 1 : Number(r?.data.rate) || 1);
-/** Totaux dans la devise du document. */
-export const totalsOf = (r: SyncRecord | null | undefined) => computeTotals(linesOf(r), decimalsOf(currencyOf(r)));
+/** Totaux dans la devise du document, avec les taxes figées sur le document (CSS, retenue). */
+export const totalsOf = (r: SyncRecord | null | undefined) => computeTotals(linesOf(r), decimalsOf(currencyOf(r)), docTaxes(r?.data));
 /** Montant HT converti en francs CFA. */
 export const netXafOf = (r: SyncRecord | null | undefined) => toXaf(totalsOf(r).net, rateOf(r));
 
@@ -36,7 +40,7 @@ export function invoiceSituations(invoices: SyncRecord[], payments: SyncRecord[]
   for (const c of credits) {
     if (c.data.status !== "validated") continue;
     const id = String(c.data.invoice_id ?? "");
-    creditedBy.set(id, [...(creditedBy.get(id) ?? []), totalsOf(c).gross]);
+    creditedBy.set(id, [...(creditedBy.get(id) ?? []), totalsOf(c).payable]);
   }
   const now = today();
   const out = new Map<string, Situation>();
@@ -48,7 +52,7 @@ export function invoiceSituations(invoices: SyncRecord[], payments: SyncRecord[]
     }
     // Compatibilité avec le lot 0, où l'encaissement était un champ de la facture.
     const legacy = Number(inv.data.paid_amount ?? 0);
-    const b = invoiceBalance(t.gross, [...(paidBy.get(inv.id) ?? []), ...(legacy ? [legacy] : [])], creditedBy.get(inv.id) ?? []);
+    const b = invoiceBalance(t.payable, [...(paidBy.get(inv.id) ?? []), ...(legacy ? [legacy] : [])], creditedBy.get(inv.id) ?? []);
     // Arrondi à la précision de la devise (centimes pour l'euro).
     const d = decimalsOf(t.currency);
     const r = (n: number) => Math.round(n * 10 ** d) / 10 ** d;
