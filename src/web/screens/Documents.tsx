@@ -20,6 +20,7 @@ import {
 } from "../../shared/documents.ts";
 import { canShareFiles, downloadFile, makePdfFile, shareFile } from "../pdfActions.ts";
 import { useStock } from "../stock.ts";
+import { defaultNote } from "../../shared/branding.ts";
 import { qtyFr } from "../../shared/stock.ts";
 import {
   describe, isFinished, nextAfter, RECURRENCE_FREQS, recurrenceOf, type RecurrenceFreq,
@@ -260,7 +261,12 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const [date, setDate] = useState(text(record?.data.date) || today());
   const [dueDate, setDueDate] = useState(text(record?.data.due_date ?? record?.data.valid_until) || addDays(today(), paymentDays));
   const [lines, setLines] = useState<InvoiceLine[]>(() => (record ? linesOf(record) : [emptyLine()]).map((l) => ({ ...l })));
-  const [notes, setNotes] = useState(text(record?.data.notes));
+  const [notes, setNotes] = useState(text(record?.data.notes) || (record ? "" : defaultNote(settings, kind)));
+  // Note par défaut (Réglages, Apparence) : reprise dès que les réglages sont chargés.
+  const presetNote = record ? "" : defaultNote(settings, kind);
+  useEffect(() => {
+    if (presetNote) setNotes((n) => n || presetNote);
+  }, [presetNote]);
   const [currency, setCurrency] = useState(currencyOf(record));
   const [rate, setRate] = useState<number>(() => (record ? rateOf(record) : 1));
   const [projectId, setProjectId] = useState(text(record?.data.project_id));

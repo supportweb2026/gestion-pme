@@ -605,13 +605,13 @@ tr.clickable:has(.row-link:focus-visible) td:first-child { box-shadow: inset 3px
 .ps-logo { max-height: 22mm; max-width: 60mm; object-fit: contain; display: block; margin-bottom: 4mm; }
 .ps-company-name { font-weight: 700; font-size: 12.5pt; }
 .ps-title { text-align: right; }
-.ps-doc { font-size: 20pt; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: #0255C6; }
+.ps-doc { font-size: 20pt; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; color: var(--doc, #0255C6); }
 .ps-number { font-weight: 600; font-size: 11.5pt; margin-bottom: 2mm; }
 .ps-client { margin-left: auto; width: 85mm; border: 1px solid #d8d6ce; border-radius: 2mm; padding: 4mm 5mm; margin-bottom: 8mm; }
 .ps-label { font-size: 8.5pt; text-transform: uppercase; letter-spacing: 0.05em; color: #6b7068; margin-bottom: 1mm; }
 .ps-client-name { font-weight: 700; }
 .ps-lines { width: 100%; border-collapse: collapse; margin-bottom: 6mm; }
-.ps-lines th { background: #EAF1FC; color: #1d1f1c; text-transform: none; letter-spacing: 0; font-size: 9pt; padding: 2mm 3mm; text-align: left; border-bottom: none; }
+.ps-lines th { background: var(--doc-soft, #EAF1FC); color: #1d1f1c; text-transform: none; letter-spacing: 0; font-size: 9pt; padding: 2mm 3mm; text-align: left; border-bottom: none; }
 .ps-lines td { padding: 2mm 3mm; border-bottom: 1px solid #e6e4dc; font-size: 10pt; }
 .ps-lines .r, .ps-totals .r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ps-bottom { display: flex; gap: 10mm; justify-content: space-between; align-items: flex-start; }
@@ -619,7 +619,7 @@ tr.clickable:has(.row-link:focus-visible) td:first-child { box-shadow: inset 3px
 .ps-notes { white-space: pre-line; margin-top: 4mm; color: #3c403a; }
 .ps-totals { border-collapse: collapse; width: 88mm; flex: none; }
 .ps-totals td { padding: 1.5mm 3mm; border-bottom: 1px solid #e6e4dc; font-size: 10pt; }
-.ps-strong td { font-weight: 700; background: #EAF1FC; }
+.ps-strong td { font-weight: 700; background: var(--doc-soft, #EAF1FC); }
 .ps-pay, .ps-sign { margin-top: 8mm; font-size: 9.5pt; }
 .ps-sign { margin-left: auto; width: 85mm; height: 30mm; border: 1px dashed #b9b6ab; border-radius: 2mm; padding: 3mm 4mm; }
 .ps-foot { margin-top: auto; padding-top: 8mm; border-top: 1px solid #e6e4dc; font-size: 8pt; color: #6b7068; text-align: center; }
@@ -1241,3 +1241,19 @@ button.reason.selected .radio-dot { border: 5px solid var(--accent); }
 label.people-filter { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; }
 .task-form-row.dates { grid-template-columns: 1fr; }
 .task-form .form-actions { flex-wrap: wrap; justify-content: flex-end; }
+/* ── Lot 8 : apparence des documents ───────────────────────────────── */
+.ps-signs { display: flex; justify-content: space-between; align-items: flex-start; gap: 10mm; margin-top: 8mm; }
+.ps-signs .ps-sign { margin-top: 0; }
+.ps-stamp { font-size: 9.5pt; }
+.ps-stamp img { display: block; max-width: 60mm; max-height: 24mm; object-fit: contain; margin-top: 2mm; }
+.ps-terms { margin-top: 6mm; font-size: 7.5pt; color: #6b7068; }
+.ps-terms p { white-space: pre-line; margin: 0; }
+.doc-colors { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+.doc-color { width: 32px; height: 32px; min-height: 0; padding: 0; border-radius: 999px; border: 2px solid #fff; box-shadow: 0 0 0 1px var(--line-strong); }
+.doc-color[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--ink); }
+.doc-color-custom { display: inline-flex; align-items: center; gap: 8px; font-size: 0.8125rem; color: var(--ink-2); }
+.doc-color-custom input { width: 40px; height: 32px; padding: 2px; }
+.stamp-preview { max-width: 180px; max-height: 80px; object-fit: contain; border: 1px dashed var(--line-strong); border-radius: 8px; padding: 6px; background: #fff; }
+.doc-preview-strip { display: flex; align-items: center; justify-content: space-between; padding: 12px 16px; border-radius: 10px; border: 1px solid var(--line); background: #fff; }
+.doc-preview-strip .t { font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; }
+.doc-preview-strip .bar { flex: 1; margin-left: 16px; height: 18px; border-radius: 4px; }
