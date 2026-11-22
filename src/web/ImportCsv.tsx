@@ -68,7 +68,7 @@ export function ImportCsv({ kind }: { kind: "clients" | "articles" }) {
         Importer (CSV)
         <input type="file" accept=".csv,text/csv,text/plain" hidden onChange={(e) => { read(e.target.files?.[0]); e.target.value = ""; }} aria-label="Fichier CSV à importer" />
       </label>
-      <button className="link small" onClick={template}>Modèle</button>
+      <button className="ghost" onClick={template} title="Télécharger un fichier modèle à remplir">Modèle CSV</button>
       {error && <span className="error">{error}</span>}
       {done !== null && <span className="ok-text">{done} {kind === "clients" ? "client(s)" : "article(s)"} importé(s).</span>}
       {items && (

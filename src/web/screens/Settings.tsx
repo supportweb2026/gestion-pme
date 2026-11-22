@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { can, ROLE_LABELS, text, useApp, useSettings, useSyncStatus } from "../context.ts";
+import { can, COMING_SOON, ROLE_LABELS, TAB_LABELS, text, useApp, useSettings, useSyncStatus, type Tab } from "../context.ts";
 import { api, ApiError, getToken } from "../api.ts";
 import { formatDate, SubscriptionBadge } from "../subscription.tsx";
 import { PLANS } from "../../shared/plans.ts";
@@ -124,6 +124,9 @@ function SubscriptionCard() {
           <li key={k}><strong>{p.label}</strong> : {p.description}</li>
         ))}
       </ul>
+      {Object.keys(COMING_SOON).length > 0 && (
+        <p className="muted small">Bientôt disponibles : {(Object.keys(COMING_SOON) as Tab[]).map((t) => TAB_LABELS[t].toLowerCase()).join(", ")}.</p>
+      )}
       <p className="muted small">Pour vous abonner ou changer de formule, contactez l'équipe Gestia ; le paiement (virement, mobile money) est enregistré par elle et prend effet à la synchronisation suivante.</p>
     </div>
   );

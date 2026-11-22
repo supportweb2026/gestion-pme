@@ -905,3 +905,21 @@ html { scrollbar-width: thin; scrollbar-color: #C5CCD7 transparent; }
 @media (max-width: 860px) {
   .segmented { -webkit-mask-image: linear-gradient(90deg, #000 88%, transparent); mask-image: linear-gradient(90deg, #000 88%, transparent); padding-right: 24px; }
 }
+
+/* ---------- Finitions des pages ---------- */
+/* Listes : colonne d'action resserrée, pas de vide entre les montants et « Modifier ». */
+.col-action { width: 1%; white-space: nowrap; }
+/* Cartes de réglages : titre proche du contenu, textes d'aide à une largeur lisible. */
+.section-card > .section-head { margin-bottom: 10px; }
+.section-card > p.muted, .section-card > p.small { max-width: 72ch; }
+.section-card .form-grid .form-actions { align-self: end; }
+/* Connexion : liens du bas homogènes, sans triangle du navigateur. */
+.auth-switch { font-size: 0.8125rem; }
+.auth-card details { text-align: center; font-size: 0.8125rem; }
+.auth-card details summary { list-style: none; display: inline-block; color: var(--accent); font-weight: 600; }
+.auth-card details summary::-webkit-details-marker { display: none; }
+.auth-card details[open] summary { margin-bottom: 8px; }
+.auth-card details p { text-align: left; }
+/* Saisie de facture : prix unitaire assez large pour des millions, en-têtes sur une ligne. */
+table.lines th { white-space: nowrap; }
+table.lines .num:not(.qty):not(.pct) { width: 136px; }

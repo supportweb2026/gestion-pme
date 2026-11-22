@@ -59,8 +59,11 @@ export function Clients() {
 
   return (
     <section>
-      <div className="section-head">
-        <h2>Clients</h2>
+      <div className="page-head">
+        <div>
+          <h2>Clients</h2>
+          <p className="muted small">{clients.length === 0 ? "Votre répertoire de clients" : `${clients.length} client${clients.length > 1 ? "s" : ""}`}</p>
+        </div>
         <div className="actions">
           <ImportCsv kind="clients" />
           <button className="primary" onClick={() => setEditing("new")}>Nouveau client</button>
@@ -101,17 +104,17 @@ export function Clients() {
         <div className="card table-wrap">
           <table>
             <thead>
-              <tr><th>Raison sociale</th><th>Téléphone</th><th>Ville</th><th>NIF</th><th className="right">Reste dû</th><th /></tr>
+              <tr><th>Raison sociale</th><th>Téléphone</th><th>Ville</th><th>NIF</th><th className="right">Reste dû</th><th className="col-action"><span className="sr-only">Actions</span></th></tr>
             </thead>
             <tbody>
               {rows.map((c) => (
                 <tr key={c.id}>
-                  <td>{text(c.data.name)}</td>
-                  <td>{text(c.data.phone)}</td>
-                  <td>{text(c.data.city)}</td>
-                  <td>{text(c.data.nif)}</td>
-                  <td className="right mono">{dueByClient.get(c.id) ? formatXaf(dueByClient.get(c.id)!) : ""}</td>
-                  <td className="right"><button className="ghost small" onClick={() => setEditing(c)}>Modifier</button></td>
+                  <td className="strong">{text(c.data.name)}</td>
+                  <td>{text(c.data.phone) || <span className="muted">—</span>}</td>
+                  <td>{text(c.data.city) || <span className="muted">—</span>}</td>
+                  <td>{text(c.data.nif) || <span className="muted">—</span>}</td>
+                  <td className={`right mono${dueByClient.get(c.id) ? " strong" : " muted"}`}>{formatXaf(dueByClient.get(c.id) ?? 0)}</td>
+                  <td className="right col-action"><button className="ghost small" onClick={() => setEditing(c)}>Modifier</button></td>
                 </tr>
               ))}
             </tbody>

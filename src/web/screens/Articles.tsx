@@ -41,8 +41,11 @@ export function Articles() {
 
   return (
     <section>
-      <div className="section-head">
-        <h2>Articles et services</h2>
+      <div className="page-head">
+        <div>
+          <h2>Articles et services</h2>
+          <p className="muted small">{articles.length === 0 ? "Votre catalogue de produits et services" : `${articles.length} article${articles.length > 1 ? "s" : ""}`}</p>
+        </div>
         <div className="actions">
           <ImportCsv kind="articles" />
           <button className="primary" onClick={() => setEditing("new")}>Nouvel article</button>
@@ -93,7 +96,7 @@ export function Articles() {
       ) : (
         <div className="card table-wrap">
           <table>
-            <thead><tr><th>Référence</th><th>Désignation</th><th>Type</th><th className="right">Prix HT</th><th className="right">Marge</th><th className="right">TVA</th><th /></tr></thead>
+            <thead><tr><th>Référence</th><th>Désignation</th><th>Type</th><th className="right">Prix HT</th><th className="right">Marge</th><th className="right">TVA</th><th className="col-action"><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
               {rows.map((a) => (
                 <tr key={a.id}>
@@ -103,7 +106,7 @@ export function Articles() {
                   <td className="right mono">{formatXaf(Number(a.data.price ?? 0))}</td>
                   <td className="right mono">{marginLabel(a)}</td>
                   <td className="right">{text(a.data.vat_rate)} %</td>
-                  <td className="right"><button className="ghost small" onClick={() => setEditing(a)}>Modifier</button></td>
+                  <td className="right col-action"><button className="ghost small" onClick={() => setEditing(a)}>Modifier</button></td>
                 </tr>
               ))}
             </tbody>
