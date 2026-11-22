@@ -1,9 +1,9 @@
 /**
- * Annuaire d'équipe (Projets › Équipe) : les personnes qui travaillent sur les
+ * Annuaire (Projets › Personnes) : les personnes qui travaillent sur les
  * projets, avec ou sans compte Gestia. Les comptes sont repris automatiquement
  * (fiche `tm-{user_id}`). Le coût horaire de chaque personne est une donnée
- * salariale : direction et comptable seulement ; le chef de projet ne voit que
- * le coût moyen (arbitrage 2).
+ * salariale (administrateur, direction, comptable) ; les autres rôles ne voient
+ * que le coût moyen (arbitrage 2).
  */
 import { useState, type FormEvent } from "react";
 import { can, text, useApp, useTable } from "../context.ts";
@@ -30,6 +30,7 @@ export function Team() {
   const costOf = (id: string) => Number(costs.find((c) => c.id === costRateIdOf(id))?.data.hourly_cost ?? 0) || 0;
   const projectsOf = (id: string) => members.filter((m) => m.data.team_member_id === id).length;
   const active = team.filter((m) => m.data.active !== false).length;
+  const withAccount = team.filter((m) => m.data.user_id).length;
 
   /** Coût horaire d'une personne, puis coût moyen de l'équipe recalculé. */
   async function saveCost(tmId: string, value: number, current: SyncRecord[]) {
@@ -45,26 +46,26 @@ export function Team() {
 
   async function toggle(m: SyncRecord) {
     const leaving = m.data.active !== false;
-    if (leaving && !confirm(`Rendre ${text(m.data.name)} inactif ? Il ne sera plus proposé pour les nouvelles tâches ; son historique est conservé.`)) return;
+    if (leaving && !confirm(`Désactiver ${text(m.data.name)} ? Cette personne ne sera plus proposée pour les nouvelles tâches. Son historique est conservé.`)) return;
     try {
       await write("team_members", m.id, { active: !leaving });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Modification impossible.");
+      setError(e instanceof Error ? e.message : "La modification n'a pas pu être enregistrée.");
     }
   }
 
   return (
     <div className="team">
       <div className="team-intro">
-        <p className="muted">Les personnes qui travaillent sur vos projets, avec ou sans compte Gestia. Chaque compte utilisateur y figure automatiquement.</p>
+        <p className="muted">Les personnes qui travaillent sur vos projets, avec ou sans compte Gestia. Chaque compte utilisateur y figure automatiquement ; on choisit ensuite qui travaille sur chaque projet dans son onglet Équipe.</p>
         {manage && !editing && <button className="primary" onClick={() => setEditing("new")}><PIcon name="plus" />Ajouter une personne</button>}
       </div>
 
       <div className="team-stats">
-        <div className="card kpi"><div className="kpi-label">Personnes actives</div><div className="kpi-value">{active}</div><div className="kpi-sub">{team.length - active > 0 ? `${team.length - active} inactive(s)` : "dans l'annuaire"}</div></div>
-        <div className="card kpi"><div className="kpi-label">Avec un compte Gestia</div><div className="kpi-value">{team.filter((m) => m.data.user_id).length}</div><div className="kpi-sub">les autres n'ont pas de téléphone ou de compte</div></div>
+        <div className="card kpi"><div className="kpi-label">Personnes actives</div><div className="kpi-value">{active}</div><div className="kpi-sub">{team.length - active > 0 ? `${team.length - active} inactive${team.length - active > 1 ? "s" : ""}` : "aucune personne inactive"}</div></div>
+        <div className="card kpi"><div className="kpi-label">Avec un compte Gestia</div><div className="kpi-value">{withAccount}</div><div className="kpi-sub">{team.length - withAccount > 0 ? `${team.length - withAccount} sans compte` : "tout le monde a un compte"}</div></div>
         {(personCosts || avg > 0) && (
-          <div className="card kpi"><div className="kpi-label">Coût horaire moyen</div><div className="kpi-value mono">{avg ? formatXaf(avg) : "—"}</div><div className="kpi-sub">{personCosts ? "calculé sur les personnes actives ; seul ce coût moyen est visible des chefs de projet" : "sert à estimer le coût du temps des projets"}</div></div>
+          <div className="card kpi"><div className="kpi-label">Coût horaire moyen</div><div className="kpi-value mono">{avg ? formatXaf(avg) : "—"}</div><div className="kpi-sub">{personCosts ? "moyenne des personnes actives ; c'est le seul coût affiché aux autres utilisateurs" : "sert à estimer le coût du temps passé sur les projets"}</div></div>
         )}
       </div>
 
@@ -77,7 +78,7 @@ export function Team() {
       {error && <p className="error">{error}</p>}
 
       {team.length === 0 ? (
-        <p className="empty">L'annuaire se remplit avec les comptes utilisateurs dès la prochaine connexion de l'administrateur. {manage ? "Vous pouvez aussi ajouter une personne sans compte." : ""}</p>
+        <p className="empty">Les comptes utilisateurs apparaîtront ici automatiquement.{manage ? " Vous pouvez aussi ajouter une personne sans compte." : ""}</p>
       ) : (
         <div className="card table-wrap">
           <table className="team-table">
@@ -117,7 +118,7 @@ export function Team() {
           </table>
         </div>
       )}
-      {!personCosts && <p className="muted small">Le coût horaire de chaque personne est réservé à la direction et au comptable.</p>}
+      {!personCosts && <p className="muted small">Les coûts horaires individuels sont confidentiels : seul le coût moyen est affiché.</p>}
     </div>
   );
 }
@@ -137,11 +138,11 @@ function PersonForm({ record, cost, showCost, onSave, onClose }: {
     if (!record) Object.assign(patch, { user_id: "", active: true, created_by: session.user.id, created_at: new Date().toISOString() });
     const raw = (f.cost ?? "").replace(/\s/g, "");
     const value = showCost && raw !== "" ? Math.round(Number(raw)) : null;
-    if (value !== null && !(value >= 0)) return setError("Coût horaire invalide.");
+    if (value !== null && !(value >= 0)) return setError("Indiquez un coût horaire en FCFA, sans décimales.");
     try {
       await onSave(record?.id ?? db.newId("tm"), patch, value);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Enregistrement impossible.");
+      setError(err instanceof Error ? err.message : "La fiche n'a pas pu être enregistrée.");
     }
   }
   return (
@@ -151,7 +152,7 @@ function PersonForm({ record, cost, showCost, onSave, onClose }: {
       <label>Métier<input name="job" defaultValue={text(record?.data.job)} placeholder="Ex. : Électricien" /></label>
       <label>Téléphone<input name="phone" type="tel" defaultValue={text(record?.data.phone)} placeholder="+241 …" /></label>
       {showCost && <label>Coût horaire (FCFA / h)<input name="cost" inputMode="numeric" defaultValue={cost || ""} placeholder="Ex. : 3500" /></label>}
-      {showCost && <p className="wide muted small form-note">Salaire chargé divisé par les heures travaillées. Visible de la direction et du comptable seulement.</p>}
+      {showCost && <p className="wide muted small form-note">Salaire chargé divisé par les heures travaillées. Ce coût reste confidentiel : les autres utilisateurs voient seulement le coût moyen.</p>}
       {error && <p className="error wide">{error}</p>}
       <div className="form-actions">
         <button type="button" className="ghost" onClick={onClose}>Annuler</button>

@@ -2,9 +2,11 @@
  * Projets : liste, fiche avec tâches (Kanban), planning (Gantt), temps passés,
  * équipe du projet, rentabilité et facturation du temps. Tout fonctionne hors ligne.
  *
- * Lot 1 : responsables choisis dans l'annuaire, équipe du projet, contrôle
- * À valider → Terminé par le chef de projet, aucun montant pour l'employé,
- * montants rangés dans la table protégée `project_finance`.
+ * Lot 1 : responsables choisis dans l'annuaire, équipe du projet, vérification
+ * À vérifier → Terminé par le responsable ou le commanditaire, aucun montant pour
+ * l'employé, montants rangés dans la table protégée `project_finance`.
+ *
+ * Rédaction : dire ce qui se passe et son effet, sans renvoyer vers une hiérarchie.
  */
 import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from "react";
 import { can, formatDate, normalize, text, today, useApp, useSettings, useTable } from "../context.ts";
@@ -22,6 +24,7 @@ import { Initials, PIcon } from "./ProjectIcons.tsx";
 
 const PRIORITY: Record<string, string> = { low: "Basse", normal: "Normale", high: "Haute" };
 const hoursLabel = (h: number) => `${(Math.round(h * 100) / 100).toLocaleString("fr-FR")} h`;
+const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 const live = (r: SyncRecord) => !r.data._deleted;
 
 function useProjectData() {
@@ -41,7 +44,7 @@ function useMembers(projectId?: string): SyncRecord[] {
   return useMemo(() => all.filter((m) => live(m) && (!projectId || m.data.project_id === projectId)), [all, projectId]);
 }
 
-/** Chef de projet affiché : l'équipe du projet, sinon l'ancien texte libre. */
+/** Responsable du projet affiché : l'équipe du projet, sinon l'ancien texte libre. */
 function managerName(project: SyncRecord, members: SyncRecord[]): { name: string; legacy: boolean } | null {
   const m = members.find((x) => x.data.project_id === project.id && x.data.role === "manager");
   if (m) return { name: text(m.data.name), legacy: false };
@@ -88,33 +91,55 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
     .filter((p) => !q || normalize(`${text(p.data.name)} ${clientName(p.data.client_id)}`).includes(q))
     .sort((a, b) => text(a.data.end_date || "9999").localeCompare(text(b.data.end_date || "9999")));
 
+  const visibleProjects = projects.filter(mine);
   return (
     <section>
       <div className="section-head">
-        <h2>{view === "team" ? "Équipe" : "Projets"}</h2>
+        <h2>{view === "team" ? "Personnes" : "Projets"}</h2>
         <div className="head-actions">
           {manager && (
             <div className="segmented" role="tablist" aria-label="Affichage">
               <button role="tab" aria-selected={view === "list"} className={view === "list" ? "active" : ""} onClick={() => setView("list")}>Projets</button>
-              <button role="tab" aria-selected={view === "team"} className={view === "team" ? "active" : ""} onClick={() => setView("team")}>Équipe</button>
+              <button role="tab" aria-selected={view === "team"} className={view === "team" ? "active" : ""} onClick={() => setView("team")}>Personnes</button>
             </div>
           )}
-          {manager && view === "list" && <button className="primary" onClick={() => setEditing("new")}>Nouveau projet</button>}
+          {manager && view === "list" && visibleProjects.length > 0 && !editing && <button className="primary" onClick={() => setEditing("new")}>Nouveau projet</button>}
         </div>
       </div>
       {view === "team" ? <Team /> : (
         <>
           {editing && <ProjectForm record={editing === "new" ? null : editing} clients={clients} onClose={(id) => { setEditing(null); if (id) setOpen(id); }} />}
-          <div className="toolbar">
-            <input type="search" placeholder="Rechercher un projet ou un client" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher un projet" />
-            <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Statut">
-              <option value="open">En cours et planifiés</option>
-              <option value="all">Tous</option>
-              {Object.entries(PROJECT_STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-          </div>
+          {visibleProjects.length > 0 && (
+            <div className="toolbar">
+              <input type="search" placeholder="Rechercher un projet ou un client" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher un projet" />
+              <select value={status} onChange={(e) => setStatus(e.target.value)} aria-label="Statut">
+                <option value="open">En cours et planifiés</option>
+                <option value="all">Tous les projets</option>
+                {Object.entries(PROJECT_STATUS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+              </select>
+            </div>
+          )}
           {rows.length === 0 ? (
-            <p className="empty">{projects.length === 0 ? "Aucun projet pour l'instant." : "Aucun projet pour ce filtre."}</p>
+            visibleProjects.length === 0 ? (
+              !editing && (
+                <div className="empty-state">
+                  <span className="empty-ico" aria-hidden="true"><PIcon name="folder" /></span>
+                  <h3 className="empty-title">{manager ? "Aucun projet pour l'instant" : "Aucun projet pour vous pour l'instant"}</h3>
+                  <p className="muted">
+                    {manager
+                      ? "Un projet regroupe les tâches, le temps passé et la facturation d'un chantier ou d'une mission."
+                      : "Les projets sur lesquels vous travaillez apparaîtront ici, avec vos tâches."}
+                  </p>
+                  {manager && <button className="primary" onClick={() => setEditing("new")}>Nouveau projet</button>}
+                </div>
+              )
+            ) : (
+              <div className="empty-state">
+                <h3 className="empty-title">Aucun projet ne correspond</h3>
+                <p className="muted">{q ? `Aucun projet ne contient « ${query.trim()} » avec ce statut.` : "Aucun projet n'a ce statut."}</p>
+                <button onClick={() => { setQuery(""); setStatus("all"); }}>Afficher tous les projets</button>
+              </div>
+            )
           ) : (
             <div className="project-grid">
               {rows.map((p) => {
@@ -127,11 +152,11 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
                       <strong>{text(p.data.name)}</strong>
                       <span className={`badge ${p.data.status === "active" ? "ok" : p.data.status === "on_hold" ? "warn" : ""}`}>{PROJECT_STATUS[text(p.data.status)] ?? "—"}</span>
                     </div>
-                    <div className="muted small">
-                      {clientName(p.data.client_id) || (amounts ? "Projet interne" : "")}{p.data.end_date ? `${clientName(p.data.client_id) || amounts ? " · " : ""}fin ${formatDate(p.data.end_date)}` : ""}
-                      {lead ? ` · ${lead.name}` : ""}
+                    <div className="muted small project-card-meta">
+                      <span>{[clientName(p.data.client_id) || (amounts ? "Projet interne" : ""), p.data.end_date ? `fin prévue le ${formatDate(p.data.end_date)}` : ""].filter(Boolean).join(" · ")}</span>
+                      {lead && <span>Responsable : {lead.name}</span>}
                     </div>
-                    <Progress value={s.progress} label={`${s.tasksDone}/${s.tasks} tâches`} />
+                    {s.tasks > 0 ? <Progress value={s.progress} label={`${s.tasksDone}/${s.tasks} tâches terminées`} /> : <p className="muted small project-card-empty">Aucune tâche pour l'instant</p>}
                     {amounts ? (
                       <dl className="mini-stats">
                         <div><dt>Heures</dt><dd>{hoursLabel(s.hours)}</dd></div>
@@ -146,8 +171,8 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
                     )}
                     {(s.overdueTasks > 0 || blocked > 0) && (
                       <div className="card-alerts small">
-                        {s.overdueTasks > 0 && <span className="danger-text">{s.overdueTasks} tâche(s) en retard</span>}
-                        {blocked > 0 && <span className="danger-text">{blocked} bloquée(s)</span>}
+                        {s.overdueTasks > 0 && <span className="danger-text">{plural(s.overdueTasks, "tâche en retard", "tâches en retard")}</span>}
+                        {blocked > 0 && <span className="danger-text">{plural(blocked, "tâche bloquée", "tâches bloquées")}</span>}
                       </div>
                     )}
                   </button>
@@ -161,11 +186,11 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
   );
 }
 
-function Progress({ value, label }: { value: number; label?: string }) {
+function Progress({ value, label, hideValue = false }: { value: number; label?: string; hideValue?: boolean }) {
   return (
     <div className="progress" role="progressbar" aria-valuenow={value} aria-valuemin={0} aria-valuemax={100} aria-label={label ?? "Avancement"}>
       <div className="progress-bar"><span style={{ width: `${Math.min(100, value)}%` }} /></div>
-      <span className="small muted">{value} %{label ? ` · ${label}` : ""}</span>
+      <span className="small muted">{hideValue ? label : `${value} %${label ? ` · ${label}` : ""}`}</span>
     </div>
   );
 }
@@ -209,7 +234,7 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
       }
     }
 
-    // Chef de projet : une ligne d'équipe déterministe ; l'ancien chef reste dans l'équipe.
+    // Responsable du projet : une ligne d'équipe déterministe ; l'ancien responsable reste dans l'équipe.
     if (lead && (!currentLead || currentLead.data.team_member_id !== lead.id)) {
       if (currentLead) await db.write("project_members", currentLead.id, { role: "member" });
       await db.write("project_members", memberIdOf(id, lead.id), {
@@ -221,6 +246,7 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
   }
   return (
     <form className="card form-grid section-card" onSubmit={save}>
+      <h3 className="wide">{record ? "Modifier le projet" : "Nouveau projet"}</h3>
       <label className="wide">Nom du projet<input name="name" required defaultValue={v("name")} /></label>
       <label>
         Client
@@ -242,9 +268,9 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
         </select>
       </label>
       <label>
-        Chef de projet
+        Responsable du projet
         <select name="lead" defaultValue={defaultLead}>
-          <option value="">{record?.data.manager && !currentLead ? `${text(record.data.manager)} (à choisir dans l'équipe)` : "Non désigné"}</option>
+          <option value="">{record?.data.manager && !currentLead ? `${text(record.data.manager)} (à choisir dans la liste)` : "À choisir"}</option>
           {team.map((m) => <option key={m.id} value={m.id}>{text(m.data.name)}</option>)}
         </select>
       </label>
@@ -256,13 +282,13 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
           <label>Budget HT (FCFA)<input type="number" min="0" name="budget" defaultValue={fin?.budget || ""} /></label>
           <label>Taux de facturation (FCFA / h)<input type="number" min="0" name="hourly_rate" defaultValue={fin?.hourlyRate || ""} /></label>
           <label>Coût horaire interne (FCFA / h)<input type="number" min="0" name="cost_rate" defaultValue={fin?.costRate || ""} /></label>
-          <p className="wide muted small form-note">Budget, taux et coût ne sont jamais envoyés aux téléphones des employés.</p>
+          <p className="wide muted small form-note">Montants confidentiels : ils ne sont jamais affichés ni envoyés sur les appareils des employés.</p>
         </>
       )}
       <label className="wide">Description<textarea name="description" rows={2} defaultValue={v("description")} /></label>
       <div className="form-actions">
         <button type="button" className="ghost" onClick={() => onClose()}>Annuler</button>
-        <button className="primary">Enregistrer le projet</button>
+        <button className="primary">{record ? "Enregistrer le projet" : "Créer le projet"}</button>
       </div>
     </form>
   );
@@ -282,9 +308,18 @@ function ProjectDetail({ project, clientName, onBack }: { project: SyncRecord; c
   const manager = can.manageProjects(role);
   const amounts = can.seeAmounts(role);
   const tasks = data.tasks.filter((t) => t.data.project_id === project.id);
+  const entries = data.time_entries.filter((t) => t.data.project_id === project.id);
   const lead = managerName(project, members);
   const estimated = amounts && !can.seePersonCosts(role) && s.hours > 0;
-  const tabs: [DetailView, string][] = [["tasks", "Tâches"], ["gantt", "Planning"], ["time", "Temps passés"], ["team", "Équipe"], ...(amounts ? [["finance", "Facturation"]] as [DetailView, string][] : [])];
+  // Projet qui démarre : des indicateurs à zéro n'apprennent rien, on les montre dès qu'il y a de l'activité.
+  const started = s.tasksDone > 0 || s.hours > 0 || s.costs > 0 || s.invoiced > 0;
+  const tabs: [DetailView, string, string?][] = [
+    ["tasks", "Tâches", tasks.length ? String(tasks.length) : undefined],
+    ["gantt", "Planning"],
+    ["time", "Temps", s.hours ? hoursLabel(s.hours) : undefined],
+    ["team", "Équipe", members.length ? String(members.length) : undefined],
+    ...(amounts ? [["finance", "Facturation"]] as [DetailView, string][] : []),
+  ];
 
   return (
     <section>
@@ -296,43 +331,47 @@ function ProjectDetail({ project, clientName, onBack }: { project: SyncRecord; c
             {clientName || amounts ? <span>{clientName || "Projet interne"}</span> : null}
             <span>{PROJECT_STATUS[text(project.data.status)]}</span>
             {amounts && BILLING_MODES[text(project.data.billing)] && <span>{BILLING_MODES[text(project.data.billing)]}</span>}
-            {lead && <span>Chef de projet : {lead.name}</span>}
-            {project.data.end_date ? <span>{project.data.start_date ? `${formatDate(project.data.start_date)} → ` : "fin "}{formatDate(project.data.end_date)}</span> : project.data.start_date ? <span>depuis le {formatDate(project.data.start_date)}</span> : null}
+            {lead && <span>Responsable : {lead.name}</span>}
+            {project.data.end_date ? <span>{project.data.start_date ? `${formatDate(project.data.start_date)} → ` : "fin prévue le "}{formatDate(project.data.end_date)}</span> : project.data.start_date ? <span>depuis le {formatDate(project.data.start_date)}</span> : null}
             {project.data.site_address ? <span>{text(project.data.site_address)}</span> : null}
           </div>
         </div>
-        {manager && <button onClick={() => setEditing((e) => !e)}>{editing ? "Fermer" : "Modifier le projet"}</button>}
+        {manager && !editing && <button onClick={() => setEditing(true)}>Modifier le projet</button>}
       </div>
       {editing && <ProjectForm record={project} clients={clients} onClose={() => setEditing(false)} />}
 
-      <div className={`kpis ${amounts ? "five" : "two"}`}>
-        <div className="card kpi"><div className="kpi-label">Avancement</div><div className="kpi-value">{s.progress} %</div><Progress value={s.progress} label={`${s.tasksDone}/${s.tasks} tâches`} /></div>
-        <div className="card kpi"><div className="kpi-label">Heures passées / estimées</div><div className="kpi-value mono">{hoursLabel(s.hours)}</div><div className="muted small">{s.hoursEstimated ? `sur ${hoursLabel(s.hoursEstimated)} estimées` : "pas d'estimation"}</div></div>
-        {amounts && (
-          <>
-            <div className="card kpi"><div className="kpi-label">Coûts (temps + dépenses)</div><div className="kpi-value mono">{formatXaf(s.costs)}</div>{s.budget > 0 ? <div className={`small ${s.budgetUsed > 100 ? "danger-text" : "muted"}`}>{s.budgetUsed} % du budget de {formatXaf(s.budget)}</div> : estimated ? <div className="small muted">Temps estimé au coût moyen</div> : null}</div>
-            <div className="card kpi"><div className="kpi-label">Facturé (HT)</div><div className="kpi-value mono">{formatXaf(s.invoiced)}</div>{s.unbilledHours > 0 && <div className="small warn-text">{hoursLabel(s.unbilledHours)} non facturées</div>}</div>
-            <div className={`card kpi ${s.margin < 0 ? "danger" : ""}`}><div className="kpi-label">Marge</div><div className="kpi-value mono" data-testid="project-margin">{formatXaf(s.margin)}</div>{estimated && <div className="small muted">Estimation au coût moyen</div>}</div>
-          </>
-        )}
-      </div>
+      {started && (
+        <div className={`kpis ${amounts ? "five" : "two"}`}>
+          <div className="card kpi"><div className="kpi-label">Avancement</div><div className="kpi-value">{s.progress} %</div><Progress value={s.progress} label={`${s.tasksDone}/${s.tasks} tâches terminées`} hideValue /></div>
+          <div className="card kpi"><div className="kpi-label">Temps passé</div><div className="kpi-value mono">{hoursLabel(s.hours)}</div><div className="muted small">{s.hoursEstimated ? `sur ${hoursLabel(s.hoursEstimated)} estimées` : "aucune estimation sur les tâches"}</div></div>
+          {amounts && (
+            <>
+              <div className="card kpi"><div className="kpi-label">Coûts (temps + dépenses)</div><div className="kpi-value mono">{formatXaf(s.costs)}</div>{s.budget > 0 ? <div className={`small ${s.budgetUsed > 100 ? "danger-text" : "muted"}`}>{s.budgetUsed} % du budget de {formatXaf(s.budget)}</div> : estimated ? <div className="small muted">Temps estimé au coût moyen</div> : null}</div>
+              <div className="card kpi"><div className="kpi-label">Facturé (HT)</div><div className="kpi-value mono">{formatXaf(s.invoiced)}</div>{s.unbilledHours > 0 && <div className="small warn-text">{hoursLabel(s.unbilledHours)} pas encore facturées</div>}</div>
+              <div className={`card kpi ${s.margin < 0 ? "danger" : ""}`}><div className="kpi-label">Marge</div><div className="kpi-value mono" data-testid="project-margin">{formatXaf(s.margin)}</div>{estimated ? <div className="small muted">Estimation au coût moyen</div> : s.margin < 0 && s.invoiced === 0 ? <div className="small muted">Rien n'est encore facturé</div> : null}</div>
+            </>
+          )}
+        </div>
+      )}
 
-      <div className="segmented subnav" role="tablist">
-        {tabs.map(([v, l]) => (
-          <button key={v} role="tab" aria-selected={view === v} className={view === v ? "active" : ""} onClick={() => setView(v)}>{l}</button>
+      <div className="segmented subnav" role="tablist" aria-label="Rubriques du projet">
+        {tabs.map(([v, l, n]) => (
+          <button key={v} role="tab" aria-selected={view === v} className={view === v ? "active" : ""} onClick={() => setView(v)}>
+            {l}{n ? <span className="seg-count">{n}</span> : null}
+          </button>
         ))}
       </div>
 
-      {view === "tasks" && <Kanban project={project} tasks={tasks} members={members} />}
+      {view === "tasks" && <Kanban project={project} tasks={tasks} members={members} onTeam={() => setView("team")} />}
       {view === "gantt" && <Gantt project={project} tasks={tasks} />}
-      {view === "time" && <TimeEntries project={project} tasks={tasks} entries={data.time_entries.filter((t) => t.data.project_id === project.id)} invoices={data.invoices} />}
+      {view === "time" && <TimeEntries project={project} tasks={tasks} entries={entries} invoices={data.invoices} />}
       {view === "team" && <ProjectTeam project={project} members={members} />}
       {view === "finance" && amounts && <Finance project={project} data={data} />}
     </section>
   );
 }
 
-/** Équipe du projet : chef de projet, commanditaire et membres, choisis dans l'annuaire. */
+/** Équipe du projet : responsable, commanditaire et membres, choisis dans l'annuaire. */
 function ProjectTeam({ project, members }: { project: SyncRecord; members: SyncRecord[] }) {
   const { db, session } = useApp();
   const team = useTeam();
@@ -340,6 +379,7 @@ function ProjectTeam({ project, members }: { project: SyncRecord; members: SyncR
   const [pick, setPick] = useState("");
   const [error, setError] = useState<string | null>(null);
   const editable = ["admin", "director", "sales", "project_manager"].includes(session.user.role);
+  const directory = can.manageTeam(session.user.role);
   const available = team.filter((m) => m.data.active !== false && !members.some((x) => x.data.team_member_id === m.id));
   const legacy = !members.some((m) => m.data.role === "manager") && project.data.manager ? text(project.data.manager) : "";
   const legacyMatch = legacy ? matchTeamMember(legacy, team) : null;
@@ -355,7 +395,7 @@ function ProjectTeam({ project, members }: { project: SyncRecord; members: SyncR
       });
       setPick("");
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Ajout impossible.");
+      setError(e instanceof Error ? e.message : "La personne n'a pas pu être ajoutée.");
     }
   }
   const sorted = [...members].sort((a, b) => ["manager", "sponsor", "member"].indexOf(text(a.data.role)) - ["manager", "sponsor", "member"].indexOf(text(b.data.role)) || text(a.data.name).localeCompare(text(b.data.name)));
@@ -364,15 +404,15 @@ function ProjectTeam({ project, members }: { project: SyncRecord; members: SyncR
     <div className="card section-card project-team">
       <div className="card-head">
         <h3>Équipe du projet</h3>
-        <span className="muted small">{members.length} personne(s)</span>
+        <span className="muted small">{plural(members.length, "personne", "personnes")}</span>
       </div>
       {legacy && (
         <p className="notice legacy-note">
-          Chef de projet saisi avant l'annuaire : « {legacy} ».{" "}
+          Responsable saisi avant l'annuaire : « {legacy} ».{" "}
           {editable && legacyMatch ? <button className="link" onClick={() => add(legacyMatch.id, "manager")}>Choisir {text(legacyMatch.data.name)}</button> : editable ? "Choisissez la personne dans la liste ci-dessous." : null}
         </p>
       )}
-      {sorted.length === 0 ? <p className="muted small">Aucune personne dans l'équipe. Ajoutez les personnes qui travaillent sur ce projet : elles verront leurs tâches dans « Ma journée ».</p> : (
+      {sorted.length === 0 ? <p className="muted small">Personne n'est encore sur ce projet. Les personnes ajoutées retrouvent leurs tâches dans « Ma journée ».</p> : (
         <ul className="member-list">
           {sorted.map((m) => {
             const person = team.find((x) => x.id === m.data.team_member_id);
@@ -384,7 +424,7 @@ function ProjectTeam({ project, members }: { project: SyncRecord; members: SyncR
                   <select value={text(m.data.role) || "member"} aria-label={`Rôle de ${text(m.data.name)} dans le projet`} onChange={(e) => db.write("project_members", m.id, { role: e.target.value })}>
                     {Object.entries(MEMBER_ROLE_LABELS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
                   </select>
-                ) : <span className="badge">{MEMBER_ROLE_LABELS[text(m.data.role)] ?? "Équipe"}</span>}
+                ) : <span className="badge">{MEMBER_ROLE_LABELS[text(m.data.role)] ?? "Membre"}</span>}
                 {editable && <button className="ghost small" onClick={() => db.write("project_members", m.id, { _deleted: true })}>Retirer</button>}
               </li>
             );
@@ -394,37 +434,57 @@ function ProjectTeam({ project, members }: { project: SyncRecord; members: SyncR
       {editable && (
         <div className="member-add">
           <select value={pick} onChange={(e) => setPick(e.target.value)} aria-label="Personne à ajouter">
-            <option value="">{available.length ? "Choisir une personne de l'annuaire" : "Toute l'équipe est déjà sur le projet"}</option>
+            <option value="">{available.length ? "Choisir une personne" : "Toutes les personnes sont déjà sur le projet"}</option>
             {available.map((m) => <option key={m.id} value={m.id}>{text(m.data.name)}{m.data.job ? ` · ${text(m.data.job)}` : ""}</option>)}
           </select>
           <button onClick={() => add(pick)} disabled={!pick}>Ajouter à l'équipe</button>
         </div>
       )}
       {error && <p className="error">{error}</p>}
-      <p className="muted small">Le chef de projet et le commanditaire contrôlent les tâches À valider. Les personnes se gèrent dans Projets › Équipe.</p>
+      <p className="muted small">Les tâches « À vérifier » sont closes par le responsable du projet ou le commanditaire.{" "}
+        {editable && (directory ? "Une personne manque dans la liste ? Ajoutez-la dans Projets › Personnes." : "La liste reprend les personnes actives de Projets › Personnes.")}
+      </p>
     </div>
   );
 }
 
 const lateLabel = (days: number) => (days === 1 ? "En retard d'1 j" : `En retard de ${days} j`);
 
-function Kanban({ project, tasks, members }: { project: SyncRecord; tasks: SyncRecord[]; members: SyncRecord[] }) {
+/**
+ * Actions d'une carte, dites avec un verbe plutôt qu'avec des flèches.
+ * Qui peut clore passe directement à Terminé ; les autres envoient la tâche « À vérifier ».
+ */
+function stepsOf(status: string, canClose: boolean, mine: boolean): { to: string; label: string; main?: boolean }[] {
+  switch (status) {
+    case "todo": return canClose || mine ? [{ to: "doing", label: "Commencer", main: true }] : [];
+    case "doing": return canClose ? [{ to: "done", label: "Terminer", main: true }] : mine ? [{ to: "review", label: "J'ai terminé", main: true }] : [];
+    case "review": return canClose ? [{ to: "done", label: "Clore la tâche", main: true }, { to: "doing", label: "Reprendre" }] : mine ? [{ to: "doing", label: "Reprendre" }] : [];
+    case "done": return canClose ? [{ to: "doing", label: "Rouvrir" }] : [];
+    default: return [];
+  }
+}
+
+function Kanban({ project, tasks, members, onTeam }: { project: SyncRecord; tasks: SyncRecord[]; members: SyncRecord[]; onTeam: () => void }) {
   const { db, session } = useApp();
   const write = useGuardedWrite();
   const team = useTeam();
   const projects = useTable("projects");
-  const [title, setTitle] = useState("");
-  const [editing, setEditing] = useState<string | null>(null);
-  const [over, setOver] = useState<string | null>(null);
-  const [who, setWho] = useState("all");
-  const [error, setError] = useState<string | null>(null);
-  const order = TASK_STATUS.map(([k]) => k);
   const actor = { userId: session.user.id, role: session.user.role };
   const ctx = localProjectContext(projects, members);
   const canClose = canCloseTask(actor, project.id, ctx);
   const employee = session.user.role === "employee" && !canClose;
+  const me = teamMemberIdOf(session.user.id);
+  const [title, setTitle] = useState("");
+  const [assignTo, setAssignTo] = useState(employee ? me : "");
+  const [editing, setEditing] = useState<string | null>(null);
+  const [over, setOver] = useState<string | null>(null);
+  // L'employé arrive sur ses propres tâches quand il en a sur ce projet.
+  const [picked, setWho] = useState<string | null>(null);
+  const who = picked ?? (employee && tasks.some((t) => t.data.assignee_id === me) ? me : "all");
+  const [error, setError] = useState<string | null>(null);
+  const order = TASK_STATUS.map(([k]) => k);
 
-  // Personnes du filtre : l'équipe du projet et les responsables des tâches.
+  // Personnes du filtre : l'équipe du projet et les personnes chargées des tâches.
   const people = useMemo(() => {
     const map = new Map<string, string>();
     for (const m of members) map.set(text(m.data.team_member_id), text(m.data.name));
@@ -434,29 +494,38 @@ function Kanban({ project, tasks, members }: { project: SyncRecord; tasks: SyncR
     }
     return [...map.entries()].sort((a, b) => a[1].localeCompare(b[1], "fr"));
   }, [members, tasks, team]);
+  const assignable = employee ? [] : people;
 
   async function add(e: FormEvent) {
     e.preventDefault();
-    if (!title.trim()) return;
+    const name = title.trim();
+    if (!name) return;
     setError(null);
+    // Champ vidé tout de suite : on peut enchaîner la tâche suivante.
+    setTitle("");
     try {
       await write("tasks", db.newId("tsk"), {
-        project_id: project.id, title: title.trim(), status: "todo", priority: "normal", created_by: session.user.id, created_at: new Date().toISOString(),
-        ...(who !== "all" && who !== "none" ? { assignee_id: who } : {}),
+        project_id: project.id, title: name, status: "todo", priority: "normal", created_by: session.user.id, created_at: new Date().toISOString(),
+        ...(assignTo ? { assignee_id: assignTo } : {}),
       });
-      setTitle("");
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Ajout impossible.");
+      setTitle(name);
+      setError(err instanceof Error ? err.message : "La tâche n'a pas pu être ajoutée.");
     }
   }
-  async function move(t: SyncRecord, status: string) {
-    if (t.data.status === status) return;
+  async function patch(t: SyncRecord, values: Record<string, unknown>) {
     setError(null);
     try {
-      await write("tasks", t.id, { status, ...(status === "done" ? { done_at: new Date().toISOString(), blocked: false } : {}) });
+      await write("tasks", t.id, values);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Action impossible.");
+      setError(err instanceof Error ? err.message : "La tâche n'a pas pu être modifiée.");
     }
+  }
+  function move(t: SyncRecord, status: string) {
+    if (t.data.status === status) return;
+    // Une tâche libre commencée par un employé lui est attribuée.
+    const take = employee && status === "doing" && !t.data.assignee_id ? { assignee_id: me } : {};
+    return patch(t, { status, ...take, ...(status === "done" ? { done_at: new Date().toISOString(), blocked: false } : {}) });
   }
   const onDrop = (e: DragEvent, status: string) => {
     e.preventDefault();
@@ -471,65 +540,87 @@ function Kanban({ project, tasks, members }: { project: SyncRecord; tasks: SyncR
     <div>
       <div className="kanban-tools">
         <form className="kanban-add" onSubmit={add}>
-          <input placeholder="Nouvelle tâche" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Nouvelle tâche" />
-          <button className="primary">Ajouter</button>
-        </form>
-        <div className="people-filter">
-          <span className="ini-stack" aria-hidden="true">{people.slice(0, 3).map(([id, n]) => <Initials key={id} name={n} />)}</span>
-          <select value={who} onChange={(e) => setWho(e.target.value)} aria-label="Filtrer par personne">
-            <option value="all">Tout le monde</option>
-            <option value="none">Non attribuées</option>
-            {people.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
+          <input placeholder="Titre de la nouvelle tâche" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Nouvelle tâche" />
+          <select value={assignTo} onChange={(e) => setAssignTo(e.target.value)} aria-label="Attribuer à">
+            {employee && <option value={me}>À moi</option>}
+            <option value="">Non attribuée</option>
+            {assignable.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
           </select>
-        </div>
+          <button className="primary" disabled={!title.trim()}>Ajouter la tâche</button>
+        </form>
+        {tasks.length > 0 && (
+          <label className="people-filter">
+            <span className="muted small">Afficher</span>
+            <select value={who} onChange={(e) => setWho(e.target.value)} aria-label="Filtrer par personne">
+              <option value="all">Toutes les tâches</option>
+              {people.some(([id]) => id === me) && <option value={me}>Mes tâches</option>}
+              <option value="none">Non attribuées</option>
+              {people.filter(([id]) => id !== me).map(([id, n]) => <option key={id} value={id}>{n}</option>)}
+            </select>
+          </label>
+        )}
       </div>
       {error && <p className="error" role="alert">{error}</p>}
+      {tasks.length === 0 ? (
+        <div className="card empty-state kanban-empty">
+          <span className="empty-ico" aria-hidden="true"><PIcon name="list" /></span>
+          <h3 className="empty-title">Aucune tâche pour l'instant</h3>
+          <p className="muted">
+            Ajoutez une première tâche avec le champ ci-dessus : elle arrive dans « À faire ».
+            {members.length === 0 && !employee ? " Pour attribuer des tâches, ajoutez d'abord les personnes du projet." : ""}
+          </p>
+          {members.length === 0 && !employee && <button onClick={onTeam}>Ajouter des personnes au projet</button>}
+        </div>
+      ) : (
       <div className="kanban">
         {TASK_STATUS.map(([status, label]) => {
           const col = visible.filter((t) => (t.data.status ?? "todo") === status)
             .sort((a, b) => Number(!!b.data.blocked) - Number(!!a.data.blocked) || ({ high: 0, normal: 1, low: 2 }[text(a.data.priority)] ?? 1) - ({ high: 0, normal: 1, low: 2 }[text(b.data.priority)] ?? 1) || text(a.data.due_date || "9").localeCompare(text(b.data.due_date || "9")));
           return (
-            <div key={status} className={`kanban-col ${over === status ? "over" : ""}`} data-testid={`col-${status}`}
+            <div key={status} className={`kanban-col ${over === status ? "over" : ""}${col.length === 0 ? " is-empty" : ""}`} data-testid={`col-${status}`}
               onDragOver={(e) => { e.preventDefault(); setOver(status); }} onDragLeave={() => setOver(null)} onDrop={(e) => onDrop(e, status)}>
               <div className="kanban-head">
-                <span>{label}{status === "review" && <span className="kanban-sub">contrôle du chef de projet</span>}</span>
-                <span className="muted small">{col.length}</span>
+                <span>{label}{status === "review" && <span className="kanban-sub">closes après vérification</span>}</span>
+                <span className="kanban-count">{col.length}</span>
               </div>
+              {col.length === 0 && <p className="kanban-none">Aucune tâche</p>}
               {col.map((t) => {
-                const i = order.indexOf(status);
                 const due = text(t.data.due_date);
                 const late = status !== "done" && due && due < day ? daysBetween(due, day) : 0;
                 const person = assigneeOf(t, team);
-                const next = order[i + 1];
-                const canForward = i < order.length - 1 && !(next === "done" && !canClose);
-                const canBack = i > 0 && !(status === "done" && !canClose);
+                const mine = t.data.assignee_id === me || (!t.data.assignee_id && !t.data.assignee);
+                const steps = stepsOf(status, canClose, mine);
                 return (
-                  <div key={t.id} className={`task-card${t.data.blocked ? " blocked" : ""}`} draggable onDragStart={(e) => e.dataTransfer.setData("text/plain", t.id)}>
+                  <div key={t.id} className={`task-card${t.data.blocked ? " blocked" : ""}`} draggable={editing !== t.id} onDragStart={(e) => e.dataTransfer.setData("text/plain", t.id)}>
                     {editing === t.id ? (employee
                       ? <EmployeeTaskForm task={t} onClose={() => setEditing(null)} />
                       : <TaskForm task={t} members={members} onClose={() => setEditing(null)} />) : (
                       <>
-                        <button className="task-title" onClick={() => setEditing(t.id)}>{text(t.data.title)}</button>
+                        <button className="task-title" onClick={() => setEditing(t.id)} title={employee ? "Voir la tâche" : "Modifier la tâche"}>{text(t.data.title)}</button>
                         {(t.data.priority === "high") && <div className="task-tags"><span className="tag danger">Priorité haute</span></div>}
                         {t.data.blocked ? (
-                          <div className="task-blocked"><PIcon name="alert" />Bloqué : {BLOCK_LABELS[text(t.data.blocked_reason)] ?? "motif non précisé"}{t.data.blocked_note ? ` (${text(t.data.blocked_note)})` : ""}</div>
+                          <div className="task-blocked"><PIcon name="alert" />Bloquée : {BLOCK_LABELS[text(t.data.blocked_reason)] ?? "motif non précisé"}{t.data.blocked_note ? ` (${text(t.data.blocked_note)})` : ""}</div>
                         ) : null}
                         <div className="task-foot">
                           {person ? (
-                            <span className={`task-who${person.legacy ? " legacy" : ""}`} title={person.legacy ? "Responsable saisi avant l'annuaire" : undefined}>
+                            <span className={`task-who${person.legacy ? " legacy" : ""}`} title={person.legacy ? "Nom saisi avant l'annuaire" : undefined}>
                               <Initials name={person.name} />{person.name}
                             </span>
                           ) : <span className="task-who none">Non attribuée</span>}
                           <span className="task-facts">
-                            {late > 0 ? <span className="danger-text strong">{lateLabel(late)}</span> : due ? <span>{formatDate(due).slice(0, 5)}</span> : null}
-                            {t.data.estimate_hours ? <span>{hoursLabel(Number(t.data.estimate_hours))}</span> : null}
+                            {late > 0 ? <span className="danger-text strong">{lateLabel(late)}</span> : due ? <span title="Échéance">{formatDate(due).slice(0, 5)}</span> : null}
+                            {t.data.estimate_hours ? <span title="Estimation">{hoursLabel(Number(t.data.estimate_hours))}</span> : null}
                           </span>
                         </div>
-                        <div className="task-move">
-                          {canBack && <button className="ghost small" onClick={() => move(t, order[i - 1])} aria-label={`Reculer vers ${TASK_STATUS[i - 1][1]}`}>←</button>}
-                          {canForward && <button className="ghost small" onClick={() => move(t, next)} aria-label={`Avancer vers ${TASK_STATUS[i + 1][1]}`}>→</button>}
-                          {status === "review" && !canClose && <span className="muted small">En attente du contrôle</span>}
-                        </div>
+                        {(steps.length > 0 || (status === "review" && !canClose) || (t.data.blocked && (canClose || mine))) && (
+                          <div className="task-move">
+                            {status === "review" && !canClose && <span className="muted small">En attente de vérification</span>}
+                            {t.data.blocked && (canClose || mine) ? <button className="ghost small" onClick={() => patch(t, { blocked: false, blocked_reason: "", blocked_note: "" })}>Débloquer</button> : null}
+                            {steps.map((s) => (
+                              <button key={s.to} className={`small${s.main ? "" : " ghost"}`} onClick={() => move(t, s.to)}>{s.label}</button>
+                            ))}
+                          </div>
+                        )}
                       </>
                     )}
                   </div>
@@ -539,6 +630,7 @@ function Kanban({ project, tasks, members }: { project: SyncRecord; tasks: SyncR
           );
         })}
       </div>
+      )}
     </div>
   );
 }
@@ -550,7 +642,7 @@ function TaskForm({ task, members, onClose }: { task: SyncRecord; members: SyncR
   const legacy = !task.data.assignee_id && task.data.assignee ? text(task.data.assignee) : "";
   const suggestion = legacy ? matchTeamMember(legacy, team) : null;
   const [assignee, setAssignee] = useState(text(task.data.assignee_id));
-  // Membres de l'équipe d'abord, puis le reste de l'annuaire actif.
+  // Personnes du projet d'abord, puis le reste de l'annuaire actif.
   const inProject = new Set(members.map((m) => text(m.data.team_member_id)));
   const choices = team.filter((m) => m.data.active !== false || m.id === assignee);
   const ordered = [...choices.filter((m) => inProject.has(m.id)), ...choices.filter((m) => !inProject.has(m.id))];
@@ -569,60 +661,70 @@ function TaskForm({ task, members, onClose }: { task: SyncRecord; members: SyncR
       if (Object.keys(patch).length) await write("tasks", task.id, patch);
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Enregistrement impossible.");
+      setError(err instanceof Error ? err.message : "La tâche n'a pas pu être enregistrée.");
     }
   }
   async function remove() {
-    if (!confirm("Supprimer la tâche ?")) return;
+    if (!confirm(`Supprimer la tâche « ${text(task.data.title)} » ? Le temps déjà saisi reste sur le projet.`)) return;
     try {
       await write("tasks", task.id, { _deleted: true });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Suppression impossible.");
+      setError(err instanceof Error ? err.message : "La tâche n'a pas pu être supprimée.");
     }
   }
   return (
-    <form className="task-form" onSubmit={save}>
-      <input name="title" required defaultValue={text(task.data.title)} aria-label="Titre" />
-      <textarea name="description" rows={2} defaultValue={text(task.data.description)} placeholder="Description" aria-label="Description" />
-      <select value={assignee} onChange={(e) => setAssignee(e.target.value)} aria-label="Responsable">
-        <option value="">{legacy ? `${legacy} (texte libre)` : "Non attribuée"}</option>
-        {ordered.map((m) => <option key={m.id} value={m.id}>{text(m.data.name)}{inProject.has(m.id) ? "" : " (hors équipe)"}</option>)}
-      </select>
-      {legacy && !assignee && (
-        <p className="legacy-hint small">
-          Ancien responsable : « {legacy} ».{" "}
-          {suggestion ? <button type="button" className="link" onClick={() => setAssignee(suggestion.id)}>Choisir {text(suggestion.data.name)}</button> : "Choisissez la personne dans l'annuaire."}
-        </p>
-      )}
-      <label>Début<input type="date" name="start_date" defaultValue={text(task.data.start_date)} /></label>
-      <label>Échéance<input type="date" name="due_date" defaultValue={text(task.data.due_date)} /></label>
-      <label>Estimation (h)<input type="number" min="0" step="0.5" name="estimate_hours" defaultValue={text(task.data.estimate_hours)} /></label>
+    <form className="task-form" onSubmit={save} onKeyDown={(e) => e.key === "Escape" && onClose()}>
+      <label>Titre<input name="title" required defaultValue={text(task.data.title)} autoFocus /></label>
+      <label>Description<textarea name="description" rows={2} defaultValue={text(task.data.description)} /></label>
       <label>
-        Priorité
-        <select name="priority" defaultValue={text(task.data.priority) || "normal"}>
-          {Object.entries(PRIORITY).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+        Attribuée à
+        <select value={assignee} onChange={(e) => setAssignee(e.target.value)}>
+          <option value="">{legacy ? `${legacy} (nom saisi avant l'annuaire)` : "Personne pour l'instant"}</option>
+          {ordered.map((m) => <option key={m.id} value={m.id}>{text(m.data.name)}{inProject.has(m.id) ? "" : " (pas sur ce projet)"}</option>)}
         </select>
       </label>
+      {legacy && !assignee && (
+        <p className="legacy-hint small">
+          Nom saisi avant l'annuaire : « {legacy} ».{" "}
+          {suggestion ? <button type="button" className="link" onClick={() => setAssignee(suggestion.id)}>Choisir {text(suggestion.data.name)}</button> : "Choisissez la personne dans la liste."}
+        </p>
+      )}
+      <div className="task-form-row dates">
+        <label>Début<input type="date" name="start_date" defaultValue={text(task.data.start_date)} /></label>
+        <label>Échéance<input type="date" name="due_date" defaultValue={text(task.data.due_date)} /></label>
+      </div>
+      <div className="task-form-row">
+        <label>Estimation (h)<input type="number" min="0" step="0.5" name="estimate_hours" defaultValue={text(task.data.estimate_hours)} /></label>
+        <label>
+          Priorité
+          <select name="priority" defaultValue={text(task.data.priority) || "normal"}>
+            {Object.entries(PRIORITY).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          </select>
+        </label>
+      </div>
       {task.data.blocked ? (
-        <button type="button" className="ghost small" onClick={() => write("tasks", task.id, { blocked: false, blocked_reason: "", blocked_note: "" })}>Lever le blocage</button>
+        <button type="button" className="ghost small" onClick={() => write("tasks", task.id, { blocked: false, blocked_reason: "", blocked_note: "" })}>Débloquer la tâche</button>
       ) : null}
       {error && <p className="error">{error}</p>}
       <div className="form-actions">
         <button type="button" className="ghost danger small" onClick={remove}>Supprimer</button>
         <button type="button" className="ghost small" onClick={onClose}>Annuler</button>
-        <button className="primary small">OK</button>
+        <button className="primary small">Enregistrer</button>
       </div>
     </form>
   );
 }
 
-/** Ce qu'un employé modifie sur une tâche : la description, et se l'attribuer si elle est libre. */
+/** Ce qu'un employé modifie sur une tâche : la description, et la prendre si elle est libre. */
 function EmployeeTaskForm({ task, onClose }: { task: SyncRecord; onClose: () => void }) {
   const { session } = useApp();
   const write = useGuardedWrite();
+  const team = useTeam();
   const [error, setError] = useState<string | null>(null);
   const me = teamMemberIdOf(session.user.id);
+  const person = assigneeOf(task, team);
+  const due = text(task.data.due_date);
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const description = String(new FormData(e.currentTarget).get("description") ?? "");
@@ -630,18 +732,23 @@ function EmployeeTaskForm({ task, onClose }: { task: SyncRecord; onClose: () => 
       if (description !== text(task.data.description)) await write("tasks", task.id, { description });
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Enregistrement impossible.");
+      setError(err instanceof Error ? err.message : "La tâche n'a pas pu être enregistrée.");
     }
   }
   return (
-    <form className="task-form" onSubmit={save}>
+    <form className="task-form" onSubmit={save} onKeyDown={(e) => e.key === "Escape" && onClose()}>
       <strong>{text(task.data.title)}</strong>
-      <textarea name="description" rows={3} defaultValue={text(task.data.description)} placeholder="Description, remarques" aria-label="Description" />
-      {!task.data.assignee_id && <button type="button" className="small" onClick={() => write("tasks", task.id, { assignee_id: me }).then(onClose, (err) => setError(err.message))}>Me l'attribuer</button>}
+      <p className="muted small task-form-facts">
+        {person ? `Attribuée à ${person.name}` : "Non attribuée"}
+        {due ? ` · échéance le ${formatDate(due)}` : ""}
+        {task.data.estimate_hours ? ` · ${hoursLabel(Number(task.data.estimate_hours))} estimées` : ""}
+      </p>
+      <label>Description et remarques<textarea name="description" rows={3} defaultValue={text(task.data.description)} /></label>
+      {!task.data.assignee_id && <button type="button" className="small" onClick={() => write("tasks", task.id, { assignee_id: me }).then(onClose, (err) => setError(err.message))}>Prendre cette tâche</button>}
       {error && <p className="error">{error}</p>}
       <div className="form-actions">
         <button type="button" className="ghost small" onClick={onClose}>Annuler</button>
-        <button className="primary small">OK</button>
+        <button className="primary small">Enregistrer</button>
       </div>
     </form>
   );
@@ -652,7 +759,14 @@ function Gantt({ project, tasks }: { project: SyncRecord; tasks: SyncRecord[] })
   const dated = tasks.filter((t) => t.data.start_date || t.data.due_date)
     .map((t) => ({ t, start: text(t.data.start_date || t.data.due_date), end: text(t.data.due_date || t.data.start_date) }))
     .sort((a, b) => a.start.localeCompare(b.start));
-  if (dated.length === 0) return <p className="empty">Donnez une date de début ou une échéance aux tâches pour les voir sur le planning.</p>;
+  if (dated.length === 0) {
+    return (
+      <div className="card empty-state">
+        <h3 className="empty-title">Aucune tâche datée</h3>
+        <p className="muted">Le planning montre les tâches qui ont une date de début ou une échéance. Ouvrez une tâche pour lui donner des dates.</p>
+      </div>
+    );
+  }
   const dates = [...dated.flatMap((d) => [d.start, d.end]), text(project.data.start_date), text(project.data.end_date), today()].filter(Boolean).sort();
   const from = dates[0];
   const to = addDays(dates[dates.length - 1], 1);
@@ -690,8 +804,8 @@ function Gantt({ project, tasks }: { project: SyncRecord; tasks: SyncRecord[] })
         );
       })}
       <div className="legend gantt-legend">
-        <span><i className="swatch gl-todo" /> À faire</span><span><i className="swatch gl-doing" /> En cours / à valider</span>
-        <span><i className="swatch gl-done" /> Terminé</span><span><i className="swatch gl-late" /> En retard</span><span>│ aujourd'hui</span>
+        <span><i className="swatch gl-todo" /> À faire</span><span><i className="swatch gl-doing" /> En cours ou à vérifier</span>
+        <span><i className="swatch gl-done" /> Terminé</span><span><i className="swatch gl-late" /> En retard</span><span><i className="swatch gl-today" /> Aujourd'hui</span>
       </div>
     </div>
   );
@@ -713,12 +827,13 @@ function TimeEntries({ project, tasks, entries, invoices }: { project: SyncRecor
     const form = e.currentTarget;
     const f = Object.fromEntries(new FormData(form)) as Record<string, string>;
     const hours = Number(f.hours.replace(",", "."));
-    if (!(hours > 0 && hours <= 24)) return setError("Durée invalide (entre 0 et 24 h).");
-    if (closedUntil && f.date <= closedUntil) return setError(`Période clôturée jusqu'au ${formatDate(closedUntil)}.`);
+    if (!(hours > 0 && hours <= 24)) return setError("Indiquez une durée entre 0 et 24 h, par exemple 1,5.");
+    if (closedUntil && f.date <= closedUntil) return setError(`La période est clôturée jusqu'au ${formatDate(closedUntil)}. Choisissez une date postérieure.`);
     // Plafond de 24 h par personne et par jour, toutes tâches confondues (RG12.1, contrôle sur l'appareil).
-    const check = checkDayHours(hoursOn(session.user.id, allEntries, f.date), hours);
-    if (!check.ok) return setError(`${check.message}.`);
-    if (check.confirm && !confirm("Plus de 12 h ce jour-là. Confirmer la saisie ?")) return;
+    const already = hoursOn(session.user.id, allEntries, f.date);
+    const check = checkDayHours(already, hours);
+    if (!check.ok) return setError(already > 0 ? `${check.message} : ${hoursLabel(already)} déjà saisies ce jour-là.` : `${check.message}.`);
+    if (check.confirm && !confirm(`Cela fera ${hoursLabel(already + hours)} ce jour-là. Enregistrer quand même ?`)) return;
     setError(null);
     try {
       await write("time_entries", db.newId("tmp"), {
@@ -726,29 +841,32 @@ function TimeEntries({ project, tasks, entries, invoices }: { project: SyncRecor
         billable: f.billable === "on", user_id: session.user.id, user_name: session.user.name, team_member_id: teamMemberIdOf(session.user.id),
       });
     } catch (err) {
-      return setError(err instanceof Error ? err.message : "Saisie impossible.");
+      return setError(err instanceof Error ? err.message : "Le temps n'a pas pu être enregistré.");
     }
     form.reset();
   }
 
   return (
     <div>
-      <form className="card form-grid section-card" onSubmit={add}>
+      <form className="card form-grid section-card time-form" onSubmit={add}>
+        <h3 className="wide">Saisir mon temps</h3>
         <label>Date<input type="date" name="date" required defaultValue={today()} /></label>
         <label>
           Tâche
           <select name="task_id" defaultValue="">
-            <option value="">Sans tâche</option>
+            <option value="">Aucune tâche précise</option>
             {tasks.map((t) => <option key={t.id} value={t.id}>{text(t.data.title)}</option>)}
           </select>
         </label>
         <label>Durée (heures)<input name="hours" inputMode="decimal" required placeholder="1,5" aria-label="Durée (heures)" /></label>
-        <label>Note<input name="note" placeholder="Ce qui a été fait" /></label>
+        <label>Note (facultatif)<input name="note" placeholder="Ce qui a été fait" /></label>
         {can.seeAmounts(session.user.role) ? <label className="inline"><input type="checkbox" name="billable" defaultChecked={["time", ""].includes(text(project.data.billing))} /> Facturable</label> : <input type="hidden" name="billable" value={["time", ""].includes(text(project.data.billing)) ? "on" : ""} />}
         {error && <p className="error wide">{error}</p>}
         <div className="form-actions"><button className="primary">Enregistrer le temps</button></div>
       </form>
-      <p className="muted small">Total : {hoursLabel(total)} · dont vous : {hoursLabel(mine)}</p>
+      {sorted.length === 0 ? <p className="muted small">Aucun temps saisi sur ce projet pour l'instant.</p> : (
+        <p className="muted small time-total"><strong>{hoursLabel(total)}</strong> saisies sur ce projet, dont {hoursLabel(mine)} par vous.</p>
+      )}
       {sorted.length > 0 && (
         <div className="card table-wrap">
           <table>
@@ -803,10 +921,10 @@ function Finance({ project, data }: { project: SyncRecord; data: ReturnType<type
   });
 
   async function billTime() {
-    if (!project.data.client_id) return setMessage("Associez d'abord un client au projet.");
-    if (!fin.hourlyRate) return setMessage("Renseignez le taux de facturation horaire du projet.");
+    if (!project.data.client_id) return setMessage("Ce projet n'a pas de client : choisissez-en un dans « Modifier le projet ».");
+    if (!fin.hourlyRate) return setMessage("Ce projet n'a pas de taux de facturation : indiquez-le dans « Modifier le projet ».");
     const { lines, entryIds } = timeToInvoiceLines(project, data.tasks, data.time_entries, DEFAULT_VAT_RATE, invoiceIds, fin.hourlyRate);
-    if (lines.length === 0) return setMessage("Aucun temps facturable en attente.");
+    if (lines.length === 0) return setMessage("Aucun temps facturable à facturer.");
     const id = db.newId("fa");
     await db.write("invoices", id, { ...baseInvoice(), lines, notes: `Temps passé sur le projet ${text(project.data.name)}` });
     for (const e of entryIds) await db.write("time_entries", e, { invoice_id: id });
@@ -814,14 +932,15 @@ function Finance({ project, data }: { project: SyncRecord; data: ReturnType<type
   }
 
   async function billMilestone() {
-    if (!project.data.client_id) return setMessage("Associez d'abord un client au projet.");
+    if (!project.data.client_id) return setMessage("Ce projet n'a pas de client : choisissez-en un dans « Modifier le projet ».");
     const pct = Number(percent);
     const budget = fin.budget;
-    if (!(pct > 0 && pct <= 100) || !budget) return setMessage("Indiquez un pourcentage et un budget de projet.");
+    if (!budget) return setMessage("Ce projet n'a pas de budget : indiquez-le dans « Modifier le projet ».");
+    if (!(pct > 0 && pct <= 100)) return setMessage("Indiquez un pourcentage entre 1 et 100.");
     const id = db.newId("fa");
     await db.write("invoices", id, {
       ...baseInvoice(),
-      lines: [{ label: `${text(project.data.name)} · jalon ${pct} % du forfait`, qty: 1, unitPrice: Math.round((budget * pct) / 100), vatRate: DEFAULT_VAT_RATE }],
+      lines: [{ label: `${text(project.data.name)} · ${pct} % du forfait`, qty: 1, unitPrice: Math.round((budget * pct) / 100), vatRate: DEFAULT_VAT_RATE }],
     });
     go("invoices", id);
   }
@@ -830,7 +949,7 @@ function Finance({ project, data }: { project: SyncRecord; data: ReturnType<type
     <div className="two-cols">
       <div className="card section-card">
         <h3>Factures du projet</h3>
-        {invoices.length === 0 ? <p className="muted small">Aucune facture rattachée.</p> : (
+        {invoices.length === 0 ? <p className="muted small">Aucune facture pour ce projet.</p> : (
           <table>
             <tbody>
               {invoices.map((i) => (
@@ -847,12 +966,12 @@ function Finance({ project, data }: { project: SyncRecord; data: ReturnType<type
           <>
             <h3>Facturer</h3>
             <p className="muted small">
-              {s.unbilledHours > 0 ? `${hoursLabel(s.unbilledHours)} non facturées, soit ${formatXaf(s.unbilledValue)} HT au taux du projet.` : "Aucun temps en attente de facturation."}
+              {s.unbilledHours > 0 ? `${hoursLabel(s.unbilledHours)} pas encore facturées, soit ${formatXaf(s.unbilledValue)} HT au taux du projet.` : "Tout le temps facturable est déjà facturé."}
             </p>
             <div className="actions">
               <button className="primary" onClick={billTime} disabled={s.unbilledHours === 0}>Facturer le temps passé</button>
-              <label className="inline">Jalon <input type="number" min="1" max="100" value={percent} onChange={(e) => setPercent(e.target.value)} style={{ width: 72 }} /> %</label>
-              <button onClick={billMilestone}>Facturer un jalon du forfait</button>
+              <label className="inline">Part du budget <input type="number" min="1" max="100" value={percent} onChange={(e) => setPercent(e.target.value)} style={{ width: 72 }} /> %</label>
+              <button onClick={billMilestone}>Facturer cette part</button>
             </div>
             {message && <p className="error">{message}</p>}
           </>
@@ -860,7 +979,7 @@ function Finance({ project, data }: { project: SyncRecord; data: ReturnType<type
       </div>
       <div className="card section-card">
         <h3>Dépenses du projet</h3>
-        {expenses.length === 0 ? <p className="muted small">Aucune dépense rattachée. Choisissez ce projet lors de la saisie d'une dépense.</p> : (
+        {expenses.length === 0 ? <p className="muted small">Aucune dépense pour ce projet. Pour en ajouter une, choisissez ce projet en saisissant la dépense.</p> : (
           <table>
             <tbody>
               {expenses.map((e) => (

@@ -1189,3 +1189,55 @@ button.reason.selected .radio-dot { border: 5px solid var(--accent); }
 .stock-history li .link { text-align: left; }
 .stock-hint { display: block; margin-top: 4px; font-size: 0.75rem; color: var(--ink-3); }
 .stock-history li .link { justify-self: start; }
+
+/* ── Projets : revue UX (langage direct, parcours simplifiés) ─────── */
+.project-card-meta { display: flex; flex-direction: column; gap: 2px; }
+.project-card-empty { margin: 4px 0 0; }
+.kanban-add { max-width: 760px; }
+.kanban-add input { flex: 1; min-width: 0; }
+.kanban-add select { width: auto; flex: none; max-width: 200px; }
+.kanban-add button { flex: none; white-space: nowrap; }
+.people-filter > span { white-space: nowrap; }
+.kanban-count { min-width: 22px; height: 22px; padding: 0 6px; border-radius: 999px; background: rgb(16 29 54 / 0.07); color: var(--ink-2); font-size: 0.75rem; font-weight: 700; display: inline-grid; place-items: center; }
+.kanban-none { margin: 4px; padding: 14px 8px; border: 1px dashed var(--line-strong); border-radius: 8px; color: var(--ink-3); font-size: 0.8125rem; text-align: center; }
+.kanban-empty { margin-top: 4px; }
+.task-card .task-move { margin-top: 0; gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+.task-card .task-move button.small { min-height: 30px; height: 30px; padding: 0 10px; font-size: 0.8125rem; }
+.task-form label { display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; font-weight: 600; color: var(--ink-2); }
+.task-form-row { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.task-form-row input, .task-form-row select { min-width: 0; }
+.task-form-facts { margin: 0; }
+.member-add button { white-space: nowrap; flex: none; }
+.time-form h3, .person-form h3 { margin: 0; }
+.time-total { margin: 4px 0 10px; }
+.time-total strong { color: var(--ink); }
+.swatch.gl-today { width: 2px; border-radius: 0; background: var(--series-2); margin-right: 6px; }
+.durations-label { margin: 12px 0 8px; font-weight: 700; font-size: 0.875rem; }
+.sheet-note { margin: -2px 0 4px; text-align: center; }
+.myday-empty { display: flex; flex-direction: column; align-items: center; gap: 2px; }
+.myday-empty .empty-ico { width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); margin-bottom: 10px; }
+.myday-empty .empty-ico .pico { width: 22px; height: 22px; }
+.myday-empty .muted { max-width: 420px; }
+.myday-empty button { margin-top: 12px; }
+.myday-empty.compact { padding: 18px 0 12px; }
+.empty-state .empty-ico .pico { width: 24px; height: 24px; }
+@media (max-width: 860px) {
+  .subnav { display: flex; flex-wrap: nowrap; overflow-x: auto; }
+  .subnav button { flex: 0 0 auto; white-space: nowrap; }
+  .kanban-add { flex-wrap: wrap; }
+  .kanban-add input { flex: 1 1 100%; }
+  .kanban-add select { flex: 1; max-width: none; }
+  .kpis.five .kpi, .kpis.two .kpi { padding: 12px 14px; }
+  .kpis.five .kpi-value, .kpis.two .kpi-value { font-size: 1.125rem; margin-top: 4px; }
+  .kpis.five .kpi-label, .kpis.two .kpi-label { font-size: 0.75rem; }
+}
+/* Téléphone : colonnes empilées, plus de défilement horizontal caché. */
+@media (max-width: 640px) {
+  .kanban { grid-template-columns: 1fr; overflow: visible; }
+  .kanban-col { min-height: 0; }
+  .kanban-col.is-empty .kanban-none { display: none; }
+  .task-card { cursor: default; }
+}
+label.people-filter { flex-direction: row; align-items: center; gap: 8px; font-weight: 500; }
+.task-form-row.dates { grid-template-columns: 1fr; }
+.task-form .form-actions { flex-wrap: wrap; justify-content: flex-end; }

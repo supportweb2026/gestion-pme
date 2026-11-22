@@ -182,16 +182,17 @@ try {
   await A.page.getByLabel("Budget HT (FCFA)").fill("2000000");
   await A.page.getByLabel("Taux de facturation (FCFA / h)").fill("25000");
   await A.page.getByLabel("Coût horaire interne (FCFA / h)").fill("10000");
-  await A.page.getByRole("button", { name: "Enregistrer le projet" }).click();
+  await A.page.getByRole("button", { name: "Créer le projet" }).click();
   await A.page.getByRole("heading", { name: "Site web Total" }).waitFor();
   for (const t of ["Maquettes", "Développement"]) {
     await A.page.getByLabel("Nouvelle tâche").fill(t);
-    await A.page.getByRole("button", { name: "Ajouter" }).click();
+    await A.page.getByRole("button", { name: "Ajouter la tâche" }).click();
   }
   const card = A.page.locator(".task-card", { hasText: "Maquettes" });
-  for (let i = 0; i < 3; i++) await card.getByRole("button", { name: /Avancer/ }).click();
+  await card.getByRole("button", { name: "Commencer" }).click();
+  await card.getByRole("button", { name: "Terminer" }).click();
   await A.page.getByTestId("col-done").getByText("Maquettes").waitFor();
-  await A.page.getByRole("tab", { name: "Temps passés" }).click();
+  await A.page.getByRole("tab", { name: "Temps" }).click();
   await A.page.locator("select[name=task_id]").selectOption({ label: "Maquettes" });
   await A.page.getByLabel("Durée (heures)").fill("8");
   await A.page.getByRole("button", { name: "Enregistrer le temps" }).click();

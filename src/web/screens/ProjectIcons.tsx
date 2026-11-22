@@ -13,6 +13,8 @@ const PATHS = {
   users: ["M9 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M2 21a7 7 0 0 1 14 0", "M16 3.5a4 4 0 0 1 0 7", "M19 14.5a7 7 0 0 1 3 6.5"],
   plus: ["M12 5v14", "M5 12h14"],
   flag: ["M5 21V4", "M5 4h11l-2 4 2 4H5"],
+  folder: ["M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"],
+  list: ["M9 6h11", "M9 12h11", "M9 18h11", "M4 6h.01", "M4 12h.01", "M4 18h.01"],
 } as const;
 
 export type ProjectIconName = keyof typeof PATHS;
