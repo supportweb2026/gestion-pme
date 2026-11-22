@@ -65,24 +65,24 @@ export function checkProjectChange(existing: SyncRecord | null, change: Change):
   switch (change.tbl) {
     case "team_members": {
       if (!row.startsWith("tm-")) return "identifiant invalide";
-      if (frozen(existing, p, "user_id")) return "compte lié non modifiable";
+      if (frozen(existing, p, "user_id")) return "le compte lié à cette personne ne peut pas être changé";
       const userId = str(value("user_id"));
       if (userId && row !== teamMemberIdOf(userId)) return "identifiant invalide";
-      if (!existing && !str(p.name).trim()) return "nom obligatoire";
-      if (has(p, "name") && !str(p.name).trim()) return "nom obligatoire";
+      if (!existing && !str(p.name).trim()) return "indiquez le nom de la personne";
+      if (has(p, "name") && !str(p.name).trim()) return "indiquez le nom de la personne";
       return null;
     }
     case "cost_rates": {
       if (frozen(existing, p, "team_member_id")) return "identifiant invalide";
       if (row !== COMPANY_COST_ID && row !== costRateIdOf(str(value("team_member_id")))) return "identifiant invalide";
-      if (has(p, "hourly_cost") && !isInt(p.hourly_cost)) return "coût horaire invalide (entier positif)";
+      if (has(p, "hourly_cost") && !isInt(p.hourly_cost)) return "le coût horaire doit être un nombre entier positif";
       return null;
     }
     case "project_finance": {
       if (frozen(existing, p, "project_id")) return "une ligne ne change pas de projet";
       if (row !== financeIdOf(str(value("project_id")))) return "identifiant invalide";
       for (const k of ["sold_manual", "hourly_rate", "cost_rate", "legacy_budget"]) {
-        if (has(p, k) && !isInt(p[k])) return "montant invalide (entier positif)";
+        if (has(p, k) && !isInt(p[k])) return "le montant doit être un nombre entier positif";
       }
       return null;
     }
@@ -90,19 +90,19 @@ export function checkProjectChange(existing: SyncRecord | null, change: Change):
       if (frozen(existing, p, "project_id")) return "une ligne ne change pas de projet";
       if (frozen(existing, p, "team_member_id")) return "identifiant invalide";
       if (row !== memberIdOf(str(value("project_id")), str(value("team_member_id")))) return "identifiant invalide";
-      if (has(p, "role") && !(MEMBER_ROLES as readonly string[]).includes(str(p.role))) return "rôle de projet inconnu";
+      if (has(p, "role") && !(MEMBER_ROLES as readonly string[]).includes(str(p.role))) return "rôle dans le projet inconnu";
       return null;
     }
     case "tasks": {
       if (has(p, "status") && !(TASK_STATUSES as readonly string[]).includes(str(p.status))) return "statut de tâche inconnu";
       if (has(p, "blocked_reason") && p.blocked_reason !== "" && !(BLOCK_REASONS as readonly string[]).includes(str(p.blocked_reason))) return "motif de blocage inconnu";
-      if (has(p, "assignee_id") && p.assignee_id !== "" && !str(p.assignee_id).startsWith("tm-")) return "responsable inconnu";
+      if (has(p, "assignee_id") && p.assignee_id !== "" && !str(p.assignee_id).startsWith("tm-")) return "personne introuvable dans l'annuaire";
       return null;
     }
     case "time_entries": {
       if (has(p, "hours")) {
         const h = p.hours;
-        if (typeof h !== "number" || !Number.isFinite(h) || h <= 0 || h > 24) return "Pas plus de 24 h par jour";
+        if (typeof h !== "number" || !Number.isFinite(h) || h <= 0 || h > 24) return "pas plus de 24 h par jour";
       }
       return null;
     }
@@ -114,14 +114,14 @@ export function checkProjectChange(existing: SyncRecord | null, change: Change):
 /** Champs qu'un employé peut modifier sur une tâche existante (R9). */
 const EMPLOYEE_TASK_FIELDS = new Set(["status", "blocked", "blocked_reason", "blocked_note", "blocked_at", "blocked_by", "description", "rank", "assignee_id"]);
 
-/** Vrai si l'acteur dirige ce projet : direction, ou commanditaire / chef de projet dans l'équipe. */
+/** Vrai si l'acteur dirige ce projet : direction, ou commanditaire ou responsable du projet dans l'équipe. */
 export function leadsProject(actor: Actor, projectId: string, ctx?: ProjectContext): boolean {
   if (DIRECTION.includes(actor.role)) return true;
   if (!ctx || !projectId) return false;
   return ctx.rolesIn(projectId, actor.userId).some((r) => r === "manager" || r === "sponsor");
 }
 
-/** Vrai si l'acteur peut passer une tâche à Terminé (contrôle de À valider → Terminé, CA1.5). */
+/** Vrai si l'acteur peut passer une tâche à Terminé (vérification de À vérifier → Terminé, CA1.5). */
 export function canCloseTask(actor: Actor, projectId: string, ctx?: ProjectContext): boolean {
   if (actor.role !== "employee") return true;
   return leadsProject(actor, projectId, ctx);
@@ -139,24 +139,24 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
   switch (change.tbl) {
     case "team_members":
     case "cost_rates":
-      return direction ? null : "annuaire et coûts horaires réservés à la direction";
+      return direction ? null : "vous ne pouvez pas modifier l'annuaire ni les coûts horaires";
     case "project_members":
-      return ["admin", "director", "sales", "project_manager"].includes(role) ? null : "équipe du projet réservée au chef de projet";
+      return ["admin", "director", "sales", "project_manager"].includes(role) ? null : "vous ne pouvez pas modifier l'équipe de ce projet";
     case "projects":
-      if (has(p, DELETED) && p[DELETED] === true && !direction) return "suppression d'un projet réservée à la direction";
+      if (has(p, DELETED) && p[DELETED] === true && !direction) return "vous ne pouvez pas supprimer ce projet";
       return null;
     case "tasks": {
       if (role !== "employee") return null;
       const projectId = str(existing?.data.project_id) || str(p.project_id);
       if (leadsProject(actor, projectId, ctx)) return null;
       const own = teamMemberIdOf(actor.userId);
-      if (has(p, DELETED) && p[DELETED]) return "un employé ne supprime pas une tâche";
-      if (p.status === "done") return "un employé ne passe pas une tâche à Terminé";
-      if (has(p, "assignee_id") && p.assignee_id !== "" && p.assignee_id !== own) return "un employé ne s'attribue que ses propres tâches";
+      if (has(p, DELETED) && p[DELETED]) return "vous ne pouvez pas supprimer cette tâche";
+      if (p.status === "done") return "vous ne pouvez pas passer cette tâche à Terminé : elle sera close après vérification";
+      if (has(p, "assignee_id") && p.assignee_id !== "" && p.assignee_id !== own) return "vous pouvez attribuer une tâche seulement à vous-même";
       if (existing && !existing.data[DELETED]) {
-        if (has(p, "assignee_id") && p.assignee_id === "" && str(existing.data.assignee_id) !== own) return "un employé ne change pas le responsable d'une tâche";
+        if (has(p, "assignee_id") && p.assignee_id === "" && str(existing.data.assignee_id) !== own) return "vous ne pouvez pas retirer cette tâche à la personne qui en est chargée";
         const forbidden = Object.keys(p).filter((k) => !EMPLOYEE_TASK_FIELDS.has(k));
-        if (forbidden.length) return `un employé ne modifie que le suivi de la tâche (${forbidden.join(", ")})`;
+        if (forbidden.length) return "vous pouvez modifier seulement l'avancement et la description de cette tâche";
       }
       return null;
     }
@@ -165,13 +165,13 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
       const projectId = str(p.project_id) || str(existing?.data.project_id);
       if (!existing && projectId && ctx) {
         const status = str(ctx.project(projectId)?.data.status);
-        if (status === "done" || status === "cancelled") return "projet terminé : saisie de temps impossible";
+        if (status === "done" || status === "cancelled") return "ce projet est terminé : vous ne pouvez plus y saisir de temps";
       }
       if (role === "employee" && has(p, "date")) {
         // Référence : la date de l'appareil au moment de la saisie (HLC), pas celle du serveur.
         const ms = decodeHlc(change.hlc).ms - 7 * 86_400_000;
         const limit = new Date(ms).toISOString().slice(0, 10);
-        if (str(p.date) < limit) return "saisie limitée aux 7 derniers jours";
+        if (str(p.date) < limit) return "vous pouvez saisir du temps sur les 7 derniers jours seulement";
       }
       return null;
     }

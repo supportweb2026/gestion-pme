@@ -5,6 +5,7 @@ import { encodeHlc } from "../src/shared/hlc.ts";
 import { canCloseTask, redactPatch, redactRecord, type ProjectContext } from "../src/shared/projectRules.ts";
 import { averageCost, checkDayHours, chronoRounding, hoursOn, hoursWeek, isoWeek, matchTeamMember, myDay, teamSync } from "../src/shared/projectControl.ts";
 import { entryCostRate, financeOf, projectStats } from "../src/shared/projects.ts";
+import { sentence } from "../src/web/local/guard.ts";
 
 const NOW = Date.parse("2026-11-23T09:00:00Z");
 const change = (tbl: Change["tbl"], row: string, patch: Record<string, unknown>, ms = NOW): Change => ({ id: "op-12345678", tbl, row, patch, hlc: encodeHlc(ms, 0, "dev-a"), device: "dev-a" });
@@ -52,33 +53,33 @@ test("R13 : énumérations et bornes des tâches et des temps", () => {
   assert.match(checkChange(null, change("tasks", "tsk-1", { status: "fini" }))!, /statut/);
   assert.match(checkChange(null, change("tasks", "tsk-1", { blocked: true, blocked_reason: "pluie" }))!, /motif/);
   assert.equal(checkChange(null, change("tasks", "tsk-1", { blocked: true, blocked_reason: "material" })), null);
-  assert.match(checkChange(null, change("tasks", "tsk-1", { assignee_id: "Paul" }))!, /responsable/);
+  assert.match(checkChange(null, change("tasks", "tsk-1", { assignee_id: "Paul" }))!, /introuvable dans l'annuaire/);
   assert.match(checkChange(null, change("time_entries", "tmp-1", { hours: 25 }))!, /24 h/);
   assert.match(checkChange(null, change("time_entries", "tmp-1", { hours: 0 }))!, /24 h/);
 });
 
-test("Annuaire et coûts : écriture réservée à la direction ; équipe du projet au chef de projet", () => {
+test("Annuaire et coûts : écriture réservée à la direction ; équipe du projet au responsable", () => {
   const c = change("team_members", "tm-x", { name: "X" });
   assert.equal(checkPermission(director, null, c), null);
-  assert.match(checkPermission(pm, null, c)!, /direction|rôle/);
-  assert.match(checkPermission({ userId: "u-c", role: "accountant" }, null, change("cost_rates", "cr-company", { hourly_cost: 1 }))!, /direction/);
+  assert.match(sentence(checkPermission(pm, null, c)!), /^Vous ne pouvez pas (faire cette modification|modifier l'annuaire)\.$/);
+  assert.match(checkPermission({ userId: "u-c", role: "accountant" }, null, change("cost_rates", "cr-company", { hourly_cost: 1 }))!, /coûts horaires/);
   const m = change("project_members", "pm-prj-1-tm-x", { project_id: "prj-1", team_member_id: "tm-x", role: "member" });
   assert.equal(checkPermission(pm, null, m), null);
   assert.ok(checkPermission(emp, null, m), "un employé ne compose pas l'équipe");
-  assert.match(checkPermission({ userId: "u-c", role: "accountant" }, null, m)!, /chef de projet/);
+  assert.match(checkPermission({ userId: "u-c", role: "accountant" }, null, m)!, /vous ne pouvez pas modifier l'équipe de ce projet/);
   assert.ok(checkPermission(emp, null, change("project_finance", "fin-prj-1", { project_id: "prj-1" })), "un employé n'écrit aucun montant");
-  assert.match(checkPermission(pm, null, change("projects", "prj-1", { _deleted: true }))!, /direction/);
+  assert.match(checkPermission(pm, null, change("projects", "prj-1", { _deleted: true }))!, /vous ne pouvez pas supprimer ce projet/);
 });
 
-test("R9 / CA1.5 : l'employé amène sa tâche jusqu'à À valider, seul le chef de projet la passe à Terminé", () => {
+test("R9 / CA1.5 : l'employé amène sa tâche jusqu'à À vérifier, seul le responsable la passe à Terminé", () => {
   const task = rec("tasks", "tsk-1", { project_id: "prj-1", title: "Cloisons", status: "review", assignee_id: "tm-u-junior" });
   const toDone = change("tasks", "tsk-1", { status: "done" });
-  assert.match(checkPermission(emp, task, toDone, "", ctx())!, /Terminé/);
+  assert.match(checkPermission(emp, task, toDone, "", ctx())!, /passer cette tâche à Terminé : elle sera close après vérification/);
   assert.equal(checkPermission(emp, task, change("tasks", "tsk-1", { status: "review" }), "", ctx()), null);
   assert.equal(checkPermission(emp, task, change("tasks", "tsk-1", { blocked: true, blocked_reason: "material", blocked_at: "x", blocked_by: "u-junior" }), "", ctx()), null);
-  assert.match(checkPermission(emp, task, change("tasks", "tsk-1", { estimate_hours: 2 }), "", ctx())!, /suivi/);
-  assert.match(checkPermission(emp, task, change("tasks", "tsk-1", { _deleted: true }), "", ctx())!, /supprime/);
-  assert.match(checkPermission(emp, task, change("tasks", "tsk-1", { assignee_id: "tm-u-autre" }), "", ctx())!, /attribue/);
+  assert.match(checkPermission(emp, task, change("tasks", "tsk-1", { estimate_hours: 2 }), "", ctx())!, /seulement l'avancement et la description/);
+  assert.match(checkPermission(emp, task, change("tasks", "tsk-1", { _deleted: true }), "", ctx())!, /vous ne pouvez pas supprimer cette tâche/);
+  assert.match(checkPermission(emp, task, change("tasks", "tsk-1", { assignee_id: "tm-u-autre" }), "", ctx())!, /attribuer une tâche seulement à vous-même/);
   assert.equal(checkPermission(emp, null, change("tasks", "tsk-2", { project_id: "prj-1", title: "Nouvelle", status: "todo" }), "", ctx()), null);
   assert.match(checkPermission(emp, null, change("tasks", "tsk-3", { project_id: "prj-1", title: "N", status: "done" }), "", ctx())!, /Terminé/);
   // Le chef de projet (rôle Gestia ou chef désigné dans l'équipe) contrôle.
@@ -96,7 +97,7 @@ test("R12 : saisie de temps limitée à 7 jours pour l'employé, refusée sur un
   assert.match(checkPermission(emp, null, entry("2026-11-15"))!, /7 derniers jours/);
   assert.equal(checkPermission(director, null, entry("2026-10-01")), null, "le chef de projet saisit pour lui au-delà");
   const done = ctx([], [rec("projects", "prj-9", { status: "done" })]);
-  assert.match(checkPermission(director, null, entry("2026-11-23", "prj-9"), "", done)!, /terminé/);
+  assert.match(checkPermission(director, null, entry("2026-11-23", "prj-9"), "", done)!, /ce projet est terminé/);
 });
 
 test("Confidentialité (CA1.4) : montants retirés à l'envoi pour l'employé, historique compris", () => {
@@ -199,4 +200,22 @@ test("Heures (CA1.3) : plafond de 24 h par jour, confirmation au-delà de 12 h, 
   const r = chronoRounding((3 * 60 + 40) * 60_000);
   assert.deepEqual([r.down, r.up], [3.5, 4]);
   assert.deepEqual([chronoRounding(5 * 60_000).down, chronoRounding(5 * 60_000).up], [0.5, 0.5]);
+});
+
+test("Messages de refus à l'écran : une phrase qui dit le fait, sans renvoyer vers un rôle", () => {
+  assert.equal(sentence("votre rôle ne permet pas cette modification"), "Vous ne pouvez pas faire cette modification.");
+  assert.equal(sentence("un employé ne saisit que ses propres temps"), "Vous pouvez saisir ou supprimer seulement votre propre temps.");
+  assert.equal(sentence("pas plus de 24 h par jour"), "Pas plus de 24 h par jour.");
+  const task = rec("tasks", "tsk-1", { project_id: "prj-1", title: "Cloisons", status: "review", assignee_id: "tm-u-junior" });
+  const emp = { userId: "u-junior", role: "employee" };
+  const reasons = [
+    checkPermission(emp, task, change("tasks", "tsk-1", { status: "done" })),
+    checkPermission(emp, task, change("tasks", "tsk-1", { estimate_hours: 2 })),
+    checkPermission(emp, null, change("project_members", "pm-prj-1-tm-x", { project_id: "prj-1", team_member_id: "tm-x", role: "member" })),
+    checkPermission({ userId: "u-p", role: "project_manager" }, null, change("projects", "prj-1", { _deleted: true })),
+  ];
+  for (const r of reasons) {
+    assert.ok(r, "refus attendu");
+    assert.doesNotMatch(sentence(r), /chef de projet|direction|demandez|responsable verra|un employé/i, r);
+  }
 });

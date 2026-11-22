@@ -18,7 +18,20 @@ export function localProjectContext(projects: SyncRecord[], members: SyncRecord[
   };
 }
 
-const sentence = (m: string) => m.charAt(0).toUpperCase() + m.slice(1);
+/**
+ * Messages généraux de `checkPermission` (partagés avec les autres modules),
+ * reformulés pour l'écran : dire ce qui se passe, sans renvoyer vers un rôle.
+ */
+const ON_SCREEN: Record<string, string> = {
+  "votre rôle ne permet pas cette modification": "vous ne pouvez pas faire cette modification",
+  "un employé ne saisit que ses propres temps": "vous pouvez saisir ou supprimer seulement votre propre temps",
+};
+
+/** Raison de refus présentée comme une phrase : majuscule initiale, point final. */
+export const sentence = (m: string) => {
+  const t = (ON_SCREEN[m] ?? m).trim();
+  return `${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?]$/.test(t) ? "" : "."}`;
+};
 
 export async function guardedWrite(db: LocalDb, actor: Actor, tbl: SyncTable, id: string, patch: Fields, opts: { ctx?: ProjectContext; closedUntil?: string } = {}): Promise<void> {
   const existing = await db.get(tbl, id);

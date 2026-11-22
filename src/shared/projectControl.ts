@@ -28,9 +28,9 @@ export const BLOCK_LABELS: Record<string, string> = {
 
 /** Libellés des rôles dans un projet. */
 export const MEMBER_ROLE_LABELS: Record<string, string> = {
-  manager: "Chef de projet",
+  manager: "Responsable du projet",
   sponsor: "Commanditaire",
-  member: "Équipe",
+  member: "Membre",
 };
 
 /**
@@ -100,7 +100,7 @@ export function hoursWeek(userId: string, entries: Rec[], date: string): number 
 /** Plafond de RG12.1 : refus au-delà de 24 h par jour, confirmation au-delà de 12 h. */
 export function checkDayHours(already: number, adding: number): { ok: false; message: string } | { ok: true; confirm: boolean } {
   const total = Math.round((already + adding) * 100) / 100;
-  if (!(adding > 0)) return { ok: false, message: "Durée invalide." };
+  if (!(adding > 0)) return { ok: false, message: "Indiquez une durée supérieure à 0 h." };
   if (total > 24) return { ok: false, message: "Pas plus de 24 h par jour" };
   return { ok: true, confirm: total > 12 };
 }
@@ -124,8 +124,7 @@ export function isoWeek(date: string): string {
 /**
  * Ma journée : tâches ouvertes de la personne, triées (priorités de la semaine,
  * en retard, dues aujourd'hui, en cours, qui commencent aujourd'hui, puis les autres
- * tâches à faire), limitées à `limit`. Les tâches À valider attendent le contrôle
- * du chef de projet : elles passent dans « autres ». Projets terminés ou annulés exclus.
+ * tâches à faire), limitées à `limit`. Les tâches À vérifier attendent leur vérification : elles passent dans « autres ». Projets terminés ou annulés exclus.
  */
 export function myDay<T extends Rec>(teamMemberId: string, all: { tasks: T[]; projects: Rec[] }, today: string, limit = 7): { today: DayItem<T>[]; others: DayItem<T>[]; review: T[] } {
   const closed = new Set(all.projects.filter((p) => p.data._deleted || ["done", "cancelled"].includes(str(p.data.status))).map((p) => p.id));
