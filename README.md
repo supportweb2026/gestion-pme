@@ -21,6 +21,17 @@ Adresse : **https://gestia.ido.ga** — éditeur : IDO (Libreville).
 - export complet des données (JSON) par la direction ; stockage persistant demandé sur téléphone,
   bouton « Installer », coordonnées du support affichées (celles des réglages de l'éditeur).
 
+Facturation finalisée (MVP) :
+
+- **remise par ligne** (en %), déduite avant TVA, reprise partout (écran, PDF, comptabilité, TVA) ;
+- **vrai fichier PDF** fabriqué sur l'appareil, même hors ligne (« Télécharger le PDF ») : en-tête et logo,
+  client, remises, TVA ventilée par taux, montant en lettres, règlement, mentions légales, pages numérotées ;
+- **partage du PDF en pièce jointe** sur téléphone (WhatsApp, Gmail, Outlook…) avec le message prérempli ;
+- **relance des factures échues** : message de relance par WhatsApp, e-mail ou PDF, relances comptées sur la facture ;
+- **dupliquer** un devis ou une facture en nouveau brouillon ;
+- recette de bout en bout : `node test/e2e/facturation.mjs` (création, remise, numérotation, PDF relu,
+  envoi, encaissements, relance, hors ligne).
+
 Lot 4 — finition et sécurité :
 
 - chaque appareil ne reçoit que les données de son rôle (filtrage par le serveur) ;
@@ -99,6 +110,7 @@ npm install
 npm test                 # tests unitaires + API (Node 22.6+)
 npm run local            # application complète en local : http://localhost:8787
 node test/e2e/two-devices.mjs   # deux navigateurs, coupure réseau (Playwright requis)
+node test/e2e/facturation.mjs   # recette facturation, PDF relu avec pdftotext (poppler-utils)
 ```
 
 Sans accès au registre npm, `bun dev/build-bun.ts` construit `dist/` avec Bun.
@@ -126,7 +138,9 @@ Les abonnements sont encaissés hors ligne (virement, mobile money) puis enregis
 - TVA calculée au régime des débits ; régime, taxes annexes et formulaire officiel à
   faire valider par le comptable. Pas encore d'amortissements ni de paie automatisés.
 - Un changement de rôle prend effet à la synchronisation suivante de la personne.
-- Pas d'envoi d'e-mail (offre gratuite) : un mot de passe oublié passe par l'administrateur
+- Pas d'envoi d'e-mail par le serveur (offre gratuite) : les documents partent depuis l'appareil
+  (PDF partagé sur téléphone ; sur ordinateur, PDF téléchargé puis joint au message prérempli).
+  Un mot de passe oublié passe par l'administrateur
   de l'entreprise, ou par l'équipe Gestia pour un administrateur.
 - Paiement des abonnements non automatisé (pas de passerelle de paiement en ligne).
 - Offre gratuite Cloudflare : 5 millions de lectures et 100 000 écritures D1 par jour, 5 Go

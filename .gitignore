@@ -6,3 +6,5 @@ dist/
 *.sqlite-*
 dev/data/
 test-results/
+.env
+.env.*

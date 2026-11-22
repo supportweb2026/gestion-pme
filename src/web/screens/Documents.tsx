@@ -12,6 +12,7 @@ import { CURRENCIES, decimalsOf, formatMoney, rateFor } from "../../shared/curre
 import { isNumbered, type DocTable, type SyncRecord } from "../../shared/sync.ts";
 import { currencyOf, invoiceSituations, linesOf, QUOTE_LABELS, quoteStatus, rateOf, SITUATION_LABELS, totalsOf, type Situation } from "../ledger.ts";
 import { PrintView } from "./PrintView.tsx";
+import { canShareFiles, downloadFile, makePdfFile, shareFile } from "../pdfActions.ts";
 
 interface DocConfig {
   title: string;
@@ -229,6 +230,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     if (!clientId) return setMessage("Choisissez un client.");
     if (cleanLines().length === 0) return setMessage("Ajoutez au moins une ligne.");
     if (cleanLines().some((l) => l.qty <= 0 || l.unitPrice < 0)) return setMessage("Vérifiez les quantités et les prix.");
+    if (cleanLines().some((l) => (l.discount ?? 0) < 0 || (l.discount ?? 0) > 100)) return setMessage("Une remise doit être comprise entre 0 et 100 %.");
+    if (cleanLines().some((l) => l.vatRate < 0 || l.vatRate > 100)) return setMessage("Vérifiez les taux de TVA.");
     if (kind === "credit_notes" && sourceInvoice) {
       const others = credits
         .filter((c) => c.id !== id && c.data.invoice_id === sourceInvoice.id && c.data.status === "validated")
@@ -294,6 +297,26 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     go("credit_notes", cnId);
   }
 
+  /** Nouveau brouillon reprenant client, lignes, devise et notes, daté du jour. */
+  async function duplicate() {
+    const newId = db.newId(kind === "quotes" ? "dv" : "fa");
+    const patch: Record<string, unknown> = {
+      status: "draft",
+      client_id: clientId,
+      date: today(),
+      lines: cleanLines(),
+      notes: notes.trim(),
+      currency,
+      rate: currency === "XAF" ? 1 : rate,
+      project_id: projectId,
+      created_by: session.user.id,
+    };
+    if (kind === "invoices") patch.due_date = addDays(today(), paymentDays);
+    if (kind === "quotes") patch.valid_until = addDays(today(), 30);
+    await db.write(kind, newId, patch);
+    go(kind, newId);
+  }
+
   async function removeDraft() {
     if (!confirm("Supprimer ce brouillon ?")) return;
     await db.remove(kind, id);
@@ -311,14 +334,25 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
           <button className="link" onClick={onClose}>← {cfg.title}</button>
           <h2>{title}</h2>
         </div>
+        {record && kind !== "credit_notes" && !numbered && (
+          <div className="actions"><button className="ghost" onClick={duplicate}>Dupliquer</button></div>
+        )}
         {numbered && (
           <div className="actions">
-            <button onClick={() => setPrinting(true)}>Imprimer / PDF</button>
-            <ShareButtons kind={kind} record={record!} client={client} gross={totals.gross} due={situation?.due} currency={currency} />
+            <button onClick={() => setPrinting(true)}>Aperçu / imprimer</button>
+            {kind !== "credit_notes" && <button className="ghost" onClick={duplicate}>Dupliquer</button>}
+            <ShareButtons kind={kind} record={record!} client={client} gross={totals.gross} situation={situation} currency={currency} />
           </div>
         )}
       </div>
 
+      {numbered && (record!.data.sent_at || record!.data.reminded_at) ? (
+        <p className="muted small" data-testid="sent-info">
+          {record!.data.sent_at ? `Envoyé le ${formatDate(text(record!.data.sent_at).slice(0, 10))}` : ""}
+          {record!.data.sent_at && record!.data.reminded_at ? " · " : ""}
+          {record!.data.reminded_at ? `Relancé ${Number(record!.data.reminders ?? 1)} fois, dernière relance le ${formatDate(text(record!.data.reminded_at).slice(0, 10))}` : ""}
+        </p>
+      ) : null}
       {locked && (
         <p className="notice">Date dans une période clôturée (jusqu'au {formatDate(closedUntil)}) : choisissez une date ultérieure.</p>
       )}
@@ -382,7 +416,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
           <table className="lines">
             <thead>
               <tr>
-                <th>Désignation</th><th className="num">Qté</th><th className="num">Prix unitaire HT</th><th className="num">TVA %</th>
+                <th>Désignation</th><th className="num">Qté</th><th className="num">Prix unitaire HT</th><th className="num">Remise %</th><th className="num">TVA %</th>
                 <th className="right">Montant HT</th>{editable && <th />}
               </tr>
             </thead>
@@ -392,6 +426,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                   <td><input aria-label="Désignation" list="articles-list" value={l.label} onChange={(e) => pickArticle(i, e.target.value)} disabled={!editable} /></td>
                   <td className="num"><input aria-label="Quantité" type="number" min="0" step="any" value={l.qty} onChange={(e) => update(i, { qty: Number(e.target.value) })} disabled={!editable} /></td>
                   <td className="num"><input aria-label="Prix unitaire" type="number" min="0" step={decimals ? "0.01" : "1"} value={l.unitPrice} onChange={(e) => update(i, { unitPrice: Number(e.target.value) })} disabled={!editable} /></td>
+                  <td className="num"><input aria-label="Remise" type="number" min="0" max="100" step="any" value={l.discount ?? 0} onChange={(e) => update(i, { discount: Number(e.target.value) || undefined })} disabled={!editable} /></td>
                   <td className="num"><input aria-label="TVA" type="number" min="0" step="any" value={l.vatRate} onChange={(e) => update(i, { vatRate: Number(e.target.value) })} disabled={!editable} /></td>
                   <td className="right mono">{fm(lineNet(l, decimals))}</td>
                   {editable && (
@@ -410,8 +445,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
             <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={!editable} />
           </label>
           <dl className="totals">
-            <dt>Total HT</dt><dd className="mono">{fm(totals.net)}</dd>
-            <dt>TVA</dt><dd className="mono">{fm(totals.vat)}</dd>
+            {totals.discount > 0 && (<><dt>Remises</dt><dd className="mono" data-testid="discount">-{fm(totals.discount)}</dd></>)}
+            <dt>Total HT</dt><dd className="mono" data-testid="total-ht">{fm(totals.net)}</dd>
+            <dt>TVA</dt><dd className="mono" data-testid="total-vat">{fm(totals.vat)}</dd>
             <dt className="strong">Total TTC</dt><dd className="mono strong" data-testid="total-ttc">{fm(totals.gross)}</dd>
             {currency !== "XAF" && (<><dt>Contre-valeur</dt><dd className="mono muted">{formatMoney(Math.round(totals.gross * rate), "XAF")}</dd></>)}
             {situation && situation.status !== "draft" && (
@@ -562,41 +598,87 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
   );
 }
 
-/** Partage par WhatsApp ou e-mail : le message résume le document, le PDF se joint depuis l'impression. */
-function ShareButtons({ kind, record, client, gross, due, currency }: {
-  kind: DocTable; record: SyncRecord; client: SyncRecord | null; gross: number; due?: number; currency: string;
+/**
+ * Envoi du document : PDF téléchargé ou partagé en pièce jointe (téléphone),
+ * message WhatsApp ou e-mail prérempli. Une facture en retard donne un message
+ * de relance, et la relance est notée sur la facture.
+ */
+function ShareButtons({ kind, record, client, gross, situation, currency }: {
+  kind: DocTable; record: SyncRecord; client: SyncRecord | null; gross: number; situation?: Situation; currency: string;
 }) {
   const { db } = useApp();
   const settings = useSettings();
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const company = text(settings.name);
   const number = text(record.data.number);
-  const what = kind === "quotes" ? "notre devis" : kind === "credit_notes" ? "notre avoir" : "notre facture";
-  const lines = [
-    `Bonjour${client ? ` ${text(client.data.name)}` : ""},`,
-    `Veuillez trouver ${what} ${number} d'un montant de ${formatMoney(gross, currency)}.`,
-  ];
-  if (kind === "invoices" && due !== undefined && due > 0) {
-    lines.push(`Reste à régler : ${formatMoney(due, currency)}${record.data.due_date ? `, échéance le ${formatDate(record.data.due_date)}` : ""}.`);
-  }
-  if (kind === "quotes" && record.data.valid_until) lines.push(`Offre valable jusqu'au ${formatDate(record.data.valid_until)}.`);
-  lines.push("Cordialement,", company);
-  const message = lines.filter(Boolean).join("\n");
+  const due = situation?.due;
+  const reminder = kind === "invoices" && situation?.status === "overdue";
+  const message = documentMessage({ kind, number, client: text(client?.data.name), company, gross, due, currency, dueDate: text(record.data.due_date), validUntil: text(record.data.valid_until), reminder });
 
   // Numéro au format international uniquement (+241…) : sinon WhatsApp laisse choisir le contact.
   const phone = text(client?.data.phone).replace(/[^\d+]/g, "");
   const intl = phone.startsWith("+") ? phone.slice(1) : phone.startsWith("00") ? phone.slice(2) : "";
   const wa = `https://wa.me/${intl}?text=${encodeURIComponent(message)}`;
-  const subject = `${kind === "quotes" ? "Devis" : kind === "credit_notes" ? "Avoir" : "Facture"} ${number}${company ? ` - ${company}` : ""}`;
+  const docName = kind === "quotes" ? "Devis" : kind === "credit_notes" ? "Avoir" : "Facture";
+  const subject = `${reminder ? "Relance : " : ""}${docName} ${number}${company ? ` - ${company}` : ""}`;
   const mail = `mailto:${encodeURIComponent(text(client?.data.email))}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`;
 
-  // On garde la date du premier envoi.
+  // On garde la date du premier envoi ; chaque relance est comptée.
   const markSent = () => {
-    if (!record.data.sent_at) void db.write(kind, record.id, { sent_at: new Date().toISOString() });
+    if (reminder) {
+      void db.write(kind, record.id, { reminded_at: new Date().toISOString(), reminders: Number(record.data.reminders ?? 0) + 1 });
+    } else if (!record.data.sent_at) {
+      void db.write(kind, record.id, { sent_at: new Date().toISOString() });
+    }
   };
+
+  async function pdf(mode: "download" | "share") {
+    setError(null);
+    setBusy(true);
+    try {
+      const file = await makePdfFile({ kind, doc: record.data, client: client?.data ?? null, company: settings, situation });
+      if (mode === "download") return downloadFile(file);
+      if (await shareFile(file, subject, message)) markSent();
+    } catch (e) {
+      setError(`PDF impossible : ${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <>
-      <a className="button" href={wa} target="_blank" rel="noopener noreferrer" onClick={markSent}>WhatsApp</a>
-      <a className="button" href={mail} onClick={markSent}>E-mail</a>
+      <button onClick={() => pdf("download")} disabled={busy}>Télécharger le PDF</button>
+      {canShare && <button onClick={() => pdf("share")} disabled={busy}>{reminder ? "Relancer (PDF)" : "Partager le PDF"}</button>}
+      <a className="button" href={wa} target="_blank" rel="noopener noreferrer" onClick={markSent}>{reminder ? "Relancer par WhatsApp" : "WhatsApp"}</a>
+      <a className="button" href={mail} onClick={markSent}>{reminder ? "Relancer par e-mail" : "E-mail"}</a>
+      {error && <span className="error" role="alert">{error}</span>}
     </>
   );
+}
+
+const canShare = canShareFiles();
+
+/** Message d'accompagnement d'un document, ou de relance d'une facture échue. */
+export function documentMessage(p: {
+  kind: DocTable; number: string; client: string; company: string; gross: number; due?: number; currency: string;
+  dueDate?: string; validUntil?: string; reminder?: boolean;
+}): string {
+  const lines = [`Bonjour${p.client ? ` ${p.client}` : ""},`];
+  if (p.reminder && p.due !== undefined) {
+    lines.push(
+      `Sauf erreur de notre part, notre facture ${p.number}${p.dueDate ? ` échue le ${formatDate(p.dueDate)}` : ""} reste à régler pour ${formatMoney(p.due, p.currency)}.`,
+      "Merci de bien vouloir procéder au règlement, ou de nous indiquer la date prévue. Si le paiement a déjà été effectué, merci de ne pas tenir compte de ce message.",
+    );
+  } else {
+    const what = p.kind === "quotes" ? "notre devis" : p.kind === "credit_notes" ? "notre avoir" : "notre facture";
+    lines.push(`Veuillez trouver ${what} ${p.number} d'un montant de ${formatMoney(p.gross, p.currency)}.`);
+    if (p.kind === "invoices" && p.due !== undefined && p.due > 0) {
+      lines.push(`Reste à régler : ${formatMoney(p.due, p.currency)}${p.dueDate ? `, échéance le ${formatDate(p.dueDate)}` : ""}.`);
+    }
+    if (p.kind === "quotes" && p.validUntil) lines.push(`Offre valable jusqu'au ${formatDate(p.validUntil)}.`);
+  }
+  lines.push("Cordialement,", p.company);
+  return lines.filter(Boolean).join("\n");
 }

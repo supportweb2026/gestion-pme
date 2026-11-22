@@ -3,9 +3,10 @@
  * d'impression du navigateur, qui propose « Enregistrer au format PDF » :
  * aucun service externe, fonctionne hors ligne.
  */
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
+import { downloadFile, makePdfFile } from "../pdfActions.ts";
 import { formatDate, text, useSettings } from "../context.ts";
-import { computeTotals, lineNet, lineVat, type InvoiceLine } from "../../shared/invoice.ts";
+import { computeTotals, lineDiscount, lineNet, lineVat, type InvoiceLine } from "../../shared/invoice.ts";
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../../shared/currency.ts";
 import type { DocTable, SyncRecord } from "../../shared/sync.ts";
 import type { Situation } from "../ledger.ts";
@@ -32,12 +33,23 @@ export function PrintView({ kind, record, client, situation, onClose }: {
   const formatXaf = (n: number) => formatMoney(n, currency);
   const c = client?.data ?? {};
   const number = text(record.data.number);
+  const hasDiscount = lines.some((l) => lineDiscount(l) > 0);
 
   // TVA ventilée par taux, comme l'exige une facture.
   const vatByRate = new Map<number, { base: number; vat: number }>();
   for (const l of lines) {
     const cur = vatByRate.get(l.vatRate) ?? { base: 0, vat: 0 };
     vatByRate.set(l.vatRate, { base: cur.base + lineNet(l, decimals), vat: cur.vat + lineVat(l, decimals) });
+  }
+
+  const [busy, setBusy] = useState(false);
+  async function downloadPdf() {
+    setBusy(true);
+    try {
+      downloadFile(await makePdfFile({ kind, doc: record.data, client: client?.data ?? null, company: s, situation }));
+    } finally {
+      setBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -55,7 +67,8 @@ export function PrintView({ kind, record, client, situation, onClose }: {
     <div className="print-overlay" role="dialog" aria-label={`Aperçu ${TITLES[kind]} ${number}`}>
       <div className="print-toolbar">
         <span>Aperçu avant impression</span>
-        <button className="primary" onClick={() => window.print()}>Imprimer / enregistrer en PDF</button>
+        <button className="primary" onClick={downloadPdf} disabled={busy}>Télécharger le PDF</button>
+        <button onClick={() => window.print()}>Imprimer</button>
         <button onClick={onClose}>Fermer</button>
       </div>
       <article className="print-sheet">
@@ -84,7 +97,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
 
         <table className="ps-lines">
           <thead>
-            <tr><th>Désignation</th><th className="r">Qté</th><th className="r">P.U. HT</th><th className="r">TVA</th><th className="r">Montant HT</th></tr>
+            <tr><th>Désignation</th><th className="r">Qté</th><th className="r">P.U. HT</th>{hasDiscount && <th className="r">Remise</th>}<th className="r">TVA</th><th className="r">Montant HT</th></tr>
           </thead>
           <tbody>
             {lines.map((l, i) => (
@@ -92,6 +105,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
                 <td>{l.label}</td>
                 <td className="r">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td>
                 <td className="r">{formatXaf(l.unitPrice)}</td>
+                {hasDiscount && <td className="r">{lineDiscount(l) ? `${lineDiscount(l)} %` : ""}</td>}
                 <td className="r">{l.vatRate} %</td>
                 <td className="r">{formatXaf(lineNet(l, decimals))}</td>
               </tr>
@@ -106,6 +120,12 @@ export function PrintView({ kind, record, client, situation, onClose }: {
           </div>
           <table className="ps-totals">
             <tbody>
+              {totals.discount > 0 && (
+                <>
+                  <tr><td>Total brut HT</td><td className="r">{formatXaf(totals.net + totals.discount)}</td></tr>
+                  <tr><td>Remises</td><td className="r">-{formatXaf(totals.discount)}</td></tr>
+                </>
+              )}
               <tr><td>Total HT</td><td className="r">{formatXaf(totals.net)}</td></tr>
               {[...vatByRate.entries()].map(([rate, v]) => (
                 <tr key={rate}><td>TVA {rate} % sur {formatXaf(v.base)}</td><td className="r">{formatXaf(v.vat)}</td></tr>

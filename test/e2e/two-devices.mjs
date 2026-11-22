@@ -158,7 +158,7 @@ try {
   await expectDue(B.page, "57 000 FCFA");
 
   step("Impression : en-tête entreprise, montant en lettres");
-  await A.page.getByRole("button", { name: "Imprimer / PDF" }).click();
+  await A.page.getByRole("button", { name: "Aperçu / imprimer" }).click();
   await A.page.getByText("trois cent cinquante-quatre mille francs CFA").waitFor();
   await A.page.getByText("NIF 2026 0001 G").waitFor();
   await shot(A.page, "facture-apercu.png");

@@ -82,9 +82,22 @@ test("Facture : totaux HT, TVA 18 %, TTC en FCFA", () => {
     { label: "Prestation", qty: 2, unitPrice: 150000, vatRate: 18 },
     { label: "Déplacement", qty: 1, unitPrice: 25000, vatRate: 18 },
   ]);
-  assert.deepEqual(t, { net: 325000, vat: 58500, gross: 383500 });
+  assert.deepEqual(t, { discount: 0, net: 325000, vat: 58500, gross: 383500 });
   assert.equal(formatXaf(1250000), "1 250 000 FCFA");
   assert.equal(formatInvoiceNumber("FA-2026", 42), "FA-2026-00042");
+});
+
+test("Facture : remise par ligne déduite avant TVA, bornée à 0-100 %", () => {
+  const t = computeTotals([
+    { label: "Licence", qty: 3, unitPrice: 100000, vatRate: 18, discount: 10 },
+    { label: "Formation", qty: 1, unitPrice: 50000, vatRate: 18 },
+    { label: "Exonéré", qty: 1, unitPrice: 10000, vatRate: 0, discount: 150 },
+  ]);
+  // 300 000 - 10 % = 270 000 ; + 50 000 ; la remise de 150 % est ramenée à 100 %.
+  assert.deepEqual(t, { discount: 40000, net: 320000, vat: 57600, gross: 377600 });
+  // En euros, au centime : 3 × 19,99 - 7,5 % = 55,47.
+  const eur = computeTotals([{ label: "x", qty: 3, unitPrice: 19.99, vatRate: 18, discount: 7.5 }], 2);
+  assert.deepEqual(eur, { discount: 4.5, net: 55.47, vat: 9.98, gross: 65.45 });
 });
 
 import { amountInWords, invoiceBalance, addDays } from "../src/shared/invoice.ts";
