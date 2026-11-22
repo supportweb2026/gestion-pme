@@ -923,3 +923,18 @@ html { scrollbar-width: thin; scrollbar-color: #C5CCD7 transparent; }
 /* Saisie de facture : prix unitaire assez large pour des millions, en-têtes sur une ligne. */
 table.lines th { white-space: nowrap; }
 table.lines .num:not(.qty):not(.pct) { width: 136px; }
+/* ── Lot 3 : fiscalité ─────────────────────────────────────────────── */
+label.check-inline { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px; text-align: left; font-weight: 500; color: var(--ink); }
+label.check-inline input { flex: none; margin: 0; }
+.fiscal-card .form-grid label:has(input[inputmode="decimal"]) { max-width: 220px; }
+.fiscal-card .hint { font-size: 0.8125rem; margin: 0; }
+.fiscal-card fieldset { border: 0; border-top: 1px solid var(--line, #E5E7EB); margin: 16px 0 0; padding: 16px 0 0; display: grid; gap: 12px; }
+.fiscal-card legend { font-weight: 600; padding: 0 8px 0 0; }
+.withholding-rows { display: grid; gap: 8px; }
+.withholding-row { display: grid; grid-template-columns: minmax(0, 1fr) 90px auto auto; gap: 8px; align-items: center; }
+.doc-fields-tax { margin-top: 0; padding-top: 0; }
+.doc-fields-tax .hint { align-self: end; margin: 0 0 10px; }
+@media (max-width: 640px) {
+  .withholding-row { grid-template-columns: minmax(0, 1fr) 70px auto; }
+  .withholding-row button { grid-column: 1 / -1; justify-self: start; }
+}

@@ -10,6 +10,7 @@ import {
 } from "../../shared/invoice.ts";
 import { CURRENCIES, decimalsOf, formatMoney, rateFor } from "../../shared/currency.ts";
 import { isNumbered, type DocTable, type SyncRecord } from "../../shared/sync.ts";
+import { CASH_LIMIT_XAF, fiscalSettings, newDocTaxFields, pct } from "../../shared/taxes.ts";
 import { currencyOf, invoiceSituations, linesOf, QUOTE_LABELS, quoteStatus, rateOf, SITUATION_LABELS, totalsOf, type Situation } from "../ledger.ts";
 import { PrintView } from "./PrintView.tsx";
 import {
@@ -234,6 +235,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const [busy, setBusy] = useState(false);
   const [docType, setDocType] = useState<QuoteType>(() => quoteTypeOf(record?.data));
   const [globalDiscount, setGlobalDiscount] = useState("");
+  const fiscal = fiscalSettings(settings);
+  const [withholding, setWithholding] = useState(() => ({ rate: Number(record?.data.withholding_rate) || 0, label: text(record?.data.withholding_label) }));
   const qt = QUOTE_TYPES[docType];
   const one = kind === "quotes" ? qt.label : docTitle(kind, record?.data);
   const isDelivery = kind === "quotes" && docType === "delivery";
@@ -243,7 +246,6 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const locked = !numbered && !!closedUntil && date <= closedUntil && kind !== "quotes";
   const editable = !numbered && !locked;
   const decimals = decimalsOf(currency);
-  const totals = computeTotals(lines, decimals);
   const fm = (n: number) => formatMoney(n, currency);
   const changeCurrency = (code: string) => {
     setCurrency(code);
@@ -252,6 +254,17 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const client = clients.find((c) => c.id === clientId) ?? null;
   const situation: Situation | undefined = kind === "invoices" && record ? situations.get(record.id) : undefined;
   const sourceInvoice = kind === "credit_notes" ? invoices.find((i) => i.id === record?.data.invoice_id) : undefined;
+  // Taxes : figées sur un document émis ; un brouillon suit les réglages du moment,
+  // un avoir reprend celles de sa facture, un bon de livraison n'en a pas.
+  const taxFields = numbered || kind === "credit_notes"
+    ? { css_rate: Number(record?.data.css_rate) || 0, css_on_zero: Boolean(record?.data.css_on_zero) }
+    : isDelivery ? { css_rate: 0, css_on_zero: false } : newDocTaxFields(fiscal);
+  const withholdingRate = isDelivery ? 0 : withholding.rate;
+  const totals = computeTotals(lines, decimals, { cssRate: taxFields.css_rate, cssOnZero: taxFields.css_on_zero, withholdingRate });
+  const taxCopy = (r: SyncRecord | null | undefined) => ({
+    css_rate: Number(r?.data.css_rate) || 0, css_on_zero: Boolean(r?.data.css_on_zero),
+    withholding_rate: Number(r?.data.withholding_rate) || 0, withholding_label: text(r?.data.withholding_label),
+  });
 
   // Pour un nouveau document, l'échéance suit la date.
   useEffect(() => {
@@ -282,6 +295,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       client_id: clientId, date, lines: cleanLines(), notes: notes.trim(), currency, rate: currency === "XAF" ? 1 : rate, project_id: projectId,
     };
     if (kind === "invoices") p.due_date = dueDate;
+    if (kind !== "credit_notes") Object.assign(p, taxFields, { withholding_rate: withholdingRate, withholding_label: withholdingRate ? withholding.label : "" });
     if (kind === "quotes") {
       p.valid_until = isDelivery ? "" : dueDate;
       p.doc_type = docType;
@@ -298,6 +312,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   async function validate() {
     setMessage(null);
     if (!clientId) return setMessage("Choisissez un client.");
+    if (fiscal.requireClientNif && kind !== "quotes" && client && !client.data.individual && !text(client.data.nif).trim()) {
+      return setMessage("Le NIF du client est obligatoire sur une facture : complétez sa fiche (ou cochez « Particulier »).");
+    }
     if (billable().length === 0) return setMessage("Ajoutez au moins une ligne.");
     // Seule une déduction d'acompte peut avoir un prix négatif.
     if (billable().some((l) => l.qty <= 0 || (l.unitPrice < 0 && !l.depositInvoiceId))) return setMessage("Vérifiez les quantités et les prix.");
@@ -350,6 +367,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       due_date: addDays(today(), paymentDays),
       lines: [...linesOf(record).filter((l) => !isDepositLine(l)), ...deductions],
       ...(deposits.length ? { final_invoice: true } : {}),
+      withholding_rate: Number(record!.data.withholding_rate) || 0,
+      withholding_label: text(record!.data.withholding_label),
       notes: text(record!.data.notes),
       currency: currencyOf(record),
       rate: rateOf(record),
@@ -376,6 +395,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       date: today(),
       due_date: today(),
       lines: depositLines(source, pct, `${one.toLowerCase()} ${text(record!.data.number)}`, decimals),
+      withholding_rate: Number(record!.data.withholding_rate) || 0,
+      withholding_label: text(record!.data.withholding_label),
       notes: text(record!.data.notes),
       currency: currencyOf(record),
       rate: rateOf(record),
@@ -423,6 +444,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       project_id: text(record!.data.project_id),
       invoice_id: id,
       invoice_number: record!.data.number,
+      ...taxCopy(record),
       notes: `Avoir sur la facture ${text(record!.data.number)}`,
       created_by: session.user.id,
       created_by_name: session.user.name,
@@ -442,6 +464,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       currency,
       rate: currency === "XAF" ? 1 : rate,
       project_id: projectId,
+      withholding_rate: withholdingRate,
+      withholding_label: withholdingRate ? withholding.label : "",
       created_by: session.user.id,
       created_by_name: session.user.name,
     };
@@ -464,7 +488,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const linked = kind === "invoices" ? credits.filter((c) => c.data.invoice_id === id) : [];
   const invoicePayments = kind === "invoices" ? payments.filter((p) => p.data.invoice_id === id).sort((a, b) => text(a.data.date).localeCompare(text(b.data.date))) : [];
   const status = record ? docStatus(kind, record, situations) : null;
-  const share = useShare({ kind, record, client, gross: totals.gross, situation, currency });
+  const share = useShare({ kind, record, client, gross: totals.payable, situation, currency });
   const dueLabel = kind === "quotes" ? "Valable jusqu'au" : "Échéance";
   const showDue = kind === "invoices" || (kind === "quotes" && !isDelivery);
   const subtotals = sectionSubtotals(lines, decimals);
@@ -522,7 +546,14 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       {totals.discount > 0 && (<><dt>Remises</dt><dd className="mono" data-testid="discount">-{fm(totals.discount)}</dd></>)}
       <dt>Total HT</dt><dd className="mono" data-testid="total-ht">{fm(totals.net)}</dd>
       <dt>TVA</dt><dd className="mono" data-testid="total-vat">{fm(totals.vat)}</dd>
+      {totals.css !== 0 && (<><dt>CSS ({pct(taxFields.css_rate)})</dt><dd className="mono" data-testid="total-css">{fm(totals.css)}</dd></>)}
       <dt className="strong">Total TTC</dt><dd className="mono strong" data-testid="total-ttc">{fm(totals.gross)}</dd>
+      {totals.withholding !== 0 && (
+        <>
+          <dt>Retenue à la source{withholding.label ? ` · ${withholding.label}` : ""} ({pct(withholdingRate)})</dt><dd className="mono" data-testid="total-withholding">-{fm(totals.withholding)}</dd>
+          <dt className="strong">Net à payer</dt><dd className="mono strong" data-testid="total-payable">{fm(totals.payable)}</dd>
+        </>
+      )}
       {currency !== "XAF" && (<><dt>Contre-valeur</dt><dd className="mono muted">{formatMoney(Math.round(totals.gross * rate), "XAF")}</dd></>)}
       {situation && situation.status !== "draft" && (
         <>
@@ -669,6 +700,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                 <p className="hint">Le message est prérempli{share.reminder ? " avec le montant restant dû" : ""}. {canShare ? "« Partager le PDF » joint la facture au message." : "Joignez le PDF téléchargé si besoin."}</p>
                 {share.error && <p className="error" role="alert">{share.error}</p>}
               </div>
+              {kind === "invoices" && <EfactCard invoice={record!} />}
             </aside>
           )}
         </div>
@@ -731,6 +763,25 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
           )}
         </div>
 
+        {kind !== "credit_notes" && !isDelivery && (
+          <div className="doc-fields doc-fields-tax">
+            <label>
+              Retenue à la source
+              <select value={withholding.rate ? `${withholding.label}|${withholding.rate}` : ""} onChange={(e) => {
+                const [label, r] = e.target.value.split("|");
+                setWithholding(e.target.value ? { label, rate: Number(r) } : { label: "", rate: 0 });
+              }}>
+                <option value="">Aucune</option>
+                {[...fiscal.withholdings, ...(withholding.rate && !fiscal.withholdings.some((w) => w.label === withholding.label && w.rate === withholding.rate) ? [withholding] : [])]
+                  .map((w) => <option key={`${w.label}|${w.rate}`} value={`${w.label}|${w.rate}`}>{w.label} ({pct(w.rate)})</option>)}
+              </select>
+            </label>
+            {taxFields.css_rate > 0 && <p className="hint">CSS de {pct(taxFields.css_rate)} ajoutée au total (Réglages, Fiscalité).</p>}
+          </div>
+        )}
+        <datalist id="vat-rates">
+          {fiscal.vatRates.map((r) => <option key={r} value={r} />)}
+        </datalist>
         <datalist id="articles-list">
           {articles.map((a) => <option key={a.id} value={text(a.data.label)} />)}
         </datalist>
@@ -759,7 +810,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                   <td className="num qty" data-label="Qté"><input aria-label="Quantité" type="number" min="0" step="any" value={l.qty} onChange={(e) => update(i, { qty: Number(e.target.value) })} /></td>
                   {!isDelivery && <><td className="num" data-label="Prix unitaire HT"><input aria-label="Prix unitaire" type="number" min="0" step={decimals ? "0.01" : "1"} value={l.unitPrice} onChange={(e) => update(i, { unitPrice: Number(e.target.value) })} /></td>
                   <td className="num pct" data-label="Remise %"><input aria-label="Remise" type="number" min="0" max="100" step="any" value={l.discount ?? 0} onChange={(e) => update(i, { discount: Number(e.target.value) || undefined })} /></td>
-                  <td className="num pct" data-label="TVA %"><input aria-label="TVA" type="number" min="0" step="any" value={l.vatRate} onChange={(e) => update(i, { vatRate: Number(e.target.value) })} /></td>
+                  <td className="num pct" data-label="TVA %"><input aria-label="TVA" type="number" min="0" step="any" list="vat-rates" value={l.vatRate} onChange={(e) => update(i, { vatRate: Number(e.target.value) })} /></td>
                   <td className="right mono line-total">{fm(lineNet(l, decimals))}</td></>}
                   <td className="del">
                     <button className="ghost icon" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} aria-label={`Supprimer la ligne ${i + 1}`} disabled={lines.length === 1}>
@@ -843,14 +894,14 @@ function DepositForm({ onCreate, currency }: { onCreate: (mode: "percent" | "amo
 function InvoiceSummary({ situation, dueDate, invoice }: { situation: Situation; dueDate: string; invoice: SyncRecord }) {
   const fm = (n: number) => formatMoney(n, situation.currency);
   const settled = situation.paid + situation.credited;
-  const paidPct = situation.gross > 0 ? Math.min(100, (settled / situation.gross) * 100) : 0;
+  const paidPct = situation.payable > 0 ? Math.min(100, (settled / situation.payable) * 100) : 0;
   const days = dueDate ? Math.round((Date.parse(today()) - Date.parse(dueDate)) / 86_400_000) : 0;
   const tone = situation.status === "paid" ? "ok" : situation.status === "overdue" ? "danger" : "";
   return (
     <>
       <div className="aside-label">Reste dû</div>
       <div className={`aside-amount mono ${tone}`}>{fm(situation.due)}</div>
-      <p className="aside-sub">sur <span className="mono">{fm(situation.gross)}</span> TTC</p>
+      <p className="aside-sub">sur <span className="mono">{fm(situation.payable)}</span> {situation.withholding ? "net à payer (après retenue à la source)" : "TTC"}</p>
       <div className="progress-line" role="img" aria-label={`${Math.round(paidPct)} % réglé`}><span style={{ width: `${paidPct}%` }} /></div>
       <p className="aside-sub"><span className="mono">{fm(settled)}</span> réglé{situation.credited > 0 ? " (encaissements et avoirs)" : ""}</p>
       {situation.status === "paid" ? (
@@ -869,7 +920,8 @@ function PaymentForm({ invoice, situation }: { invoice: SyncRecord; situation: S
   const { db, session } = useApp();
   const settings = useSettings();
   const [amount, setAmount] = useState("");
-  const [method, setMethod] = useState("cash");
+  // Au-delà de 500 000 FCFA, les espèces ne sont plus admises (LF 2026) : virement par défaut.
+  const [method, setMethod] = useState(() => situation.due * situation.rate >= CASH_LIMIT_XAF ? "transfer" : "cash");
   const [date, setDate] = useState(today());
   const [reference, setReference] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -886,6 +938,8 @@ function PaymentForm({ invoice, situation }: { invoice: SyncRecord; situation: S
     const typed = Number((amount || String(situation.due)).replace(/\s/g, "").replace(",", "."));
     const value = Math.round(typed * 10 ** d) / 10 ** d;
     if (!Number.isFinite(value) || value <= 0) return setError("Saisissez un montant supérieur à 0.");
+    if (method === "cash" && value * (currency === "XAF" ? 1 : rate) >= CASH_LIMIT_XAF
+      && !confirm("Au Gabon, un paiement de 500 000 FCFA ou plus doit passer par virement ou mobile money. Enregistrer quand même en espèces ?")) return;
     if (value > situation.due && !confirm(`Le montant dépasse le reste dû (${fm(situation.due)}). Enregistrer quand même ?`)) return;
     await db.write("payments", db.newId("pay"), {
       invoice_id: invoice.id,
@@ -1075,4 +1129,33 @@ function originPhrase(number: string): string {
   if (prefix === "PF") return "Issue de la pro forma";
   if (prefix === "BC") return "Issue du bon de commande";
   return "Issue du devis";
+}
+
+/**
+ * Facture électronique normalisée (E-Fact, DGI) : tant que Gestia n'est pas homologué,
+ * la facture est validée sur le portail de la DGI et son numéro de validation est reporté ici,
+ * puis imprimé sur le PDF. Seul champ modifiable après validation (avec le suivi d'envoi).
+ */
+function EfactCard({ invoice }: { invoice: SyncRecord }) {
+  const { db } = useApp();
+  const current = text(invoice.data.efact_number);
+  const [value, setValue] = useState(current);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => setValue(current), [current]);
+  return (
+    <form className="card aside-actions" onSubmit={async (e) => {
+      e.preventDefault();
+      await db.write("invoices", invoice.id, { efact_number: value.trim(), efact_status: value.trim() ? "validated" : "" });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    }}>
+      <h3>E-Fact (DGI)</h3>
+      <label>N° de validation de la facture normalisée<input value={value} onChange={(e) => setValue(e.target.value)} placeholder="Numéro attribué par la DGI" /></label>
+      <p className="hint">Reporté sur le PDF. À renseigner une fois la facture validée sur le dispositif E-Fact.</p>
+      <div className="form-actions">
+        {saved && <span className="ok-text">Enregistré</span>}
+        <button disabled={value.trim() === current}>Enregistrer</button>
+      </div>
+    </form>
+  );
 }

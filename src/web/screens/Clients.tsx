@@ -52,6 +52,8 @@ export function Clients() {
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const f = Object.fromEntries([...new FormData(e.currentTarget)].map(([k, v]) => [k, String(v).trim()]));
+    // Case à cocher : absente du formulaire quand elle est décochée.
+    f.individual = f.individual ? "1" : "";
     const isNew = editing === "new";
     await savePatch(db, "clients", isNew ? db.newId("cli") : (editing as SyncRecord).id, isNew ? {} : (editing as SyncRecord).data, f);
     setEditing(null);
@@ -79,6 +81,10 @@ export function Clients() {
                 defaultValue={editing === "new" ? "" : text(editing.data[f.name])} />
             </label>
           ))}
+          <label className="check-inline">
+            <input type="checkbox" name="individual" defaultChecked={editing !== "new" && Boolean(editing.data.individual)} />
+            Particulier (personne physique)
+          </label>
           <div className="form-actions">
             {editing !== "new" && (
               <button type="button" className="ghost danger" onClick={async () => {

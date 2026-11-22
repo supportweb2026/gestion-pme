@@ -5,6 +5,7 @@ import { formatDate, SubscriptionBadge } from "../subscription.tsx";
 import { PLANS } from "../../shared/plans.ts";
 import { DEFAULT_PAYMENT_DAYS } from "../../shared/invoice.ts";
 import { CURRENCIES, rateFor } from "../../shared/currency.ts";
+import { DEFAULT_VAT_RATES, fiscalSettings, type WithholdingPreset } from "../../shared/taxes.ts";
 
 const COMPANY_FIELDS: { name: string; label: string; placeholder?: string; wide?: boolean }[] = [
   { name: "name", label: "Raison sociale" },
@@ -51,6 +52,7 @@ export function Settings() {
       <DeviceSecurity />
       {can.manageCompany(session.user.role) && <SubscriptionCard />}
       {can.manageCompany(session.user.role) && <CompanySettings />}
+      {can.manageCompany(session.user.role) && <FiscalSettingsCard />}
       {can.manageCompany(session.user.role) && <CurrencySettings />}
       {can.manageUsers(session.user.role) && <Users />}
       {can.manageCompany(session.user.role) && <DataExport />}
@@ -498,5 +500,110 @@ function Users() {
       )}
       <p className="muted small">Un changement de rôle prend effet à la prochaine synchronisation de la personne. Un nouveau compte se connecte avec le mot de passe provisoire choisi ici, puis le remplace.</p>
     </div>
+  );
+}
+
+/**
+ * Fiscalité (Gabon) : CSS, taux de TVA proposés, régime, retenues à la source, mentions.
+ * Les taux sont paramétrables car la loi de finances les change ; chaque document fige
+ * ceux en vigueur à son émission.
+ */
+function FiscalSettingsCard() {
+  const { db } = useApp();
+  const s = useSettings();
+  const f = fiscalSettings(s);
+  const [cssEnabled, setCssEnabled] = useState(f.cssEnabled);
+  const [cssRate, setCssRate] = useState(String(f.cssRate));
+  const [cssOnZero, setCssOnZero] = useState(f.cssOnZero);
+  const [vatRates, setVatRates] = useState(f.vatRates.join(" ; "));
+  const [debits, setDebits] = useState(f.vatOnDebits);
+  const [exemption, setExemption] = useState(f.exemptionNote);
+  const [withholdings, setWithholdings] = useState<{ label: string; rate: string }[]>(f.withholdings.map((w) => ({ label: w.label, rate: String(w.rate) })));
+  const [requireNif, setRequireNif] = useState(f.requireClientNif);
+  const [penalty, setPenalty] = useState(f.latePenalty);
+  const [message, setMessage] = useState<string | null>(null);
+  const toNum = (v: string) => Number(v.replace(",", "."));
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setMessage(null);
+    const rate = toNum(cssRate);
+    if (!(rate >= 0 && rate <= 100)) return setMessage("Le taux de CSS doit être compris entre 0 et 100 %.");
+    const rates = vatRates.split(/[;\s]+/).filter(Boolean).map(toNum);
+    if (rates.length === 0 || rates.some((r) => !(r >= 0 && r <= 100))) return setMessage("Taux de TVA : des nombres entre 0 et 100, séparés par des points-virgules.");
+    const wh: WithholdingPreset[] = withholdings.filter((w) => w.label.trim()).map((w) => ({ label: w.label.trim(), rate: toNum(w.rate) }));
+    if (wh.some((w) => !(w.rate > 0 && w.rate <= 100))) return setMessage("Chaque retenue doit avoir un taux entre 0 et 100 %.");
+    await db.write("settings", "company", {
+      css_enabled: cssEnabled, css_rate: rate, css_on_zero: cssOnZero,
+      vat_rates: [...new Set(rates)], vat_regime: debits ? "debits" : "encaissements",
+      exemption_note: exemption.trim(), withholdings: wh, require_client_nif: requireNif, late_penalty: penalty.trim(),
+    });
+    setMessage("Enregistré");
+    setTimeout(() => setMessage(null), 2500);
+  }
+
+  return (
+    <form className="card section-card fiscal-card" onSubmit={save}>
+      <h3>Fiscalité (Gabon)</h3>
+      <p className="muted small">
+        Appliquée aux nouveaux devis et factures ; un document émis garde les taux de sa date.
+        Valeurs par défaut issues de la loi de finances 2026 : faites-les confirmer par votre comptable.
+      </p>
+
+      <fieldset>
+        <legend>Contribution spéciale de solidarité (CSS)</legend>
+        <label className="check-inline"><input type="checkbox" checked={cssEnabled} onChange={(e) => setCssEnabled(e.target.checked)} /> Facturer la CSS (entreprises au chiffre d'affaires d'au moins 30 M FCFA)</label>
+        <div className="form-grid">
+          <label>Taux de CSS (%)<input inputMode="decimal" value={cssRate} onChange={(e) => setCssRate(e.target.value)} disabled={!cssEnabled} /></label>
+        </div>
+        <label className="check-inline"><input type="checkbox" checked={cssOnZero} onChange={(e) => setCssOnZero(e.target.checked)} disabled={!cssEnabled} /> Appliquer aussi aux lignes à 0 % de TVA</label>
+        <p className="hint">Calculée sur le montant HT, hors base de TVA, sur une ligne distincte de la facture.</p>
+      </fieldset>
+
+      <fieldset>
+        <legend>TVA</legend>
+        <div className="form-grid">
+          <label>Taux proposés (%)<input value={vatRates} onChange={(e) => setVatRates(e.target.value)} placeholder={DEFAULT_VAT_RATES.join(" ; ")} /></label>
+          <label>
+            Exigibilité de la TVA
+            <select value={debits ? "debits" : "encaissements"} onChange={(e) => setDebits(e.target.value === "debits")}>
+              <option value="encaissements">Sur les encaissements (services, par défaut)</option>
+              <option value="debits">Sur les débits (option, mentionnée sur la facture)</option>
+            </select>
+          </label>
+          <label className="wide">Mention pour les lignes à 0 %<input value={exemption} onChange={(e) => setExemption(e.target.value)} placeholder="Exonération : article … du CGI" /></label>
+        </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Retenues à la source proposées</legend>
+        <p className="hint">Opérées par le client : la facture affiche la retenue et le net à payer.</p>
+        <div className="withholding-rows">
+          {withholdings.map((w, i) => (
+            <div className="withholding-row" key={i}>
+              <input aria-label="Nom de la retenue" value={w.label} onChange={(e) => setWithholdings((ws) => ws.map((x, j) => (j === i ? { ...x, label: e.target.value } : x)))} />
+              <input aria-label="Taux de la retenue" inputMode="decimal" value={w.rate} onChange={(e) => setWithholdings((ws) => ws.map((x, j) => (j === i ? { ...x, rate: e.target.value } : x)))} />
+              <span className="muted">%</span>
+              <button type="button" className="ghost" onClick={() => setWithholdings((ws) => ws.filter((_, j) => j !== i))}>Retirer</button>
+            </div>
+          ))}
+        </div>
+        <button type="button" className="ghost add-line" onClick={() => setWithholdings((ws) => [...ws, { label: "", rate: "" }])}>+ Ajouter une retenue</button>
+      </fieldset>
+
+      <fieldset>
+        <legend>Factures</legend>
+        <label className="check-inline"><input type="checkbox" checked={requireNif} onChange={(e) => setRequireNif(e.target.checked)} /> Rendre obligatoire le numéro fiscal des entreprises facturées</label>
+        <div className="form-grid">
+          <label className="wide">Pénalités de retard (mention)<input value={penalty} onChange={(e) => setPenalty(e.target.value)} placeholder="Pénalités de retard : 1,5 % par mois après l'échéance" /></label>
+        </div>
+        <p className="hint">Automatique : à partir de 500 000 FCFA, la facture précise que le règlement se fait par virement ou mobile money.</p>
+      </fieldset>
+
+      <div className="form-actions">
+        {message && <span className={message === "Enregistré" ? "ok-text" : "error"}>{message}</span>}
+        <button className="primary">Enregistrer la fiscalité</button>
+      </div>
+    </form>
   );
 }

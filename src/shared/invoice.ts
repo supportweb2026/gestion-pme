@@ -27,7 +27,28 @@ export interface InvoiceTotals {
   discount: number;
   net: number;
   vat: number;
+  /** Contribution spéciale de solidarité (Gabon), sur la base HT, hors base de TVA. */
+  css: number;
+  /** Total TTC : HT + TVA + CSS. */
   gross: number;
+  /** Retenue à la source opérée par le client, sur la base HT. */
+  withholding: number;
+  /** Net à payer : TTC moins la retenue à la source. */
+  payable: number;
+}
+
+/** Taxes figées sur un document (taux en %). Absentes : pas de CSS, pas de retenue. */
+export interface DocTaxes {
+  cssRate?: number;
+  /** La CSS s'applique aussi aux lignes à 0 % de TVA. */
+  cssOnZero?: boolean;
+  withholdingRate?: number;
+}
+
+/** Taxes figées sur un document, lues depuis ses champs css_rate, css_on_zero, withholding_rate. */
+export function docTaxes(data: Record<string, unknown> | undefined): DocTaxes {
+  const n = (v: unknown) => Math.min(100, Math.max(0, Number(v) || 0));
+  return { cssRate: n(data?.css_rate), cssOnZero: Boolean(data?.css_on_zero), withholdingRate: n(data?.withholding_rate) };
 }
 
 export const DEFAULT_VAT_RATE = 18;
@@ -50,20 +71,29 @@ export const lineDiscountAmount = (l: InvoiceLine, decimals = 0) =>
   roundAmount(l.qty * l.unitPrice, decimals) - lineNet(l, decimals);
 export const lineVat = (l: InvoiceLine, decimals = 0) => roundAmount((lineNet(l, decimals) * l.vatRate) / 100, decimals);
 
-export function computeTotals(lines: InvoiceLine[], decimals = 0): InvoiceTotals {
+export function computeTotals(lines: InvoiceLine[], decimals = 0, taxes: DocTaxes = {}): InvoiceTotals {
   let net = 0;
   let vat = 0;
   let discount = 0;
+  let cssBase = 0;
   for (const l of lines) {
-    net += lineNet(l, decimals);
+    const n = lineNet(l, decimals);
+    net += n;
     vat += lineVat(l, decimals);
     discount += lineDiscountAmount(l, decimals);
+    if (taxes.cssOnZero || l.vatRate > 0) cssBase += n;
   }
+  const css = taxes.cssRate ? roundAmount((cssBase * taxes.cssRate) / 100, decimals) : 0;
+  const withholding = taxes.withholdingRate ? roundAmount((net * taxes.withholdingRate) / 100, decimals) : 0;
+  const gross = roundAmount(net + vat + css, decimals);
   return {
     discount: roundAmount(discount, decimals),
     net: roundAmount(net, decimals),
     vat: roundAmount(vat, decimals),
-    gross: roundAmount(net + vat, decimals),
+    css,
+    gross,
+    withholding,
+    payable: roundAmount(gross - withholding, decimals),
   };
 }
 
