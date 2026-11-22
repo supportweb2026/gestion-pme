@@ -186,17 +186,20 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
   const [mode, setMode] = useState<"login" | "signup">(() => (location.hash === "#inscription" ? "signup" : "login"));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Double authentification : identifiants gardés le temps de saisir le code.
+  const [otpFor, setOtpFor] = useState<{ email: string; password: string } | null>(null);
   const support = useSupport();
 
   function switchTo(m: "login" | "signup") {
     setMode(m);
+    setOtpFor(null);
     setError(null);
     history.replaceState(null, "", m === "signup" ? "#inscription" : location.pathname);
   }
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
+    const f = { ...(otpFor ?? {}), ...Object.fromEntries(new FormData(e.currentTarget)) } as Record<string, string>;
     if (mode === "signup" && f.password !== f.confirm) {
       setError("Les deux mots de passe ne correspondent pas.");
       return;
@@ -209,7 +212,11 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
       history.replaceState(null, "", location.pathname);
       await onSession(session);
     } catch (err) {
-      if (err instanceof ApiError) setError(err.message.charAt(0).toUpperCase() + err.message.slice(1) + ".");
+      if (err instanceof ApiError && err.data.otpRequired) {
+        // Mot de passe juste : on demande le code (message d'erreur seulement si un code a été saisi).
+        setOtpFor({ email: f.email, password: f.password });
+        setError(f.otp ? "Code incorrect ou expiré : saisissez le code affiché maintenant." : null);
+      } else if (err instanceof ApiError) setError(err.message.charAt(0).toUpperCase() + err.message.slice(1) + ".");
       else setError("Serveur injoignable : la première connexion sur cet appareil demande internet.");
     } finally {
       setBusy(false);
@@ -218,6 +225,18 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
 
   return (
     <div className="auth">
+      {otpFor ? (
+        <form className="card auth-card" onSubmit={submit} key="otp">
+          <GestiaLogo full />
+          <h1>Vérification en deux étapes</h1>
+          <p className="muted">Saisissez le code à 6 chiffres affiché par votre application d'authentification pour {otpFor.email}.</p>
+          <label>Code de vérification<input name="otp" required autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={12} placeholder="123 456" /></label>
+          {error && <p className="error" role="alert">{error}</p>}
+          <button className="primary" disabled={busy}>{busy ? "Patientez…" : "Vérifier"}</button>
+          <p className="muted small">Téléphone perdu ? Saisissez un de vos codes de secours (format abcd-efgh). Sans code de secours, un mot de passe provisoire créé dans Réglages › Utilisateurs désactive la double authentification.</p>
+          <p className="auth-switch"><button type="button" className="link" onClick={() => { setOtpFor(null); setError(null); }}>Revenir à la connexion</button></p>
+        </form>
+      ) : (
       <form className="card auth-card" onSubmit={submit} key={mode}>
         <GestiaLogo full />
         <p className="auth-tagline">Le système de gestion de votre entreprise</p>
@@ -258,6 +277,7 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
           <li>Envoi par WhatsApp et e-mail</li>
         </ul>
       </form>
+      )}
     </div>
   );
 }

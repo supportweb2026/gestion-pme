@@ -9,6 +9,7 @@ import { CURRENCIES, rateFor } from "../../shared/currency.ts";
 import { DEFAULT_REMINDER_STEPS, reminderSettings, stepLabel } from "../../shared/reminders.ts";
 import { DEFAULT_VAT_RATES, fiscalSettings, type WithholdingPreset } from "../../shared/taxes.ts";
 import { DOC_COLORS, docColor, softOf, tooLight } from "../../shared/branding.ts";
+import qrcode from "qrcode-generator";
 
 const COMPANY_FIELDS: { name: string; label: string; placeholder?: string; wide?: boolean }[] = [
   { name: "name", label: "Raison sociale" },
@@ -108,6 +109,127 @@ function MyAccount() {
         </form>
       )}
       {msg && <p className={msg.ok ? "success" : "error"} role="status">{msg.text}</p>}
+      <TwoFactor />
+    </div>
+  );
+}
+
+/** QR code (SVG) d'un lien otpauth://, lu par l'application d'authentification. */
+function QrCode({ value }: { value: string }) {
+  const qr = qrcode(0, "M");
+  qr.addData(value);
+  qr.make();
+  const n = qr.getModuleCount();
+  const cells: string[] = [];
+  for (let r = 0; r < n; r++) for (let c = 0; c < n; c++) if (qr.isDark(r, c)) cells.push(`M${c + 4} ${r + 4}h1v1h-1z`);
+  return (
+    <svg className="qr" viewBox={`0 0 ${n + 8} ${n + 8}`} role="img" aria-label="QR code à scanner avec l'application d'authentification" shapeRendering="crispEdges">
+      <rect width={n + 8} height={n + 8} fill="#fff" />
+      <path d={cells.join("")} fill="#101D36" />
+    </svg>
+  );
+}
+
+/**
+ * Double authentification du compte : après le mot de passe, un code à 6 chiffres
+ * de Google Authenticator, Microsoft Authenticator… Codes de secours montrés une fois.
+ */
+function TwoFactor() {
+  const [state, setState] = useState<{ enabled: boolean; recoveryLeft: number } | null>(null);
+  const [setup, setSetup] = useState<{ secret: string; uri: string } | null>(null);
+  const [codes, setCodes] = useState<string[] | null>(null);
+  const [disabling, setDisabling] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api<{ enabled: boolean; recoveryLeft: number }>("/api/me/2fa").then(setState).catch(() => setState(null));
+  useEffect(() => { load(); }, []);
+
+  const run = async (fn: () => Promise<void>) => {
+    setBusy(true);
+    setError(null);
+    try { await fn(); } catch (err) {
+      setError(err instanceof ApiError ? sentence(err.message) : "Connexion internet nécessaire.");
+    } finally { setBusy(false); }
+  };
+
+  if (!state) return null;
+  return (
+    <div className="two-factor" data-testid="two-factor">
+      <div className="section-head">
+        <div>
+          <h4>Double authentification</h4>
+          <p className="muted small">{state.enabled
+            ? `Active : un code de l'application est demandé à chaque connexion. ${state.recoveryLeft} code${state.recoveryLeft > 1 ? "s" : ""} de secours restant${state.recoveryLeft > 1 ? "s" : ""}.`
+            : "Protège votre compte même si votre mot de passe est découvert : un code à 6 chiffres de votre téléphone est demandé à la connexion."}</p>
+        </div>
+        {state.enabled ? (
+          !disabling && <button className="ghost" onClick={() => { setDisabling(true); setCodes(null); }}>Désactiver</button>
+        ) : !setup && (
+          <button className="primary" disabled={busy} onClick={() => run(async () => setSetup(await api("/api/me/2fa/setup", {})))}>Activer</button>
+        )}
+      </div>
+
+      {setup && !state.enabled && (
+        <form className="two-factor-setup" onSubmit={(e) => {
+          e.preventDefault();
+          const code = String(new FormData(e.currentTarget).get("code") ?? "");
+          run(async () => {
+            const r = await api<{ recoveryCodes: string[] }>("/api/me/2fa/enable", { code });
+            setCodes(r.recoveryCodes);
+            setSetup(null);
+            await load();
+          });
+        }}>
+          <QrCode value={setup.uri} />
+          <ol className="steps">
+            <li>Installez une application d'authentification (Google Authenticator, Microsoft Authenticator…).</li>
+            <li>Scannez ce QR code, ou saisissez la clé <code className="mono" data-testid="totp-secret">{setup.secret.replace(/(.{4})/g, "$1 ").trim()}</code>.</li>
+            <li>Saisissez le code à 6 chiffres affiché.</li>
+          </ol>
+          <label>Code à 6 chiffres<input name="code" inputMode="numeric" autoComplete="one-time-code" required maxLength={7} /></label>
+          <div className="form-actions">
+            <button type="button" className="ghost" onClick={() => setSetup(null)}>Annuler</button>
+            <button className="primary" disabled={busy}>Confirmer et activer</button>
+          </div>
+        </form>
+      )}
+
+      {codes && (
+        <div className="recovery-codes" role="status">
+          <p><b>Double authentification activée.</b> Gardez ces codes de secours en lieu sûr : chacun permet une connexion sans le téléphone. Ils ne seront plus affichés.</p>
+          <ul className="mono" data-testid="recovery-codes">{codes.map((c) => <li key={c}>{c}</li>)}</ul>
+          <div className="form-actions">
+            <button type="button" onClick={() => {
+              const blob = new Blob([`Codes de secours Gestia\n\n${codes.join("\n")}\n`], { type: "text/plain" });
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(blob);
+              a.download = "gestia-codes-de-secours.txt";
+              a.click();
+              URL.revokeObjectURL(a.href);
+            }}>Télécharger les codes</button>
+            <button type="button" className="primary" onClick={() => setCodes(null)}>J'ai noté les codes</button>
+          </div>
+        </div>
+      )}
+
+      {disabling && state.enabled && (
+        <form className="form-grid" onSubmit={(e) => {
+          e.preventDefault();
+          const password = String(new FormData(e.currentTarget).get("password") ?? "");
+          run(async () => {
+            await api("/api/me/2fa/disable", { password });
+            setDisabling(false);
+            await load();
+          });
+        }}>
+          <label>Votre mot de passe<input name="password" type="password" required autoComplete="current-password" /></label>
+          <div className="form-actions">
+            <button type="button" className="ghost" onClick={() => setDisabling(false)}>Annuler</button>
+            <button className="danger" disabled={busy}>Désactiver la double authentification</button>
+          </div>
+        </form>
+      )}
+      {error && <p className="error" role="alert">{error}</p>}
     </div>
   );
 }

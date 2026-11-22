@@ -11,6 +11,7 @@ import {
 import { redactPatch, redactRecord, type ProjectContext } from "../shared/projectRules.ts";
 import { decodeHlc } from "../shared/hlc.ts";
 import { extendPaidUntil, PLANS, subscriptionInfo, TRIAL_DAYS, type CompanySubscription } from "../shared/plans.ts";
+import { hashRecoveryCode, newRecoveryCodes, newTotpSecret, otpauthUri, verifyTotp } from "../shared/totp.ts";
 
 /** Taille d'un bloc de numéros de facture réservé par un appareil. */
 const NUMBER_BLOCK_SIZE = 50;
@@ -182,8 +183,8 @@ async function handleLogin(req: Request, env: Env) {
     must_change_password: number; company_name: string; plan: string; status: string; trial_ends_at: string | null; paid_until: string | null;
   }>();
 
-  if (!user || !user.active || !(await verifyPassword(password, user.password_hash))) {
-    // Compte des échecs sur une fenêtre de 15 minutes, puis blocage de 15 minutes.
+  // Compte des échecs (mot de passe ou code) sur une fenêtre de 15 minutes, puis blocage de 15 minutes.
+  const fail = async () => {
     const fresh = !attempt || Date.now() - Date.parse(attempt.window_start) > LOGIN_WINDOW_MS;
     const failures = fresh ? 1 : attempt!.failures + 1;
     const locked = failures >= MAX_LOGIN_FAILURES ? new Date(Date.now() + LOGIN_WINDOW_MS).toISOString() : null;
@@ -191,13 +192,77 @@ async function handleLogin(req: Request, env: Env) {
       `INSERT INTO login_attempts (key, failures, window_start, locked_until) VALUES (?, ?, ?, ?)
        ON CONFLICT(key) DO UPDATE SET failures = excluded.failures, window_start = excluded.window_start, locked_until = excluded.locked_until`,
     ).bind(email, failures, fresh ? now() : attempt!.window_start, locked).run();
+  };
+  if (!user || !user.active || !(await verifyPassword(password, user.password_hash))) {
+    await fail();
     throw new HttpError(401, "e-mail ou mot de passe incorrect");
+  }
+  // Double authentification : après le mot de passe, le code de l'application (ou un code de secours).
+  // Lecture séparée et tolérante : si la migration 0003 n'est pas encore appliquée, la connexion fonctionne sans code.
+  const tf = await env.DB.prepare(`SELECT totp_enabled, totp_secret, totp_recovery, totp_last_step FROM users WHERE id = ?`).bind(user.id)
+    .first<{ totp_enabled: number; totp_secret: string | null; totp_recovery: string | null; totp_last_step: number }>()
+    .catch(() => null);
+  if (tf?.totp_enabled && tf.totp_secret) {
+    const otp = typeof body.otp === "string" ? body.otp.trim() : "";
+    if (!otp) return json({ error: "code de vérification requis", otpRequired: true }, 401);
+    const step = await verifyTotp(tf.totp_secret, otp, Date.now(), tf.totp_last_step || 0);
+    if (step !== null) {
+      await env.DB.prepare(`UPDATE users SET totp_last_step = ? WHERE id = ?`).bind(step, user.id).run();
+    } else {
+      const left: string[] = JSON.parse(tf.totp_recovery || "[]");
+      const h = await hashRecoveryCode(otp);
+      if (!/^\d{6}$/.test(otp.replace(/\s/g, "")) && left.includes(h)) {
+        await env.DB.prepare(`UPDATE users SET totp_recovery = ? WHERE id = ?`).bind(JSON.stringify(left.filter((x) => x !== h)), user.id).run();
+      } else {
+        await fail();
+        return json({ error: "code de vérification incorrect", otpRequired: true }, 401);
+      }
+    }
   }
   if (attempt) await env.DB.prepare(`DELETE FROM login_attempts WHERE key = ?`).bind(email).run();
   if (user.status === "suspended") throw new HttpError(403, "compte de l'entreprise suspendu : contactez l'équipe Gestia");
 
   const company: Company = { id: user.company_id, name: user.company_name, plan: user.plan, status: user.status, trial_ends_at: user.trial_ends_at, paid_until: user.paid_until };
   return json(await openSession(env, user, dev, company));
+}
+
+/**
+ * Double authentification de son propre compte.
+ *  GET    : état ; POST setup : nouveau secret (pas encore actif) ;
+ *  POST enable {code} : active et renvoie les codes de secours (une seule fois) ;
+ *  POST disable {password} : désactive.
+ */
+async function handleTwoFactor(req: Request, env: Env, s: Session, action: string) {
+  const user = await env.DB.prepare(`SELECT email, password_hash, totp_enabled, totp_secret, totp_recovery FROM users WHERE id = ?`).bind(s.sub)
+    .first<{ email: string; password_hash: string; totp_enabled: number; totp_secret: string | null; totp_recovery: string | null }>();
+  if (!user) throw new HttpError(404, "utilisateur introuvable");
+  if (action === "" && req.method === "GET") {
+    return json({ enabled: !!user.totp_enabled, recoveryLeft: user.totp_enabled ? JSON.parse(user.totp_recovery || "[]").length : 0 });
+  }
+  if (req.method !== "POST") throw new HttpError(405, "méthode non autorisée");
+  const body = await readJson<Record<string, unknown>>(req);
+  if (action === "setup") {
+    if (user.totp_enabled) throw new HttpError(409, "double authentification déjà active");
+    const secretKey = newTotpSecret();
+    await env.DB.prepare(`UPDATE users SET totp_secret = ? WHERE id = ?`).bind(secretKey, s.sub).run();
+    return json({ secret: secretKey, uri: otpauthUri(secretKey, user.email) });
+  }
+  if (action === "enable") {
+    if (user.totp_enabled) throw new HttpError(409, "double authentification déjà active");
+    if (!user.totp_secret) throw new HttpError(400, "commencez par scanner le QR code");
+    const step = await verifyTotp(user.totp_secret, str(body.code, "code", 20));
+    if (step === null) throw new HttpError(400, "code incorrect : vérifiez l'heure du téléphone et réessayez");
+    const codes = newRecoveryCodes();
+    const hashes = await Promise.all(codes.map(hashRecoveryCode));
+    await env.DB.prepare(`UPDATE users SET totp_enabled = 1, totp_recovery = ?, totp_last_step = ? WHERE id = ?`).bind(JSON.stringify(hashes), step, s.sub).run();
+    return json({ enabled: true, recoveryCodes: codes });
+  }
+  if (action === "disable") {
+    if (!(await verifyPassword(str(body.password, "mot de passe"), user.password_hash))) throw new HttpError(403, "mot de passe incorrect");
+    await env.DB.prepare(`UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_recovery = NULL WHERE id = ?`).bind(s.sub).run();
+    return json({ enabled: false });
+  }
+  throw new HttpError(404, "route inconnue");
 }
 
 /** Changement de son propre mot de passe (obligatoire après un mot de passe provisoire). */
@@ -230,6 +295,8 @@ async function handleResetPassword(req: Request, env: Env, s: Session) {
     env.DB.prepare(`UPDATE devices SET revoked = 1 WHERE user_id = ? AND id != ?`).bind(id, s.dev),
     env.DB.prepare(`DELETE FROM login_attempts WHERE key = ?`).bind(target.email),
   ]);
+  // Téléphone perdu : le mot de passe provisoire retire aussi la double authentification.
+  await env.DB.prepare(`UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_recovery = NULL WHERE id = ?`).bind(id).run().catch(() => {});
   return json({ ok: true });
 }
 
@@ -674,6 +741,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (p === "/api/sync" && m === "POST") return handleSync(req, env, session, company);
   if (p === "/api/numbers/reserve" && m === "POST") return handleReserveNumbers(req, env, session);
   if (p === "/api/me/password" && m === "POST") return handleChangePassword(req, env, session);
+  if (p === "/api/me/2fa" || p.startsWith("/api/me/2fa/")) return handleTwoFactor(req, env, session, p.slice("/api/me/2fa".length).replace(/^\//, ""));
   if (p === "/api/users" && m === "GET") return handleListUsers(env, session);
   if (p === "/api/users" && m === "POST") return handleCreateUser(req, env, session);
   if (p === "/api/users/update" && m === "POST") return handleUpdateUser(req, env, session);
