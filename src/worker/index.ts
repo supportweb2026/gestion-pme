@@ -368,38 +368,51 @@ function parseRecord(row: { tbl: string; id: string; data: string; clocks: strin
 }
 
 /**
- * Contexte projet des règles (équipe du projet, statut du projet), lu en une
- * seule requête et seulement si l'envoi touche des tâches ou des temps.
- * Les lignes acceptées plus tôt dans le même envoi (map `records`) priment.
+ * Contexte projet des règles (équipe, statut du projet, étapes et décisions), lu en une
+ * seule requête et seulement si l'envoi touche des tâches, des temps, des étapes, des
+ * décisions, la délégation d'un projet ou une facture d'étape.
+ * Les lignes acceptées plus tôt dans le même envoi (map `records`) priment : une décision
+ * acceptée compte pour la suite de l'envoi (R2, R11).
  */
 async function loadProjectContext(env: Env, companyId: string, incoming: Change[], records: Map<string, SyncRecord | null>): Promise<ProjectContext | undefined> {
   const ids = new Set<string>();
   for (const c of incoming) {
-    if (c.tbl !== "tasks" && c.tbl !== "time_entries") continue;
-    const pid = c.patch.project_id ?? records.get(`${c.tbl}/${c.row}`)?.data.project_id;
+    let pid: unknown;
+    if (["tasks", "time_entries", "project_stages", "project_decisions"].includes(c.tbl)) {
+      pid = c.patch.project_id ?? records.get(`${c.tbl}/${c.row}`)?.data.project_id;
+    } else if (c.tbl === "projects" && "manager_can_validate" in c.patch) {
+      pid = c.row;
+    } else if (c.tbl === "invoices" && typeof c.patch.decision_id === "string" && c.patch.decision_id) {
+      pid = c.patch.project_id ?? records.get(`${c.tbl}/${c.row}`)?.data.project_id;
+    }
     if (typeof pid === "string" && pid) ids.add(pid);
   }
   if (ids.size === 0) return undefined;
+  const list = JSON.stringify([...ids]);
   const { results } = await env.DB.prepare(
     `SELECT tbl, id, data, clocks FROM records
      WHERE company_id = ? AND (
        (tbl = 'projects' AND id IN (SELECT value FROM json_each(?)))
-       OR (tbl = 'project_members' AND json_extract(data, '$.project_id') IN (SELECT value FROM json_each(?))))`,
-  ).bind(companyId, JSON.stringify([...ids]), JSON.stringify([...ids])).all<{ tbl: string; id: string; data: string; clocks: string }>();
+       OR (tbl IN ('project_members', 'project_stages', 'project_decisions') AND json_extract(data, '$.project_id') IN (SELECT value FROM json_each(?))))`,
+  ).bind(companyId, list, list).all<{ tbl: string; id: string; data: string; clocks: string }>();
   const loaded = new Map<string, SyncRecord>();
   for (const r of results) loaded.set(`${r.tbl}/${r.id}`, parseRecord(r)!);
   const current = (key: string) => (records.has(key) ? records.get(key) ?? null : loaded.get(key) ?? null);
+  /** Lignes vivantes d'une table rattachées au projet, chargées ou acceptées dans cet envoi. */
+  const rowsOf = (tbl: string, pid: string) => {
+    const keys = new Set([...loaded.keys(), ...records.keys()].filter((k) => k.startsWith(`${tbl}/`)));
+    const out: SyncRecord[] = [];
+    for (const k of keys) {
+      const r = current(k);
+      if (r && !r.data._deleted && r.data.project_id === pid) out.push(r);
+    }
+    return out;
+  };
   return {
     project: (pid) => current(`projects/${pid}`),
-    rolesIn: (pid, uid) => {
-      const keys = new Set([...loaded.keys(), ...records.keys()].filter((k) => k.startsWith("project_members/")));
-      const roles: string[] = [];
-      for (const k of keys) {
-        const m = current(k);
-        if (m && !m.data._deleted && m.data.project_id === pid && m.data.user_id === uid) roles.push(String(m.data.role ?? "member"));
-      }
-      return roles;
-    },
+    rolesIn: (pid, uid) => rowsOf("project_members", pid).filter((m) => m.data.user_id === uid).map((m) => String(m.data.role ?? "member")),
+    stages: (pid) => rowsOf("project_stages", pid),
+    decisions: (pid) => rowsOf("project_decisions", pid),
   };
 }
 

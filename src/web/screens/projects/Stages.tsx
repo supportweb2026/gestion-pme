@@ -1,5 +1,5 @@
 /**
- * Étapes d'un projet (maquette D, sans la validation ni la facture : lot 3) et frise
+ * Étapes d'un projet (maquette D ; validation et facture de jalon : StageValidation.tsx, lot 3) et frise
  * des étapes, visible sur tous les onglets de la fiche (maquette C).
  * Statuts calculés (À venir, En cours, À valider…), jamais stockés.
  * L'employé voit les étapes, leurs dates et leur avancement, sans part ni montant.
@@ -14,6 +14,9 @@ import {
 import type { SyncRecord } from "../../../shared/sync.ts";
 import { hoursFr, useGuardedWrite, useTeam } from "../team.ts";
 import { Initials, PIcon } from "../ProjectIcons.tsx";
+import { StageDecisionPanel, ValidationDialog, type Flash, type StageContext } from "./StageValidation.tsx";
+import { invoiceOfStage, type BillingData } from "../../../shared/projectDecisions.ts";
+import type { ProjectContext } from "../../../shared/projectRules.ts";
 
 const dm = (iso: unknown) => (typeof iso === "string" && iso ? formatDate(iso).slice(0, 5) : "");
 const range = (s: SyncRecord) => {
@@ -30,6 +33,7 @@ function stateLine(i: StageInfo<SyncRecord>, day: string): { text: string; tone:
   if (i.state === "approved" || i.state === "approved_reserves") return { text: `✓ ${STAGE_STATE_LABELS[i.state]}`, tone: "ok" };
   if (i.state === "awaiting") return { text: "À valider", tone: "warn" };
   if (i.state === "stopped") return { text: "Arrêtée", tone: "danger" };
+  if (i.state === "paused") return { text: "En pause", tone: "warn" };
   if (stageTasksDone(i)) return { text: "✓ Tâches terminées", tone: "ok" };
   const end = text(s.data.end_date);
   if (end && end < day) return { text: `En retard de ${daysBetween(end, day)} j`, tone: "danger" };
@@ -72,23 +76,27 @@ export function StageStrip({ stages, showPct, onPick }: { stages: StageInfo<Sync
 }
 
 /** Onglet Étapes : cartes, livrables de l'étape choisie, réglages de l'étape. */
-export function StagesTab({ project, stages, tasks, entries, sold, amounts, canEdit, selected, onSelect, managerId }: {
+export function StagesTab({ project, stages, tasks, entries, sold, amounts, canEdit, selected, onSelect, managerId, billing, ctx, review, onReviewDone }: {
   project: SyncRecord; stages: StageInfo<SyncRecord>[]; tasks: SyncRecord[]; entries: SyncRecord[];
   sold: { V: number; currency: string; source: string }; amounts: boolean; canEdit: boolean;
   selected: string | null; onSelect: (id: string | null) => void; managerId: string;
+  billing: BillingData; ctx: ProjectContext; review?: string | null; onReviewDone?: () => void;
 }) {
   const { db, session } = useApp();
   const write = useGuardedWrite();
   const team = useTeam();
   const [error, setError] = useState<string | null>(null);
+  const [deciding, setDeciding] = useState<string | null>(review ?? null);
+  const [flash, setFlash] = useState<Flash | null>(null);
+  const c: StageContext = { project, stages, tasks, entries, billing, ctx, amounts };
   const day = today();
   const records = stages.map((i) => i.stage);
   const share = billingShareTotal(records);
   const anyPct = records.some((s) => Number(s.data.billing_pct) > 0);
   const amountsBy = stageAmounts(sold.V, records);
   const fm = (n: number) => (sold.currency === "XAF" ? formatXaf(n) : formatMoney(n, sold.currency));
-  const current = stages.find((i) => i.stage.id === selected)
-    ?? stages.find((i) => i.state === "active" || i.state === "awaiting")
+  const current = stages.find((i) => i.stage.id === (deciding ?? selected))
+    ?? stages.find((i) => i.state === "awaiting" || i.state === "active" || i.state === "paused")
     ?? stages.find((i) => i.state === "upcoming")
     ?? stages[0];
 
@@ -163,7 +171,10 @@ export function StagesTab({ project, stages, tasks, entries, sold, amounts, canE
               </span>
               {amounts && Number(s.data.billing_pct) > 0 && (
                 <span className="stage-money">
-                  <span className="muted">{stageRole(s)} {pctLabel(s.data.billing_pct)}</span>
+                  <span className="muted">{stageRole(s)} {pctLabel(s.data.billing_pct)}{(() => {
+                    const inv = invoiceOfStage(s.id, "stage", billing);
+                    return inv ? <span className={inv.data.number ? "ok-text" : "warn-text"}> · {inv.data.number ? "facturé" : "facture en brouillon"}</span> : null;
+                  })()}</span>
                   <strong className="mono">{sold.V > 0 ? fm(amountsBy.get(s.id) ?? 0).replace(/\s?FCFA$/, "") : "—"}</strong>
                 </span>
               )}
@@ -171,6 +182,17 @@ export function StagesTab({ project, stages, tasks, entries, sold, amounts, canE
           );
         })}
       </div>
+
+      {current && (
+        <div className="stage-decision" key={current.stage.id}>
+          <StageDecisionPanel c={c} info={current} flash={flash} setFlash={setFlash} onReview={() => setDeciding(current.stage.id)} />
+        </div>
+      )}
+      {deciding && stages.find((i) => i.stage.id === deciding) && (
+        <ValidationDialog c={c} info={stages.find((i) => i.stage.id === deciding)!}
+          onClose={() => { setDeciding(null); onReviewDone?.(); }}
+          onDone={(f) => { onSelect(deciding); setDeciding(null); setFlash(f); onReviewDone?.(); }} />
+      )}
 
       {current && (
         <div className="stage-detail">
@@ -201,7 +223,7 @@ export function StagesTab({ project, stages, tasks, entries, sold, amounts, canE
             )}
             {open.length > 0 && (
               <p className="stage-open small">
-                <strong>Encore ouvert dans l'étape : </strong>
+                <strong>{current && (current.state === "approved" || current.state === "approved_reserves") ? "Tâches restées ouvertes à la validation : " : "Encore ouvert dans l'étape : "}</strong>
                 {open.slice(0, 6).map((t, k) => (
                   <span key={t.id}>{k ? ", " : ""}« {text(t.data.title)} »{t.data.blocked ? ` (bloqué : ${BLOCK_LABELS[text(t.data.blocked_reason)]?.toLowerCase() ?? "motif non précisé"})` : t.data.status === "review" ? " (à valider)" : t.data.status === "doing" ? " (en cours)" : ""}</span>
                 ))}

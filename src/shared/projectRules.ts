@@ -6,8 +6,9 @@
  * l'appareil (src/web/local/guard.ts) pour refuser une action tout de suite,
  * même hors ligne.
  *
- * Références : 02-modele-de-donnees.md, §2.3 (tables), §4.3 (R5, R6, R9, R12,
- * R13, R14) et §4.4 (redactPatch).
+ * Références : 02-modele-de-donnees.md, §2.3 (tables), §4.3 (R1 à R6, R8, R9,
+ * R11 à R14) et §4.4 (redactPatch). Lot 3 : journal des décisions immuable, « la
+ * première validation fait foi », ordre des étapes, qui décide (délégation, Q2).
  */
 import { decodeHlc } from "./hlc.ts";
 import type { Actor, Change, Fields, SyncRecord } from "./sync.ts";
@@ -22,6 +23,23 @@ export const BLOCK_REASONS = ["material", "client", "info", "other"] as const;
 export const MEMBER_ROLES = ["sponsor", "manager", "member"] as const;
 /** Natures d'étape (lot 2) : Démarrage, ordinaire, Levée des réserves. */
 export const STAGE_KINDS = ["start", "normal", "reserves"] as const;
+/** Décisions du journal `project_decisions` (§2.3). Le lot 3 écrit les six premières. */
+export const DECISION_KINDS = [
+  "stage_approved", "stage_approved_with_reserves", "stage_reopened", "project_paused", "project_resumed", "project_stopped",
+  "budget_revised", "deadline_revised", "plan_requested", "amendment_proposed", "project_closed", "project_reopened",
+] as const;
+/** Décisions qui valident une étape. */
+export const APPROVALS = ["stage_approved", "stage_approved_with_reserves"];
+export const isApproval = (kind: unknown) => APPROVALS.includes(String(kind));
+/** Décisions qui portent sur une étape (stage_id obligatoire). */
+const STAGE_DECISIONS = ["stage_approved", "stage_approved_with_reserves", "stage_reopened"];
+/** Décisions réservées à la direction (RG4.5, RG17.2). */
+const DIRECTION_DECISIONS = ["stage_reopened", "project_reopened"];
+/** Champs de suivi qu'un responsable d'étape peut écrire : « Demander la validation » (RG4.2). */
+const REVIEW_FIELDS = new Set(["review_requested_at", "review_requested_by", "review_requested_by_name", "review_note"]);
+/** Natures de tâche (lot 3 : tâches de réserve créées par une validation). */
+export const TASK_KINDS = ["normal", "reserve", "plan", "issue"] as const;
+
 /** Semaine ISO d'une priorité de la semaine : `2026-W48`. */
 const WEEK = /^\d{4}-W\d{2}$/;
 
@@ -44,11 +62,32 @@ export interface ProjectContext {
   rolesIn(projectId: string, userId: string): string[];
   /** Ligne du projet, ou null si inconnue. */
   project(projectId: string): SyncRecord | null;
+  /** Étapes du projet (lot 3), y compris celles acceptées plus tôt dans le même envoi. */
+  stages?(projectId: string): SyncRecord[];
+  /** Décisions du projet (lot 3), y compris celles acceptées plus tôt dans le même envoi. */
+  decisions?(projectId: string): SyncRecord[];
 }
 
 const str = (v: unknown) => (typeof v === "string" ? v : "");
 const isInt = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 0;
 const has = (patch: Fields, k: string) => Object.prototype.hasOwnProperty.call(patch, k);
+const ddmmyyyy = (iso: string) => (iso ? `${iso.slice(8, 10)}/${iso.slice(5, 7)}/${iso.slice(0, 4)}` : "");
+
+/** Décisions vivantes d'une étape, dans l'ordre (decided_at, id) : la dernière fait foi. */
+export function decisionsOfStage<T extends { id: string; data: Fields }>(stageId: string, decisions: T[]): T[] {
+  return decisions.filter((d) => !d.data[DELETED] && d.data.stage_id === stageId)
+    .sort((a, b) => str(a.data.decided_at).localeCompare(str(b.data.decided_at)) || a.id.localeCompare(b.id));
+}
+
+/** État d'une étape d'après son journal seul : validée, arrêtée, en pause, ou rien (pas de décision en vigueur). */
+export function decidedState(stageId: string, decisions: { id: string; data: Fields }[]): "approved" | "approved_reserves" | "stopped" | "paused" | null {
+  const kind = str(decisionsOfStage(stageId, decisions).at(-1)?.data.kind);
+  if (kind === "stage_approved") return "approved";
+  if (kind === "stage_approved_with_reserves") return "approved_reserves";
+  if (kind === "project_stopped" || kind === "stage_stopped") return "stopped";
+  if (kind === "project_paused") return "paused";
+  return null;
+}
 
 /** Champ non modifiable une fois posé (R5). */
 function frozen(existing: SyncRecord | null, patch: Fields, field: string): boolean {
@@ -114,6 +153,23 @@ export function checkProjectChange(existing: SyncRecord | null, change: Change):
       if (start && end && end < start) return "la fin de l'étape précède son début";
       return null;
     }
+    case "project_decisions": {
+      // R1 : journal en ajout seul ; une décision enregistrée ne change plus, suppression comprise.
+      if (existing) return "cette décision est déjà enregistrée et ne peut plus être modifiée : enregistrez une nouvelle décision";
+      const kind = str(p.kind);
+      if (!(DECISION_KINDS as readonly string[]).includes(kind)) return "nature de décision inconnue";
+      if (!str(p.project_id)) return "cette décision n'est rattachée à aucun projet";
+      if ((STAGE_DECISIONS.includes(kind) || kind === "project_paused" || kind === "project_stopped") && !str(p.stage_id)) return "indiquez l'étape concernée";
+      if (!str(p.decided_by) || !str(p.decided_at)) return "une décision porte son auteur et sa date";
+      if (["project_stopped", "stage_reopened", "project_reopened", "project_paused", "budget_revised", "deadline_revised"].includes(kind) && !str(p.comment).trim()) return "indiquez le motif de la décision";
+      if (kind === "stage_approved_with_reserves" && !str(p.reserves).trim()) return "indiquez au moins une réserve, une par ligne";
+      if (has(p, "retention_pct")) {
+        const v = p.retention_pct;
+        if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 100) return "la retenue doit être comprise entre 0 et 100 %";
+      }
+      if (p[DELETED]) return "une décision ne se supprime pas";
+      return null;
+    }
     case "quotes": {
       // Un devis envoyé ne reçoit son projet qu'une fois : de vide à une valeur (RG3.2, RG3.6).
       const numbered = typeof existing?.data.number === "string" && existing.data.number !== "";
@@ -127,6 +183,8 @@ export function checkProjectChange(existing: SyncRecord | null, change: Change):
       if (has(p, "status") && !(TASK_STATUSES as readonly string[]).includes(str(p.status))) return "statut de tâche inconnu";
       if (has(p, "blocked_reason") && p.blocked_reason !== "" && !(BLOCK_REASONS as readonly string[]).includes(str(p.blocked_reason))) return "motif de blocage inconnu";
       if (has(p, "assignee_id") && p.assignee_id !== "" && !str(p.assignee_id).startsWith("tm-")) return "personne introuvable dans l'annuaire";
+      if (has(p, "kind") && !(TASK_KINDS as readonly string[]).includes(str(p.kind))) return "nature de tâche inconnue";
+      if (frozen(existing, p, "decision_id")) return "identifiant invalide";
       return null;
     }
     case "time_entries": {
@@ -151,6 +209,52 @@ export function leadsProject(actor: Actor, projectId: string, ctx?: ProjectConte
   return ctx.rolesIn(projectId, actor.userId).some((r) => r === "manager" || r === "sponsor");
 }
 
+/**
+ * Qui décide pour un projet (R4) : la direction, le commanditaire du projet, ou le
+ * responsable du projet si la case « peut valider les étapes » est cochée (Q2).
+ */
+export function canDecide(actor: Actor, projectId: string, ctx?: ProjectContext): boolean {
+  if (DIRECTION.includes(actor.role)) return true;
+  if (actor.role === "employee" || !ctx || !projectId) return false;
+  const roles = ctx.rolesIn(projectId, actor.userId);
+  if (roles.includes("sponsor")) return true;
+  return roles.includes("manager") && ctx.project(projectId)?.data.manager_can_validate === true;
+}
+
+/** Vrai si l'acteur peut demander la validation de l'étape : son responsable, ou qui dirige le projet (RG4.2). */
+export function canRequestReview(actor: Actor, stage: { data: Fields } | null, ctx?: ProjectContext): boolean {
+  if (!stage) return false;
+  if (actor.role !== "employee") return true;
+  if (str(stage.data.owner_id) === teamMemberIdOf(actor.userId)) return true;
+  return leadsProject(actor, str(stage.data.project_id), ctx);
+}
+
+/**
+ * Raison de refuser une validation d'étape, d'après le journal et les étapes du projet :
+ * étape déjà validée (R2, « la première validation fait foi »), étape arrêtée, ou étape
+ * précédente pas encore validée (R3, CA3.7). Null si la validation est possible.
+ */
+export function approvalBlocker(stageId: string, stages: { id: string; data: Fields }[], decisions: { id: string; data: Fields }[]): string | null {
+  const last = decisionsOfStage(stageId, decisions).at(-1);
+  if (last && isApproval(last.data.kind)) {
+    const who = str(last.data.decided_by_name);
+    return `cette étape est déjà validée${who ? ` par ${who}` : ""} le ${ddmmyyyy(str(last.data.decided_at).slice(0, 10))}`;
+  }
+  if (last && last.data.kind === "project_stopped") return "cette étape est arrêtée : elle ne peut plus être validée";
+  const live = stages.filter((s) => !s.data[DELETED]);
+  const stage = live.find((s) => s.id === stageId);
+  if (!stage) return null;
+  const rank = Number(stage.data.rank) || 0;
+  const before = live.filter((s) => s.id !== stageId && (Number(s.data.rank) || 0) < rank)
+    .sort((a, b) => (Number(a.data.rank) || 0) - (Number(b.data.rank) || 0));
+  for (const s of before) {
+    const state = decidedState(s.id, decisions);
+    if (state === "approved" || state === "approved_reserves" || state === "stopped") continue;
+    return `validez d'abord l'étape ${str(s.data.name)}`;
+  }
+  return null;
+}
+
 /** Vrai si l'acteur peut passer une tâche à Terminé (vérification de À vérifier → Terminé, CA1.5). */
 export function canCloseTask(actor: Actor, projectId: string, ctx?: ProjectContext): boolean {
   if (actor.role !== "employee") return true;
@@ -172,15 +276,55 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
       return direction ? null : "vous ne pouvez pas modifier l'annuaire ni les coûts horaires";
     case "project_members":
       return ["admin", "director", "sales", "project_manager"].includes(role) ? null : "vous ne pouvez pas modifier l'équipe de ce projet";
-    case "project_stages":
-      // Écriture ouverte aux rôles qui gèrent les projets (WRITABLE, comptable compris) ; jamais l'employé.
-      return role === "employee" ? "vous ne pouvez pas modifier les étapes de ce projet" : null;
-    case "projects":
-      if (has(p, DELETED) && p[DELETED] === true && !direction) return "vous ne pouvez pas supprimer ce projet";
-      return null;
-    case "tasks": {
+    case "project_stages": {
+      // Écriture ouverte aux rôles qui gèrent les projets (WRITABLE, comptable compris).
       if (role !== "employee") return null;
+      // L'employé responsable de l'étape (ou du projet) peut seulement en demander la validation (RG4.2).
+      const reviewOnly = Object.keys(p).every((k) => REVIEW_FIELDS.has(k));
+      if (existing && reviewOnly && canRequestReview(actor, existing, ctx)) return null;
+      return "vous ne pouvez pas modifier les étapes de ce projet";
+    }
+    case "projects": {
+      if (has(p, DELETED) && p[DELETED] === true && !direction) return "vous ne pouvez pas supprimer ce projet";
+      // Délégation de la validation (Q2) : direction ou commanditaire du projet seulement.
+      if (has(p, "manager_can_validate") && !direction && !(ctx && ctx.rolesIn(change.row, actor.userId).includes("sponsor"))) {
+        return "vous ne pouvez pas changer qui valide les étapes de ce projet";
+      }
+      return null;
+    }
+    case "project_decisions": {
+      const projectId = str(p.project_id);
+      const kind = str(p.kind);
+      if (str(p.decided_by) !== actor.userId) return "une décision est enregistrée au nom de la personne qui la prend";
+      if (DIRECTION_DECISIONS.includes(kind)) {
+        if (!direction) return "vous ne pouvez pas rouvrir une étape ou un projet";
+      } else if (!canDecide(actor, projectId, ctx)) {
+        return "vous ne pouvez pas valider les étapes de ce projet";
+      }
+      if (isApproval(kind) && ctx?.decisions && ctx.stages) {
+        const blocker = approvalBlocker(str(p.stage_id), ctx.stages(projectId), ctx.decisions(projectId));
+        if (blocker) return blocker;
+      }
+      return null;
+    }
+    case "invoices": {
+      // Facture d'étape ou de retenue (R11, CA3.4) : la décision doit exister, et une même
+      // facture ne passe pas d'une décision à une autre (une seule facture de jalon par étape).
+      if (!has(p, "decision_id") || !str(p.decision_id)) return null;
+      if (existing && !existing.data[DELETED] && str(existing.data.decision_id) && str(existing.data.decision_id) !== str(p.decision_id)) {
+        return "cette étape a déjà sa facture";
+      }
+      const projectId = str(p.project_id) || str(existing?.data.project_id);
+      if (ctx?.decisions && !ctx.decisions(projectId).some((d) => d.id === p.decision_id)) return "la décision de cette facture n'a pas été enregistrée";
+      return null;
+    }
+    case "tasks": {
       const projectId = str(existing?.data.project_id) || str(p.project_id);
+      // Tâche issue d'une décision (réserve) : refusée si la décision ne l'est (R11, pas de doublon).
+      if (!existing && str(p.decision_id) && ctx?.decisions && !ctx.decisions(projectId).some((d) => d.id === p.decision_id)) {
+        return "la décision de cette tâche n'a pas été enregistrée";
+      }
+      if (role !== "employee") return null;
       if (leadsProject(actor, projectId, ctx)) return null;
       const own = teamMemberIdOf(actor.userId);
       if (has(p, DELETED) && p[DELETED]) return "vous ne pouvez pas supprimer cette tâche";
@@ -219,6 +363,7 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
 export const REDACT: Record<string, Record<string, readonly string[]>> = {
   employee: {
     projects: ["budget", "hourly_rate", "cost_rate"],
+    project_decisions: ["old_value", "new_value", "snapshot", "retention_pct"],
   },
 };
 

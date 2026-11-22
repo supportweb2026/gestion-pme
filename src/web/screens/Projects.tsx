@@ -10,6 +10,10 @@
  * et prévu à date dans l'en-tête, création depuis un modèle ou un devis accepté,
  * priorités de la semaine.
  *
+ * Lot 3 : demande et écran de validation d'étape, journal des décisions, réserves en tâches,
+ * facture de jalon sur le montant vendu (remplace l'ancien « jalon % du budget »), bloc
+ * « À décider » sur la liste des projets, délégation de la validation au responsable du projet.
+ *
  * Rédaction : dire ce qui se passe et son effet, sans renvoyer vers une hiérarchie.
  */
 import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from "react";
@@ -20,7 +24,8 @@ import {
   assigneeOf, BLOCK_LABELS, canPin, checkDayHours, daysBetween, hoursOn, isoWeek, matchTeamMember, MAX_WEEK_PRIORITIES, MEMBER_ROLE_LABELS,
   nextDeadline, pct100, projectProgress, soldOf, stagesOf, type StageInfo,
 } from "../../shared/projectControl.ts";
-import { canCloseTask, financeIdOf, memberIdOf, teamMemberIdOf } from "../../shared/projectRules.ts";
+import { canCloseTask, canDecide, financeIdOf, memberIdOf, teamMemberIdOf } from "../../shared/projectRules.ts";
+import { decisionsToMake, soldBases } from "../../shared/projectDecisions.ts";
 import type { SyncRecord } from "../../shared/sync.ts";
 import { currencyOf, totalsOf } from "../ledger.ts";
 import { formatMoney } from "../../shared/currency.ts";
@@ -32,6 +37,7 @@ import { NewProject } from "./projects/NewProject.tsx";
 import { StageStrip, StagesTab } from "./projects/Stages.tsx";
 import { WeekPriorities } from "./projects/WeekPriorities.tsx";
 import { NEW_FROM_QUOTE } from "./projects/QuoteProjectBanner.tsx";
+import { DecisionsBlock } from "./projects/Decisions.tsx";
 
 const PRIORITY: Record<string, string> = { low: "Basse", normal: "Normale", high: "Haute" };
 const hoursLabel = (h: number) => `${(Math.round(h * 100) / 100).toLocaleString("fr-FR")} h`;
@@ -48,7 +54,8 @@ function useProjectData() {
   const cost_rates = useTable("cost_rates");
   const project_stages = useTable("project_stages");
   const quotes = useTable("quotes");
-  return { tasks, time_entries, expenses, invoices, credit_notes, project_finance, cost_rates, project_stages, quotes };
+  const project_decisions = useTable("project_decisions");
+  return { tasks, time_entries, expenses, invoices, credit_notes, project_finance, cost_rates, project_stages, quotes, project_decisions };
 }
 
 /** Membres (non retirés) de l'équipe d'un projet. */
@@ -77,6 +84,8 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
   // Nouveau projet : "" = sans devis ; sinon l'identifiant du devis à lancer.
   const [creating, setCreating] = useState<string | null>(fromQuote(initialOpen));
   const [status, setStatus] = useState("open");
+  // Ouverture depuis « À décider » : l'onglet Étapes, sur l'étape, avec l'écran de validation.
+  const [focus, setFocus] = useState<{ stage: string; review: boolean } | null>(null);
   const [query, setQuery] = useState("");
   const role = session.user.role;
   const manager = can.manageProjects(role);
@@ -97,7 +106,7 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
   }
   if (open) {
     const project = projects.find((p) => p.id === open);
-    if (project) return <ProjectDetail project={project} clientName={clientName(project.data.client_id)} onBack={() => setOpen(null)} />;
+    if (project) return <ProjectDetail key={project.id} project={project} clientName={clientName(project.data.client_id)} focus={focus} onBack={() => { setOpen(null); setFocus(null); }} />;
   }
 
   // Employé : ses projets (équipe, tâches attribuées) et les anciens projets sans équipe (filtre d'affichage, MVP).
@@ -130,6 +139,10 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
       </div>
       {view === "team" ? <Team /> : (
         <>
+          {manager && (
+            <DecisionsBlock items={decisionsToMake(projects, data, (p) => canDecide({ userId: session.user.id, role }, p.id, localProjectContext(projects, members)), today(), amounts)}
+              onOpen={(projectId, stageId, review) => { setFocus({ stage: stageId, review }); setOpen(projectId); }} />
+          )}
           {visibleProjects.length > 0 && (
             <div className="toolbar">
               <input type="search" placeholder="Rechercher un projet ou un client" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher un projet" />
@@ -229,6 +242,8 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
   const defaultLead = currentLead ? text(currentLead.data.team_member_id) : legacyLead ? legacyLead.id : record ? "" : teamMemberIdOf(session.user.id);
   const amounts = can.seeAmounts(session.user.role);
   const soldManual = Number(finances.find((x) => record && x.id === financeIdOf(record.id))?.data.sold_manual) || 0;
+  // Délégation de la validation des étapes (Q2) : direction ou commanditaire du projet.
+  const canDelegate = ["admin", "director"].includes(session.user.role) || members.some((m) => m.data.role === "sponsor" && m.data.user_id === session.user.id);
 
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -238,10 +253,11 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
       name: f.name.trim(), client_id: f.client_id, status: f.status, billing: f.billing,
       start_date: f.start_date, end_date: f.end_date, description: f.description.trim(), site_address: (f.site_address ?? "").trim(),
       ...(lead ? { manager: text(lead.data.name) } : {}),
+      ...(canDelegate ? { manager_can_validate: f.manager_can_validate === "on" } : {}),
     };
     const id = record?.id ?? db.newId("prj");
     const patch: Record<string, unknown> = {};
-    for (const [k, val] of Object.entries(values)) if (!record || (record.data[k] ?? "") !== val) patch[k] = val;
+    for (const [k, val] of Object.entries(values)) if (!record || (record.data[k] ?? (typeof val === "boolean" ? false : "")) !== val) patch[k] = val;
     if (!record) Object.assign(patch, { created_by: session.user.id, created_at: new Date().toISOString() });
     if (Object.keys(patch).length) await db.write("projects", id, patch);
 
@@ -298,6 +314,12 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
           {team.map((m) => <option key={m.id} value={m.id}>{text(m.data.name)}</option>)}
         </select>
       </label>
+      {canDelegate && (
+        <label className="wide inline check-line">
+          <input type="checkbox" name="manager_can_validate" defaultChecked={record?.data.manager_can_validate === true} />
+          <span>Le responsable du projet peut valider les étapes<span className="muted small"> : utile quand le commanditaire est souvent sur le terrain. Les décisions restent enregistrées au nom de qui les prend.</span></span>
+        </label>
+      )}
       <label>Début<input type="date" name="start_date" defaultValue={v("start_date", today())} /></label>
       <label>Fin prévue<input type="date" name="end_date" defaultValue={v("end_date")} /></label>
       <label className="wide">Adresse ou site<input name="site_address" defaultValue={v("site_address")} placeholder="Ex. : Agence BGFI, carrefour SNI, Owendo" /></label>
@@ -326,14 +348,16 @@ const dayMonth = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString
 /** Rôles qui découpent un projet en étapes (l'employé les consulte). */
 const canPlan = (role: string) => role !== "employee" && can.manageProjects(role);
 
-function ProjectDetail({ project, clientName, onBack }: { project: SyncRecord; clientName: string; onBack: () => void }) {
+function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRecord; clientName: string; onBack: () => void; focus?: { stage: string; review: boolean } | null }) {
   const { session } = useApp();
   const data = useProjectData();
   const clients = useTable("clients");
   const members = useMembers(project.id);
-  const [view, setView] = useState<DetailView>("tasks");
+  const [view, setView] = useState<DetailView>(focus ? "stages" : "tasks");
   const [stageFilter, setStageFilter] = useState<string>("all");
-  const [pickedStage, setPickedStage] = useState<string | null>(null);
+  const [pickedStage, setPickedStage] = useState<string | null>(focus?.stage ?? null);
+  const [review, setReview] = useState<string | null>(focus?.review ? focus.stage : null);
+  const ctx = localProjectContext([project], members);
   const [editing, setEditing] = useState(false);
   const day = today();
   const s = projectStats(project, data, day);
@@ -441,8 +465,8 @@ function ProjectDetail({ project, clientName, onBack }: { project: SyncRecord; c
             <div className="head-block">
               <div className="kpi-label">Prochaine échéance</div>
               <div className="head-value head-deadline">{deadline.label}</div>
-              <div className={`small ${deadline.date && deadline.date < day ? "danger-text strong" : "muted"}`}>
-                {!deadline.date ? "Date à définir" : deadline.date === day ? `aujourd'hui, ${dayMonth(deadline.date)}` : deadline.date < day ? `dépassée de ${daysBetween(deadline.date, day)} j (${dayMonth(deadline.date)})` : dayMonth(deadline.date)}
+              <div className={`small ${deadline.date && deadline.date < day ? "danger-text strong" : "muted"}`} data-testid="project-deadline">
+                {!deadline.date ? (deadline.note ?? "Date à définir") : deadline.date === day ? `aujourd'hui, ${dayMonth(deadline.date)}` : deadline.date < day ? `dépassée de ${daysBetween(deadline.date, day)} j (${dayMonth(deadline.date)})` : dayMonth(deadline.date)}
               </div>
             </div>
           )}
@@ -465,12 +489,12 @@ function ProjectDetail({ project, clientName, onBack }: { project: SyncRecord; c
       )}
       {view === "stages" && (
         <StagesTab project={project} stages={stages} tasks={tasks} entries={entries} sold={sold} amounts={amounts} canEdit={planner}
-          selected={pickedStage} onSelect={setPickedStage} managerId={leadId} />
+          selected={pickedStage} onSelect={setPickedStage} managerId={leadId} billing={data} ctx={ctx} review={review} onReviewDone={() => setReview(null)} />
       )}
       {view === "gantt" && <Gantt project={project} tasks={tasks} stages={stageRecords} />}
       {view === "time" && <TimeEntries project={project} tasks={tasks} entries={entries} invoices={data.invoices} />}
       {view === "team" && <ProjectTeam project={project} members={members} />}
-      {view === "finance" && amounts && <Finance project={project} data={data} />}
+      {view === "finance" && amounts && <Finance project={project} data={data} onStages={stages.length ? () => setView("stages") : undefined} />}
     </section>
   );
 }
@@ -781,13 +805,15 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
 /** Étiquettes d'une carte : étape, priorité de la semaine, livrable, priorité haute. Toujours un mot, pas seulement une couleur. */
 function TaskTags({ task, stage, pinned }: { task: SyncRecord; stage: string; pinned: boolean }) {
   const done = task.data.status === "done";
-  if (!stage && !pinned && !task.data.deliverable && task.data.priority !== "high") return null;
+  const reserve = task.data.kind === "reserve";
+  if (!stage && !pinned && !task.data.deliverable && task.data.priority !== "high" && !reserve) return null;
   return (
     <div className="task-tags">
       {stage && <span className="tag stage-tag"><PIcon name="diamond" />{stage}</span>}
+      {reserve && <span className="tag warn">Réserve</span>}
       {pinned && <span className="tag"><PIcon name="pushpin" />Priorité</span>}
       {task.data.deliverable ? <span className={`tag ${done ? "ok" : "info"}`}>{done ? "Remis au client" : "À remettre au client"}</span> : null}
-      {task.data.priority === "high" && <span className="tag danger">Priorité haute</span>}
+      {task.data.priority === "high" && !reserve && <span className="tag danger">Priorité haute</span>}
     </div>
   );
 }
@@ -1100,7 +1126,7 @@ function TimeEntries({ project, tasks, entries, invoices }: { project: SyncRecor
   );
 }
 
-function Finance({ project, data }: { project: SyncRecord; data: ReturnType<typeof useProjectData> }) {
+function Finance({ project, data, onStages }: { project: SyncRecord; data: ReturnType<typeof useProjectData>; onStages?: () => void }) {
   const { db, session, go } = useApp();
   const settings = useSettings();
   const s = projectStats(project, data, today());
@@ -1134,16 +1160,25 @@ function Finance({ project, data }: { project: SyncRecord; data: ReturnType<type
     go("invoices", id);
   }
 
-  async function billMilestone() {
+  // Lot 3 (Q1) : on facture une part du MONTANT VENDU, jamais du budget (un coût).
+  const sold = soldBases(project, data, DEFAULT_VAT_RATE);
+  const staged = stagesOf(project.id, data.project_stages).some((st) => Number(st.data.billing_pct) > 0) && !["time", "none"].includes(text(project.data.billing) || "time");
+  async function billSoldShare() {
     if (!project.data.client_id) return setMessage("Ce projet n'a pas de client : choisissez-en un dans « Modifier le projet ».");
-    const pct = Number(percent);
-    const budget = fin.budget;
-    if (!budget) return setMessage("Ce projet n'a pas de budget : indiquez-le dans « Modifier le projet ».");
+    const pct = Number(String(percent).replace(",", "."));
+    if (!(sold.V > 0)) return setMessage("Le montant vendu de ce projet est inconnu : indiquez-le dans « Modifier le projet ».");
     if (!(pct > 0 && pct <= 100)) return setMessage("Indiquez un pourcentage entre 1 et 100.");
+    const ref = text(sold.principal?.data.number);
     const id = db.newId("fa");
     await db.write("invoices", id, {
       ...baseInvoice(),
-      lines: [{ label: `${text(project.data.name)} · ${pct} % du forfait`, qty: 1, unitPrice: Math.round((budget * pct) / 100), vatRate: DEFAULT_VAT_RATE }],
+      currency: sold.currency,
+      rate: sold.rate,
+      lines: sold.bases.map((b) => ({
+        label: `${text(project.data.name)} : ${pct.toLocaleString("fr-FR")} % ${ref ? `du devis ${ref}` : "du montant vendu"}${sold.bases.length > 1 ? ` (TVA ${b.vatRate} %)` : ""}`,
+        qty: 1, unitPrice: Math.round(((b.amount * pct) / 100) * 10 ** sold.decimals) / 10 ** sold.decimals, vatRate: b.vatRate,
+      })),
+      ...(sold.principal ? { quote_id: sold.principal.id, quote_number: ref, withholding_rate: Number(sold.principal.data.withholding_rate) || 0, withholding_label: text(sold.principal.data.withholding_label) } : {}),
     });
     go("invoices", id);
   }
@@ -1158,7 +1193,7 @@ function Finance({ project, data }: { project: SyncRecord; data: ReturnType<type
               {invoices.map((i) => (
                 <tr key={i.id} className="clickable" onClick={() => go("invoices", i.id)}>
                   <td className="mono">{text(i.data.number) || "Brouillon"}</td>
-                  <td>{formatDate(i.data.date)}</td>
+                  <td>{formatDate(i.data.date)}{i.data.stage_id ? <span className="muted small"> · {i.data.origin === "retention" ? "retenue" : "étape"} {text(data.project_stages.find((st) => st.id === i.data.stage_id)?.data.name)}</span> : null}</td>
                   <td className="right mono">{formatMoney(totalsOf(i).net, currencyOf(i))} HT</td>
                 </tr>
               ))}
@@ -1173,9 +1208,18 @@ function Finance({ project, data }: { project: SyncRecord; data: ReturnType<type
             </p>
             <div className="actions">
               <button className="primary" onClick={billTime} disabled={s.unbilledHours === 0}>Facturer le temps passé</button>
-              <label className="inline">Part du budget <input type="number" min="1" max="100" value={percent} onChange={(e) => setPercent(e.target.value)} style={{ width: 72 }} /> %</label>
-              <button onClick={billMilestone}>Facturer cette part</button>
+              {!staged && (
+                <>
+                  <label className="inline">Part du montant vendu <input type="number" min="1" max="100" value={percent} onChange={(e) => setPercent(e.target.value)} style={{ width: 72 }} aria-label="Part du montant vendu (%)" /> %</label>
+                  <button onClick={billSoldShare}>Facturer cette part</button>
+                </>
+              )}
             </div>
+            {staged ? (
+              <p className="muted small">Les factures d'étape sont préparées à la validation de chaque étape, sur le montant vendu.{onStages ? <>{" "}<button className="link" onClick={onStages}>Voir les étapes</button></> : null}</p>
+            ) : sold.V > 0 ? (
+              <p className="muted small">Montant vendu : {formatMoney(sold.V, sold.currency)} HT{sold.principal ? ` (devis ${text(sold.principal.data.number)})` : ""}.</p>
+            ) : null}
             {message && <p className="error">{message}</p>}
           </>
         )}

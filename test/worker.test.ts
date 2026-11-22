@@ -296,3 +296,53 @@ test("projets (CA1.4, CA1.5) : aucun montant envoyé à l'employé, historique c
   assert.deepEqual(pmAll.filter((c) => c.tbl === "cost_rates").map((c) => c.row), ["cr-company"]);
   assert.ok(pmAll.some((c) => c.tbl === "project_finance"), "marge et budget du projet visibles");
 });
+
+test("projets lot 3 (CA3.4, CA3.5) : la première validation fait foi sur le serveur ; responsable sans délégation refusé", async () => {
+  const me = (await call("/api/login", { email: "admin@sodepsi.ga", password: "motdepasse1", deviceId: DEV_A })).data;
+  const tA = me.token;
+  const tB = (await call("/api/login", { email: "admin@sodepsi.ga", password: "motdepasse1", deviceId: DEV_B })).data.token;
+  const uid = me.user.id as string;
+  const now = new Date().toISOString();
+  await call("/api/sync", { since: 0, changes: [
+    change(clockA, "projects", "prj-l3", { name: "Réfection des bureaux", status: "active", client_id: "client-0001", billing: "stages" }),
+    change(clockA, "project_stages", "stg-l3-1", { project_id: "prj-l3", name: "Démarrage", rank: 1, kind: "start", billing_pct: 30 }),
+    change(clockA, "project_stages", "stg-l3-2", { project_id: "prj-l3", name: "Réalisation", rank: 2, billing_pct: 70 }),
+  ] }, tA);
+  const approval = (clock: HlcClock, id: string, stageId: string) => change(clock, "project_decisions", id, {
+    project_id: "prj-l3", stage_id: stageId, kind: "stage_approved", decided_by: uid, decided_by_name: "Johann", decided_at: now,
+  });
+  // CA3.7 : Réalisation avant Démarrage, refusée.
+  const early = await call("/api/sync", { since: 0, changes: [approval(clockA, "dec-early", "stg-l3-2")] }, tA);
+  assert.match(early.data.rejected[0].reason, /validez d'abord l'étape Démarrage/);
+  // A valide Démarrage, avec sa facture de jalon.
+  const invoice = (clock: HlcClock, decisionId: string) => change(clock, "invoices", "fa-jalon-stg-l3-1-1", { status: "draft", project_id: "prj-l3", stage_id: "stg-l3-1", decision_id: decisionId, origin: "stage", client_id: "client-0001", lines: [] });
+  const a = await call("/api/sync", { since: 0, changes: [approval(clockA, "dec-a", "stg-l3-1"), invoice(clockA, "dec-a")] }, tA);
+  assert.equal(a.data.accepted.length, 2);
+  // B, resté hors ligne, avait validé aussi, avec une réserve et la même facture : tout est refusé.
+  const b = await call("/api/sync", { since: 0, changes: [
+    { ...approval(clockB, "dec-b", "stg-l3-1"), patch: { ...approval(clockB, "dec-b", "stg-l3-1").patch, kind: "stage_approved_with_reserves", reserves: "Joint" } },
+    change(clockB, "tasks", "tsk-res-dec-b-1", { project_id: "prj-l3", stage_id: "stg-l3-2", title: "Joint", kind: "reserve", decision_id: "dec-b", status: "todo" }),
+    invoice(clockB, "dec-b"),
+  ] }, tB);
+  assert.equal(b.data.accepted.length, 0);
+  assert.match(b.data.rejected[0].reason, /^cette étape est déjà validée par Johann le /);
+  assert.match(b.data.rejected[1].reason, /n'a pas été enregistrée/);
+  assert.equal(b.data.rejected[2].reason, "cette étape a déjà sa facture");
+  assert.equal(b.data.rejected[2].record.data.decision_id, "dec-a", "l'appareil B reprend la facture de A : une seule facture de jalon");
+  // R1 : la décision ne se modifie pas.
+  const edit = await call("/api/sync", { since: 0, changes: [change(clockA, "project_decisions", "dec-a", { comment: "x" })] }, tA);
+  assert.match(edit.data.rejected[0].reason, /ne peut plus être modifiée/);
+
+  // CA3.5 : un chef de projet responsable du projet, sans délégation, ne valide pas ; avec la case, si.
+  const pm = (await call("/api/login", { email: "ornella@sodepsi.ga", password: "chefprojet1", deviceId: "device-gggg-0009" })).data;
+  const pmClock = new HlcClock("device-gggg-0009");
+  await call("/api/sync", { since: 0, changes: [change(clockA, "project_members", `pm-prj-l3-tm-${pm.user.id}`, { project_id: "prj-l3", team_member_id: `tm-${pm.user.id}`, user_id: pm.user.id, name: "Ornella", role: "manager" })] }, tA);
+  const pmDecision = () => change(pmClock, "project_decisions", `dec-pm-${crypto.randomUUID().slice(0, 8)}`, { project_id: "prj-l3", stage_id: "stg-l3-2", kind: "stage_approved", decided_by: pm.user.id, decided_by_name: "Ornella", decided_at: new Date().toISOString() });
+  const refused = await call("/api/sync", { since: 0, changes: [pmDecision()] }, pm.token);
+  assert.equal(refused.data.rejected[0].reason, "vous ne pouvez pas valider les étapes de ce projet");
+  const selfDelegate = await call("/api/sync", { since: 0, changes: [change(pmClock, "projects", "prj-l3", { manager_can_validate: true })] }, pm.token);
+  assert.match(selfDelegate.data.rejected[0].reason, /qui valide les étapes/);
+  await call("/api/sync", { since: 0, changes: [change(clockA, "projects", "prj-l3", { manager_can_validate: true })] }, tA);
+  const delegated = await call("/api/sync", { since: 0, changes: [pmDecision()] }, pm.token);
+  assert.equal(delegated.data.accepted.length, 1);
+});

@@ -1050,7 +1050,7 @@ button.reason.selected .radio-dot { border: 5px solid var(--accent); }
 
 /* Fiche projet : équipe, tableau des tâches */
 .project-meta { display: flex; flex-wrap: wrap; gap: 4px 0; margin-top: 4px; }
-.project-meta span + span::before { content: "·"; margin: 0 8px; color: var(--ink-4); }
+.project-meta span:not(:last-child)::after { content: "·"; margin: 0 8px; color: var(--ink-4); }
 .kpis.two { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 640px; }
 .card-alerts { display: flex; gap: 12px; flex-wrap: wrap; font-weight: 600; }
 .kanban-tools { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 16px; }
@@ -1536,3 +1536,124 @@ button.icon .pico { margin: 0; }
 .cash-note { margin: 16px 0 0; }
 .cash-card { margin-bottom: 24px; }
 @media (max-width: 700px) { .cash-cols { grid-template-columns: 1fr; gap: 16px; } }
+
+/* ---------- Projets, lot 3 : validation d'étape, décisions, À décider ---------- */
+.stage-decision { margin: 12px 0; display: flex; flex-direction: column; gap: 10px; }
+.val-banner { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 14px; padding: 14px 16px; border-radius: var(--radius-lg); border: 1px solid var(--line); background: var(--surface); }
+.val-banner.ready, .val-banner.awaiting { background: var(--warn-soft); border-color: #F5D9B5; }
+.val-banner.done { background: var(--ok-soft); border-color: #CBE8D7; }
+.val-banner.stopped { background: var(--danger-soft); border-color: #F6CFCB; }
+.val-ico { width: 36px; height: 36px; border-radius: 10px; display: grid; place-items: center; background: var(--surface); color: var(--warn); box-shadow: 0 1px 2px rgb(16 29 54 / 0.08); }
+.val-banner.done .val-ico { color: var(--ok); }
+.val-banner.stopped .val-ico { color: var(--danger); }
+.val-ico .pico { width: 18px; height: 18px; }
+.val-text { display: flex; flex-direction: column; gap: 3px; font-size: 0.875rem; color: var(--ink-2); min-width: 0; }
+.val-text strong { color: var(--ink); font-size: 0.9375rem; }
+.val-banner.ready .val-text strong, .val-banner.awaiting .val-text strong { color: var(--warn); }
+.val-line { color: var(--ink-2); }
+.val-actions { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.val-actions button { white-space: nowrap; }
+.val-note { margin-top: 8px; color: var(--ink-2); }
+.val-note input { background: var(--surface); }
+.val-quiet { display: flex; gap: 8px; justify-content: flex-end; flex-wrap: wrap; }
+.val-flash { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 16px; border-radius: var(--radius); background: var(--info-soft); color: var(--ink); font-size: 0.875rem; font-weight: 500; }
+.val-flash > span { flex: 1; }
+.val-flash .icon { min-height: 28px; height: 28px; min-width: 28px; }
+.decision-log ol { list-style: none; margin: 4px 0 0; padding: 0; }
+.decision-log li { display: grid; grid-template-columns: 10px minmax(0, 1fr); gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.decision-log li:first-child { border-top: 0; }
+.decision-log li p { margin: 3px 0 0; color: var(--ink-2); }
+.decision-log .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; background: var(--warn); }
+.decision-log .dot.ok { background: var(--ok); }
+.decision-log .dot.danger { background: var(--danger); }
+
+/* Écran de validation : fenêtre sur ordinateur, plein écran sur téléphone */
+body.dialog-open { overflow: hidden; }
+.val-backdrop { position: fixed; inset: 0; z-index: 80; background: rgb(16 29 54 / 0.42); }
+.val-dialog { position: fixed; z-index: 81; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(720px, calc(100vw - 32px)); max-height: calc(100vh - 40px); display: flex; flex-direction: column; background: var(--surface); border-radius: 16px; box-shadow: var(--shadow-pop); overflow: hidden; }
+.val-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 20px 24px 14px; border-bottom: 1px solid var(--line); }
+.val-head h3 { margin: 0 0 4px; font-size: 1.1875rem; }
+.val-head p { margin: 0; }
+.val-body { padding: 16px 24px; overflow-y: auto; display: flex; flex-direction: column; gap: 14px; }
+.val-summary { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.val-summary > div { padding: 10px 12px; border-left: 1px solid var(--line); min-width: 0; }
+.val-summary > div:first-child { border-left: 0; }
+.val-summary dt { font-size: 0.75rem; color: var(--ink-3); font-weight: 600; }
+.val-summary dd { margin: 2px 0 0; font-weight: 700; font-size: 0.9375rem; }
+.val-summary dd.small { font-weight: 500; font-size: 0.75rem; }
+.val-summary .ok-text { color: var(--ok); }
+.val-summary .warn-text { color: var(--warn); }
+.val-open { margin: -4px 0 0; color: var(--ink-3); }
+.val-choices { border: 0; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.val-choices legend { font-size: 0.875rem; font-weight: 700; color: var(--ink); margin-bottom: 8px; padding: 0; }
+.val-choice { position: relative; display: flex; flex-direction: column; gap: 4px; padding: 12px 38px 12px 14px; border: 1px solid var(--line-strong); border-radius: var(--radius-lg); cursor: pointer; font-weight: 500; }
+.val-choice:hover { border-color: #A9B2C1; }
+.val-choice input { position: absolute; top: 13px; right: 12px; }
+.val-choice strong { color: var(--ink); font-size: 0.9375rem; }
+.val-choice span { color: var(--ink-3); font-size: 0.8125rem; line-height: 1.35; }
+.val-choice.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: var(--accent-soft); }
+.val-choice.stop strong { color: var(--danger); }
+.val-choice:has(input:focus-visible) { box-shadow: var(--ring); }
+.val-field { display: flex; flex-direction: column; gap: 6px; font-size: 0.8125rem; font-weight: 600; color: var(--ink-2); }
+.val-field textarea { min-height: 72px; }
+.val-pair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+.val-file { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 6px 8px 6px 10px; border: 1px solid var(--input-border); border-radius: var(--radius); background: var(--surface); font-weight: 500; color: var(--ink); text-align: left; justify-content: flex-start; }
+.val-file > span { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.val-file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.val-file .pico { width: 20px; height: 20px; color: var(--ink-3); flex: none; }
+.val-file.empty { border-style: dashed; color: var(--accent); font-weight: 600; height: auto; }
+.val-stop { display: flex; flex-direction: column; gap: 8px; }
+.val-stop label { flex-direction: row; align-items: center; gap: 8px; font-weight: 600; color: var(--ink); }
+.val-invoice { border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--subtle); padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; }
+.val-invoice-head { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; }
+.val-invoice-head > div:first-child { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.val-invoice-head strong { color: var(--ink); }
+.val-invoice-amount { display: flex; flex-direction: column; align-items: flex-end; text-align: right; gap: 2px; flex: none; }
+.val-invoice-amount strong { font-size: 1.1875rem; font-family: var(--font); }
+.val-invoice-opts { display: flex; gap: 12px 24px; flex-wrap: wrap; }
+.val-invoice-opts label { flex-direction: row; align-items: flex-start; gap: 8px; font-weight: 600; color: var(--ink); flex: 1 1 240px; }
+.val-invoice-opts label > span { display: flex; flex-direction: column; gap: 2px; }
+.val-invoice-opts label > span > .muted { font-weight: 500; }
+.val-retain { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
+.val-invoice-opts input[type="checkbox"] { margin-top: 2px; flex: none; }
+.pct-input { display: inline-block; width: 64px; min-height: 30px; height: 30px; padding: 0 6px; margin: 0 2px; text-align: right; }
+.val-noinv { margin: 0; }
+.val-foot { display: flex; align-items: center; gap: 16px; padding: 14px 24px; border-top: 1px solid var(--line); background: var(--subtle); }
+.val-foot p { margin: 0; flex: 1; max-width: 46ch; }
+.val-foot-actions { display: flex; gap: 8px; margin-left: auto; }
+button.primary.danger { background: var(--danger); border-color: var(--danger); }
+button.primary.danger:hover { background: #962017; border-color: #962017; }
+
+/* Bloc « À décider » (liste des projets) */
+.decide-block { margin-bottom: 16px; padding: 14px 16px; border-color: #F5D9B5; }
+.decide-block h3 { display: flex; align-items: center; gap: 8px; margin: 0; }
+.decide-block h3 .pico { color: var(--warn); width: 18px; height: 18px; }
+.decide-block ul { list-style: none; margin: 8px 0 0; padding: 0; }
+.decide-block li { display: grid; grid-template-columns: 10px minmax(0, 1fr) auto; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.decide-mark { width: 10px; height: 10px; transform: rotate(45deg); border: 2px solid var(--warn); border-radius: 2px; }
+.decide-mark.retention { border-color: var(--ok); }
+.decide-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.decide-text strong { font-size: 0.9375rem; }
+
+@media (max-width: 760px) {
+  .val-banner { grid-template-columns: auto minmax(0, 1fr); }
+  .val-actions { grid-column: 1 / -1; justify-content: stretch; }
+  .val-actions button { flex: 1; }
+  .val-dialog { inset: 0; left: 0; top: 0; transform: none; width: 100%; max-height: none; height: 100%; border-radius: 0; }
+  .val-head { padding: 14px 16px 12px; }
+  .val-body { padding: 14px 16px; }
+  .val-summary { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .val-summary > div:nth-child(3) { border-left: 0; }
+  .val-summary > div:nth-child(n + 3) { border-top: 1px solid var(--line); }
+  .val-choices { grid-template-columns: 1fr; gap: 8px; }
+  .val-choice { padding: 10px 38px 10px 12px; }
+  .val-pair { grid-template-columns: 1fr; }
+  .val-invoice-head { flex-direction: column; gap: 8px; }
+  .val-invoice-amount { align-items: flex-start; text-align: left; }
+  .val-foot { flex-direction: column; align-items: stretch; gap: 10px; padding: 12px 16px calc(12px + env(safe-area-inset-bottom)); }
+  .val-foot p { max-width: none; }
+  .val-foot-actions { margin: 0; }
+  .val-foot-actions button { flex: 1; min-height: 44px; }
+  .decide-block li { grid-template-columns: 10px minmax(0, 1fr); }
+  .decide-block li button { grid-column: 2; justify-self: start; }
+}

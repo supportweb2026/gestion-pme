@@ -19,6 +19,7 @@ import {
   QUOTE_TYPES, quoteTypeOf, sectionSubtotals, type QuoteType,
 } from "../../shared/documents.ts";
 import { QuoteProjectBanner } from "./projects/QuoteProjectBanner.tsx";
+import { useValidateOnOpen } from "../projectInvoices.ts";
 import { canShareFiles, downloadFile, makePdfFile, shareFile } from "../pdfActions.ts";
 import { useStock } from "../stock.ts";
 import { defaultNote } from "../../shared/branding.ts";
@@ -386,6 +387,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     }
   }
 
+  // Facture de jalon avec « Valider la facture tout de suite » (Projets, lot 3) : même validation, même confirmation.
+  useValidateOnOpen(kind === "invoices" && !numbered ? record?.id : undefined, validate);
+
   async function setQuoteStatus(status: "accepted" | "refused") {
     await db.write("quotes", id, { status, decided_at: new Date().toISOString() });
   }
@@ -397,6 +401,11 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const draftDeposits = kind === "quotes" && record
     ? invoices.filter((i) => i.data.quote_id === record.id && i.data.deposit && i.data.status !== "validated")
     : [];
+
+  /** Devis facturé par étapes depuis son projet : le convertir en entier le facturerait deux fois. */
+  const stageBilled = kind === "quotes" && record && text(record.data.project_id)
+    ? invoices.some((i) => text(i.data.stage_id) && i.data.project_id === record.data.project_id)
+    : false;
 
   async function quoteToInvoice() {
     const invId = db.newId("fa");
@@ -715,11 +724,12 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                     )}
                     {kind === "quotes" && !isDelivery && (
                       <div className="aside-actions" style={{ marginTop: 16 }}>
-                        {["sent", "accepted"].includes(text(record!.data.status)) && (
+                        {stageBilled && <p className="hint">Ce devis est facturé étape par étape depuis son projet.</p>}
+                        {!stageBilled && ["sent", "accepted"].includes(text(record!.data.status)) && (
                           <button className="primary" onClick={quoteToInvoice}>{deposits.length ? "Facture de solde" : "Convertir en facture"}</button>
                         )}
                         {draftDeposits.length > 0 && <p className="hint">Un acompte en brouillon n'est pas déduit : validez-le d'abord.</p>}
-                        {["sent", "accepted"].includes(text(record!.data.status)) && <DepositForm onCreate={createDeposit} currency={currency} />}
+                        {!stageBilled && ["sent", "accepted"].includes(text(record!.data.status)) && <DepositForm onCreate={createDeposit} currency={currency} />}
                         {record!.data.status === "sent" && (
                           <>
                             <button onClick={() => setQuoteStatus("accepted")}>Marquer accepté</button>

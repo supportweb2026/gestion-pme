@@ -207,10 +207,10 @@ test("Projet créé d'un modèle sans devis : aucune ligne protégée sans monta
   assert.deepEqual(two.stages.map((s) => s.id), ["stg-prj-y-1", "stg-prj-y-2", "stg-prj-y-3", "stg-prj-y-4"]);
 });
 
-test("Prochaine échéance : validation attendue, sinon fin de l'étape en cours, sinon fin du projet", () => {
+test("Prochaine échéance (lot 3) : validation demandée, sinon validation de la première étape non validée, sinon fin du projet", () => {
   const stages = [stage("s1", { rank: 1, name: "Démarrage", end_date: "2026-11-02" }), stage("s2", { rank: 2, name: "Conception", end_date: "2026-11-20" })];
   const info = projectProgress(project, { tasks: [], project_stages: stages }, "2026-11-16").stages;
-  assert.equal(nextDeadline(project, info, "2026-11-16")?.label, "Fin de Démarrage");
+  assert.equal(nextDeadline(project, info, "2026-11-16")?.label, "Validation de Démarrage");
   const awaiting = projectProgress(project, { tasks: [], project_stages: [stages[0], stage("s2", { rank: 2, name: "Conception", review_requested_at: "x" })] }, "2026-11-16").stages;
   assert.equal(nextDeadline(project, awaiting, "2026-11-16")?.label, "Validation de Conception");
   assert.equal(nextDeadline(project, [], "2026-11-16")?.label, "Fin du projet");
@@ -313,5 +313,8 @@ test("Étape aux tâches toutes terminées : plus d'échéance dépassée tant q
   assert.equal(stageTasksDone(a), true);
   assert.equal(stageTasksDone(b), false);
   assert.equal(stageTasksDone(info(stage("Vide", "2026-11-12"), 0, 0)), false);
-  assert.deepEqual(nextDeadline({ id: "prj-1", data: {} }, [a, b], "2026-11-22"), { label: "Fin de Réalisation", date: "2026-12-07" });
+  // Démarrage a toutes ses tâches terminées : sa validation est à demander, sans date dépassée.
+  assert.deepEqual(nextDeadline({ id: "prj-1", data: {} }, [a, b], "2026-11-22"), { label: "Validation de Démarrage", date: "", note: "tâches terminées, validation à demander" });
+  const validated = { ...a, state: "approved" as const };
+  assert.deepEqual(nextDeadline({ id: "prj-1", data: {} }, [validated, b], "2026-11-22"), { label: "Validation de Réalisation", date: "2026-12-07" });
 });
