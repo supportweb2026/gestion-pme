@@ -51,6 +51,7 @@ function useSalesData() {
 }
 
 export function Documents({ kind, open, setOpen }: { kind: DocTable; open: string | null; setOpen: (id: string | null) => void }) {
+  const { go } = useApp();
   const docs = useTable(kind);
   const clients = useTable("clients");
   const { situations } = useSalesData();
@@ -65,65 +66,87 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
     return <DocEditor key={open} kind={kind} record={record} clients={clients} onClose={() => setOpen(null)} onOpen={setOpen} />;
   }
 
-  const statusOf = (d: SyncRecord): { label: string; tone: string; key: string } => {
-    if (kind === "invoices") {
-      const s = situations.get(d.id)?.status ?? "draft";
-      const tone = s === "paid" ? "ok" : s === "overdue" ? "danger" : s === "draft" ? "" : "warn";
-      return { label: SITUATION_LABELS[s], tone, key: s };
-    }
-    if (kind === "quotes") {
-      const s = quoteStatus(d);
-      const tone = s === "accepted" || s === "invoiced" ? "ok" : s === "refused" || s === "expired" ? "danger" : s === "sent" ? "warn" : "";
-      return { label: QUOTE_LABELS[s] ?? s, tone, key: s };
-    }
-    const v = d.data.status === "validated";
-    return { label: v ? "Validé" : "Brouillon", tone: v ? "ok" : "", key: v ? "validated" : "draft" };
-  };
+  const statusOf = (d: SyncRecord) => docStatus(kind, d, situations);
 
   const q = normalize(query.trim());
+  const matchesFilter = (d: SyncRecord, f: Filter) => {
+    const k = statusOf(d).key;
+    if (f === "draft") return k === "draft";
+    if (f === "open") return ["unpaid", "partial", "overdue", "sent"].includes(k);
+    if (f === "overdue") return k === "overdue" || k === "expired";
+    return true;
+  };
   const rows = docs
     .filter((d) => {
       if (q && !normalize(`${text(d.data.number)} ${clientName(d.data.client_id)}`).includes(q)) return false;
-      const k = statusOf(d).key;
-      if (filter === "draft") return k === "draft";
-      if (filter === "open") return ["unpaid", "partial", "overdue", "sent"].includes(k);
-      if (filter === "overdue") return k === "overdue" || k === "expired";
-      return true;
+      return matchesFilter(d, filter);
     })
     .sort((a, b) => text(b.data.date).localeCompare(text(a.data.date)) || text(b.data.number).localeCompare(text(a.data.number)));
+  const filters = ([["all", "Tous"], ["draft", "Brouillons"], ["open", kind === "quotes" ? "En attente" : "À encaisser"], ["overdue", kind === "quotes" ? "Expirés" : "En retard"]] as [Filter, string][])
+    .filter(([f]) => kind !== "credit_notes" || f === "all" || f === "draft");
+  const count = (f: Filter) => docs.filter((d) => matchesFilter(d, f)).length;
+  const noClient = clients.length === 0;
+  const withDue = kind !== "credit_notes";
 
   return (
     <section>
-      <div className="section-head">
-        <h2>{cfg.title}</h2>
+      <div className="page-head">
+        <div>
+          <h2>{cfg.title}</h2>
+          <p className="muted small">{subtitle(kind, docs.length)}</p>
+        </div>
         {cfg.newLabel && (
-          <button className="primary" onClick={() => setOpen("new")} disabled={clients.length === 0} title={clients.length === 0 ? "Créez d'abord un client" : undefined}>
-            {cfg.newLabel}
-          </button>
+          <div className="quick">
+            {noClient && <span className="muted small" id="need-client">Créez d'abord un client.</span>}
+            <button className="primary" onClick={() => setOpen("new")} disabled={noClient} aria-describedby={noClient ? "need-client" : undefined}>
+              {cfg.newLabel}
+            </button>
+          </div>
         )}
       </div>
       <div className="toolbar">
-        <input type="search" placeholder="Rechercher un numéro ou un client" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher" />
-        <div className="segmented" role="group" aria-label="Filtrer">
-          {([["all", "Tous"], ["draft", "Brouillons"], ["open", kind === "quotes" ? "En attente" : "À encaisser"], ["overdue", kind === "quotes" ? "Expirés" : "En retard"]] as [Filter, string][])
-            .filter(([f]) => kind !== "credit_notes" || f === "all" || f === "draft")
-            .map(([f, label]) => (
-              <button key={f} className={filter === f ? "active" : ""} onClick={() => setFilter(f)}>{label}</button>
-            ))}
-        </div>
+        <label className="sr-only" htmlFor={`search-${kind}`}>Rechercher</label>
+        <input id={`search-${kind}`} type="search" placeholder="Rechercher un numéro ou un client" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher" />
+        {docs.length > 0 && (
+          <div className="segmented" role="group" aria-label="Filtrer">
+            {filters.map(([f, label]) => {
+              const n = f === "all" ? 0 : count(f);
+              return (
+                <button key={f} className={filter === f ? "active" : ""} aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                  {label}{n > 0 && <span className="seg-count">{n}</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       {rows.length === 0 ? (
-        <p className="empty">
-          {clients.length === 0 ? "Créez d'abord un client dans l'onglet Clients."
-            : kind === "credit_notes" ? "Aucun avoir. Un avoir se crée depuis une facture validée."
-            : docs.length === 0 ? `Aucun ${cfg.one.toLowerCase()} pour l'instant.` : "Aucun résultat pour ce filtre."}
-        </p>
+        <div className="card empty-state">
+          <div className="empty-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M6 3h12v18l-3-2-3 2-3-2-3 2z" /><path d="M9 8h6" /><path d="M9 12h6" /></svg>
+          </div>
+          <p className="empty-title">
+            {noClient ? "Commencez par créer un client"
+              : kind === "credit_notes" && docs.length === 0 ? "Aucun avoir"
+              : docs.length === 0 ? `Aucun${kind === "invoices" ? "e" : ""} ${cfg.one.toLowerCase()} pour l'instant`
+              : "Aucun document ne correspond"}
+          </p>
+          <p className="muted">
+            {noClient ? "Un devis ou une facture est toujours adressé à un client."
+              : kind === "credit_notes" && docs.length === 0 ? "Un avoir se crée depuis une facture validée, pour la corriger ou l'annuler."
+              : docs.length === 0 ? `Créez votre premi${kind === "invoices" ? "ère" : "er"} ${cfg.one.toLowerCase()} : il sera numéroté automatiquement à la validation.`
+              : "Modifiez la recherche ou le filtre."}
+          </p>
+          {noClient ? <button className="primary" onClick={() => go("clients")}>Créer un client</button>
+            : docs.length === 0 && cfg.newLabel ? <button className="primary" onClick={() => setOpen("new")}>{cfg.newLabel}</button> : null}
+        </div>
       ) : (
         <div className="card table-wrap">
-          <table>
+          <table className="doc-table">
+            <caption className="sr-only">{cfg.title}</caption>
             <thead>
               <tr>
-                <th>Numéro</th><th>Date</th><th>Client</th><th>Statut</th>
+                <th>Numéro</th><th>Client</th><th>Date</th>{withDue && <th>{kind === "quotes" ? "Valable jusqu'au" : "Échéance"}</th>}<th>Statut</th>
                 {kind === "invoices" && <th className="right">Reste dû</th>}
                 <th className="right">Total TTC</th>
               </tr>
@@ -131,14 +154,16 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
             <tbody>
               {rows.map((d) => {
                 const st = statusOf(d);
+                const dueDate = text(d.data.due_date ?? d.data.valid_until);
                 return (
-                  <tr key={d.id} className="clickable" onClick={() => setOpen(d.id)}>
-                    <td className="mono">{text(d.data.number) || "—"}</td>
-                    <td>{formatDate(d.data.date)}</td>
-                    <td>{clientName(d.data.client_id)}</td>
-                    <td><span className={`badge ${st.tone}`}>{st.label}</span></td>
-                    {kind === "invoices" && <td className="right mono">{st.key === "draft" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
-                    <td className="right mono">{formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
+                  <tr key={d.id} className="clickable">
+                    <td className="c-num mono"><button className="row-link" onClick={() => setOpen(d.id)}>{text(d.data.number) || <i className="draft-num">Brouillon</i>}</button></td>
+                    <td className="c-client">{clientName(d.data.client_id)}</td>
+                    <td className="c-date">{formatDate(d.data.date)}</td>
+                    {withDue && <td className={`c-due-date ${st.key === "overdue" || st.key === "expired" ? "danger-text" : "muted"}`}>{dueDate ? formatDate(dueDate) : "—"}</td>}
+                    <td className="c-status"><span className={`badge ${st.tone}`}>{st.label}</span></td>
+                    {kind === "invoices" && <td className="c-due right mono">{st.key === "draft" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
+                    <td className="c-total right mono">{formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
                   </tr>
                 );
               })}
@@ -148,6 +173,28 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
       )}
     </section>
   );
+}
+
+function subtitle(kind: DocTable, n: number): string {
+  if (n === 0) return kind === "quotes" ? "Propositions commerciales envoyées à vos clients" : kind === "invoices" ? "Factures émises et suivi des encaissements" : "Corrections et annulations de factures";
+  const one = kind === "quotes" ? "devis" : kind === "invoices" ? "facture" : "avoir";
+  return `${n} ${one}${n > 1 && kind !== "quotes" ? "s" : ""}`;
+}
+
+/** Statut affiché d'un document, avec sa couleur : gris brouillon, bleu en cours, ambre partiel, vert réglé, rouge en retard. */
+export function docStatus(kind: DocTable, d: SyncRecord, situations: Map<string, Situation>): { label: string; tone: string; key: string } {
+  if (kind === "invoices") {
+    const s = situations.get(d.id)?.status ?? "draft";
+    const tone = s === "paid" ? "ok" : s === "overdue" ? "danger" : s === "partial" ? "warn" : s === "unpaid" ? "info" : "";
+    return { label: SITUATION_LABELS[s], tone, key: s };
+  }
+  if (kind === "quotes") {
+    const s = quoteStatus(d);
+    const tone = s === "accepted" || s === "invoiced" ? "ok" : s === "expired" ? "danger" : s === "sent" ? "info" : "";
+    return { label: QUOTE_LABELS[s] ?? s, tone, key: s };
+  }
+  const v = d.data.status === "validated";
+  return { label: v ? "Validé" : "Brouillon", tone: v ? "ok" : "", key: v ? "validated" : "draft" };
 }
 
 const emptyLine = (): InvoiceLine => ({ label: "", qty: 1, unitPrice: 0, vatRate: DEFAULT_VAT_RATE });
@@ -326,39 +373,39 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const title = numbered ? `${cfg.one} ${text(record?.data.number)}` : record ? `${cfg.one} (brouillon)` : DOCS[kind].newLabel ?? cfg.one;
   const linked = kind === "invoices" ? credits.filter((c) => c.data.invoice_id === id) : [];
   const invoicePayments = kind === "invoices" ? payments.filter((p) => p.data.invoice_id === id).sort((a, b) => text(a.data.date).localeCompare(text(b.data.date))) : [];
+  const status = record ? docStatus(kind, record, situations) : null;
+  const share = useShare({ kind, record, client, gross: totals.gross, situation, currency });
+  const dueLabel = kind === "quotes" ? "Valable jusqu'au" : "Échéance";
 
-  return (
-    <section>
-      <div className="section-head">
-        <div>
-          <button className="link" onClick={onClose}>← {cfg.title}</button>
+  const head = (
+    <div className="page-head doc-head">
+      <div>
+        <button className="link back-link" onClick={onClose}>← {cfg.title}</button>
+        <div className="title-row">
           <h2>{title}</h2>
+          {status && numbered && <span className={`badge ${status.tone}`}>{status.label}</span>}
         </div>
-        {record && kind !== "credit_notes" && !numbered && (
-          <div className="actions"><button className="ghost" onClick={duplicate}>Dupliquer</button></div>
-        )}
         {numbered && (
-          <div className="actions">
-            <button onClick={() => setPrinting(true)}>Aperçu / imprimer</button>
-            {kind !== "credit_notes" && <button className="ghost" onClick={duplicate}>Dupliquer</button>}
-            <ShareButtons kind={kind} record={record!} client={client} gross={totals.gross} situation={situation} currency={currency} />
-          </div>
+          <p className="doc-meta"><b>{text(client?.data.name) || "—"}</b></p>
         )}
+        {numbered && (record!.data.sent_at || record!.data.reminded_at) ? (
+          <p className="muted small sent-info" data-testid="sent-info">
+            {record!.data.sent_at ? `Envoyé le ${formatDate(text(record!.data.sent_at).slice(0, 10))}` : ""}
+            {record!.data.sent_at && record!.data.reminded_at ? " · " : ""}
+            {record!.data.reminded_at ? `Relancé ${Number(record!.data.reminders ?? 1)} fois, dernière relance le ${formatDate(text(record!.data.reminded_at).slice(0, 10))}` : ""}
+          </p>
+        ) : null}
       </div>
+      <div className="actions">
+        {numbered && <button onClick={() => setPrinting(true)}>Aperçu / imprimer</button>}
+        {record && kind !== "credit_notes" && <button onClick={duplicate}>Dupliquer</button>}
+        {numbered && <button onClick={() => share.pdf("download")} disabled={share.busy}>Télécharger le PDF</button>}
+      </div>
+    </div>
+  );
 
-      {numbered && (record!.data.sent_at || record!.data.reminded_at) ? (
-        <p className="muted small" data-testid="sent-info">
-          {record!.data.sent_at ? `Envoyé le ${formatDate(text(record!.data.sent_at).slice(0, 10))}` : ""}
-          {record!.data.sent_at && record!.data.reminded_at ? " · " : ""}
-          {record!.data.reminded_at ? `Relancé ${Number(record!.data.reminders ?? 1)} fois, dernière relance le ${formatDate(text(record!.data.reminded_at).slice(0, 10))}` : ""}
-        </p>
-      ) : null}
-      {locked && (
-        <p className="notice">Date dans une période clôturée (jusqu'au {formatDate(closedUntil)}) : choisissez une date ultérieure.</p>
-      )}
-      {locked && (
-        <label className="inline notice-fix">Nouvelle date <input type="date" value={date} min={addDays(closedUntil, 1)} onChange={(e) => setDate(e.target.value)} /></label>
-      )}
+  const links = (
+    <>
       {kind === "credit_notes" && sourceInvoice && (
         <p className="muted small">
           Sur la facture <button className="link" onClick={() => go("invoices", sourceInvoice.id)}>{text(sourceInvoice.data.number)}</button>
@@ -369,19 +416,172 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
           Issue du devis <button className="link" onClick={() => go("quotes", text(record.data.quote_id))}>{text(record.data.quote_number)}</button>
         </p>
       ) : null}
+    </>
+  );
 
-      <div className="card">
-        <div className="form-grid">
+  const totalsList = (
+    <dl className="totals">
+      {totals.discount > 0 && (<><dt>Remises</dt><dd className="mono" data-testid="discount">-{fm(totals.discount)}</dd></>)}
+      <dt>Total HT</dt><dd className="mono" data-testid="total-ht">{fm(totals.net)}</dd>
+      <dt>TVA</dt><dd className="mono" data-testid="total-vat">{fm(totals.vat)}</dd>
+      <dt className="strong">Total TTC</dt><dd className="mono strong" data-testid="total-ttc">{fm(totals.gross)}</dd>
+      {currency !== "XAF" && (<><dt>Contre-valeur</dt><dd className="mono muted">{formatMoney(Math.round(totals.gross * rate), "XAF")}</dd></>)}
+      {situation && situation.status !== "draft" && (
+        <>
+          {situation.paid > 0 && (<><dt>Encaissé</dt><dd className="mono">-{fm(situation.paid)}</dd></>)}
+          {situation.credited > 0 && (<><dt>Avoirs</dt><dd className="mono">-{fm(situation.credited)}</dd></>)}
+          <dt className="strong due">Reste dû</dt><dd className="mono strong due" data-testid="due">{fm(situation.due)}</dd>
+        </>
+      )}
+    </dl>
+  );
+
+  // ---------- Document numéroté (ou date en période clôturée) : lecture seule ----------
+  if (!editable) {
+    const project = projects.find((p) => p.id === projectId);
+    return (
+      <section>
+        {head}
+        {locked && (
+          <>
+            <p className="notice">Date dans une période clôturée (jusqu'au {formatDate(closedUntil)}) : choisissez une date ultérieure.</p>
+            <label className="inline notice-fix">Nouvelle date <input type="date" value={date} min={addDays(closedUntil, 1)} onChange={(e) => setDate(e.target.value)} /></label>
+          </>
+        )}
+        {links}
+        <div className={`doc-layout${numbered ? "" : " single"}`}>
+          <div className="doc-main">
+            <div className="card section-card">
+              <dl className="doc-facts">
+                <div><dt>Client</dt><dd>{text(client?.data.name) || "—"}</dd></div>
+                <div><dt>Date</dt><dd>{formatDate(date)}</dd></div>
+                {kind !== "credit_notes" && <div><dt>{dueLabel}</dt><dd>{dueDate ? formatDate(dueDate) : "—"}</dd></div>}
+                <div><dt>Devise</dt><dd>{currency === "XAF" ? "Franc CFA (XAF)" : `${currency} · 1 ${currency} = ${rate} FCFA`}</dd></div>
+                {project && <div><dt>Projet</dt><dd>{text(project.data.name)}</dd></div>}
+              </dl>
+              <div className="lines-wrap">
+                <table className="lines readonly">
+                  <thead>
+                    <tr>
+                      <th>Désignation</th><th className="num right">Qté</th><th className="num right">Prix unitaire HT</th><th className="num right">Remise</th><th className="num right">TVA</th>
+                      <th className="right">Montant HT</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {lines.map((l, i) => (
+                      <tr key={i}>
+                        <td>
+                          <span className="line-label">{l.label}</span>
+                          <span className="line-sub lines-mobile-meta mono">{l.qty} × {fm(l.unitPrice)}{l.discount ? ` · remise ${l.discount} %` : ""} · TVA {l.vatRate} %</span>
+                        </td>
+                        <td className="num right mono">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td>
+                        <td className="num right mono">{fm(l.unitPrice)}</td>
+                        <td className="num right mono">{l.discount ? `${l.discount} %` : "—"}</td>
+                        <td className="num right mono">{l.vatRate} %</td>
+                        <td className="right mono line-total">{fm(lineNet(l, decimals))}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+              <div className="doc-bottom">
+                <div className="notes">
+                  {notes && (<><div className="aside-label">Note imprimée sur le document</div><p className="pre-line">{notes}</p></>)}
+                </div>
+                {totalsList}
+              </div>
+              {numbered && (
+                <p className="locked-note">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2" /><path d="M8 11V7a4 4 0 0 1 8 0v4" /></svg>
+                  {kind === "invoices" ? "Facture validée : elle ne peut plus être modifiée. Toute correction passe par un avoir."
+                    : kind === "quotes" ? "Devis finalisé : pour le modifier, dupliquez-le en nouveau brouillon."
+                    : "Avoir validé : il est déduit de la facture et ne peut plus être modifié."}
+                </p>
+              )}
+            </div>
+            {kind === "invoices" && numbered && situation && (
+              <PaymentHistory situation={situation} payments={invoicePayments} credits={linked} onCredit={createCreditNote} />
+            )}
+          </div>
+
+          {numbered && (
+            <aside className="doc-aside" aria-label="Situation et actions">
+              <div className="card">
+                {kind === "invoices" && situation ? (
+                  <InvoiceSummary situation={situation} dueDate={dueDate} invoice={record!} />
+                ) : (
+                  <>
+                    <div className="aside-label">{kind === "quotes" ? "Montant du devis (TTC)" : "Montant de l'avoir (TTC)"}</div>
+                    <div className="aside-amount mono">{fm(totals.gross)}</div>
+                    {kind === "quotes" && dueDate && <p className="aside-sub">Valable jusqu'au {formatDate(dueDate)}</p>}
+                    {kind === "quotes" && (
+                      <div className="aside-actions" style={{ marginTop: 16 }}>
+                        {["sent", "accepted"].includes(text(record!.data.status)) && (
+                          <button className="primary" onClick={quoteToInvoice}>Convertir en facture</button>
+                        )}
+                        {record!.data.status === "sent" && (
+                          <>
+                            <button onClick={() => setQuoteStatus("accepted")}>Marquer accepté</button>
+                            <button className="ghost" onClick={() => setQuoteStatus("refused")}>Marquer refusé</button>
+                          </>
+                        )}
+                        {record!.data.invoice_id ? (
+                          <button onClick={() => go("invoices", text(record!.data.invoice_id))}>Voir la facture</button>
+                        ) : null}
+                      </div>
+                    )}
+                  </>
+                )}
+              </div>
+              <div className="card aside-actions">
+                <h3>{share.reminder ? "Relancer le client" : "Envoyer au client"}</h3>
+                <a className="button" href={share.wa} target="_blank" rel="noopener noreferrer" onClick={share.markSent}>
+                  <SendIco name="wa" />{share.reminder ? "Relancer par WhatsApp" : "WhatsApp"}
+                </a>
+                <a className="button" href={share.mail} onClick={share.markSent}>
+                  <SendIco name="mail" />{share.reminder ? "Relancer par e-mail" : "E-mail"}
+                </a>
+                {canShare && (
+                  <button onClick={() => share.pdf("share")} disabled={share.busy}>
+                    <SendIco name="share" />{share.reminder ? "Relancer (PDF)" : "Partager le PDF"}
+                  </button>
+                )}
+                <p className="hint">Le message est prérempli{share.reminder ? " avec le montant restant dû" : ""}. {canShare ? "« Partager le PDF » joint la facture au message." : "Joignez le PDF téléchargé si besoin."}</p>
+                {share.error && <p className="error" role="alert">{share.error}</p>}
+              </div>
+            </aside>
+          )}
+        </div>
+        {printing && record && (
+          <PrintView kind={kind} record={{ ...record, data: { ...record.data, lines } }} client={client} situation={situation} onClose={() => setPrinting(false)} />
+        )}
+      </section>
+    );
+  }
+
+  // ---------- Brouillon : éditeur ----------
+  return (
+    <section>
+      {head}
+      {links}
+      <div className="card editor-card">
+        <div className="doc-fields">
           <label>
             Client
-            <select value={clientId} onChange={(e) => setClientId(e.target.value)} disabled={!editable || kind === "credit_notes"}>
+            <select value={clientId} onChange={(e) => setClientId(e.target.value)} disabled={kind === "credit_notes"}>
               {clients.map((c) => <option key={c.id} value={c.id}>{text(c.data.name)}</option>)}
             </select>
           </label>
-          <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} disabled={!editable} /></label>
+          <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+          {kind !== "credit_notes" && (
+            <label>
+              {dueLabel}
+              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} />
+            </label>
+          )}
           <label>
             Devise
-            <select value={currency} onChange={(e) => changeCurrency(e.target.value)} disabled={!editable || kind === "credit_notes"}>
+            <select value={currency} onChange={(e) => changeCurrency(e.target.value)} disabled={kind === "credit_notes"}>
               {Object.values(CURRENCIES).map((c) => <option key={c.code} value={c.code}>{c.code} · {c.label}</option>)}
             </select>
           </label>
@@ -389,22 +589,16 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
             <label>
               Taux (1 {currency} = … FCFA)
               <input type="number" min="0" step="any" value={rate} onChange={(e) => setRate(Number(e.target.value))}
-                disabled={!editable || !!CURRENCIES[currency]?.fixedRate || kind === "credit_notes"} />
+                disabled={!!CURRENCIES[currency]?.fixedRate || kind === "credit_notes"} />
             </label>
           )}
           {projects.length > 0 && (
             <label>
               Projet
-              <select value={projectId} onChange={(e) => setProjectId(e.target.value)} disabled={!editable}>
+              <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
                 <option value="">Aucun</option>
                 {projects.map((p) => <option key={p.id} value={p.id}>{text(p.data.name)}</option>)}
               </select>
-            </label>
-          )}
-          {kind !== "credit_notes" && (
-            <label>
-              {kind === "quotes" ? "Valable jusqu'au" : "Échéance"}
-              <input type="date" value={dueDate} onChange={(e) => setDueDate(e.target.value)} disabled={!editable} />
             </label>
           )}
         </div>
@@ -412,97 +606,84 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
         <datalist id="articles-list">
           {articles.map((a) => <option key={a.id} value={text(a.data.label)} />)}
         </datalist>
-        <div className="table-wrap">
+        <div className="lines-wrap">
           <table className="lines">
             <thead>
               <tr>
-                <th>Désignation</th><th className="num">Qté</th><th className="num">Prix unitaire HT</th><th className="num">Remise %</th><th className="num">TVA %</th>
-                <th className="right">Montant HT</th>{editable && <th />}
+                <th>Désignation</th><th className="num qty right">Qté</th><th className="num right">Prix unitaire HT</th><th className="num pct right">Remise %</th><th className="num pct right">TVA %</th>
+                <th className="right">Montant HT</th><th><span className="sr-only">Supprimer</span></th>
               </tr>
             </thead>
             <tbody>
               {lines.map((l, i) => (
                 <tr key={i}>
-                  <td><input aria-label="Désignation" list="articles-list" value={l.label} onChange={(e) => pickArticle(i, e.target.value)} disabled={!editable} /></td>
-                  <td className="num"><input aria-label="Quantité" type="number" min="0" step="any" value={l.qty} onChange={(e) => update(i, { qty: Number(e.target.value) })} disabled={!editable} /></td>
-                  <td className="num"><input aria-label="Prix unitaire" type="number" min="0" step={decimals ? "0.01" : "1"} value={l.unitPrice} onChange={(e) => update(i, { unitPrice: Number(e.target.value) })} disabled={!editable} /></td>
-                  <td className="num"><input aria-label="Remise" type="number" min="0" max="100" step="any" value={l.discount ?? 0} onChange={(e) => update(i, { discount: Number(e.target.value) || undefined })} disabled={!editable} /></td>
-                  <td className="num"><input aria-label="TVA" type="number" min="0" step="any" value={l.vatRate} onChange={(e) => update(i, { vatRate: Number(e.target.value) })} disabled={!editable} /></td>
-                  <td className="right mono">{fm(lineNet(l, decimals))}</td>
-                  {editable && (
-                    <td><button className="ghost small" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} aria-label="Supprimer la ligne">✕</button></td>
-                  )}
+                  <td><input aria-label="Désignation" list="articles-list" placeholder="Article du catalogue ou désignation libre" value={l.label} onChange={(e) => pickArticle(i, e.target.value)} /></td>
+                  <td className="num qty" data-label="Qté"><input aria-label="Quantité" type="number" min="0" step="any" value={l.qty} onChange={(e) => update(i, { qty: Number(e.target.value) })} /></td>
+                  <td className="num" data-label="Prix unitaire HT"><input aria-label="Prix unitaire" type="number" min="0" step={decimals ? "0.01" : "1"} value={l.unitPrice} onChange={(e) => update(i, { unitPrice: Number(e.target.value) })} /></td>
+                  <td className="num pct" data-label="Remise %"><input aria-label="Remise" type="number" min="0" max="100" step="any" value={l.discount ?? 0} onChange={(e) => update(i, { discount: Number(e.target.value) || undefined })} /></td>
+                  <td className="num pct" data-label="TVA %"><input aria-label="TVA" type="number" min="0" step="any" value={l.vatRate} onChange={(e) => update(i, { vatRate: Number(e.target.value) })} /></td>
+                  <td className="right mono line-total">{fm(lineNet(l, decimals))}</td>
+                  <td className="del">
+                    <button className="ghost icon" onClick={() => setLines((ls) => ls.filter((_, j) => j !== i))} aria-label={`Supprimer la ligne ${i + 1}`} disabled={lines.length === 1}>
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true"><path d="M6 6l12 12" /><path d="M18 6 6 18" /></svg>
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
-        {editable && <button className="ghost" onClick={() => setLines((ls) => [...ls, emptyLine()])}>+ Ajouter une ligne</button>}
+        <button className="ghost add-line" onClick={() => setLines((ls) => [...ls, emptyLine()])}>+ Ajouter une ligne</button>
 
         <div className="doc-bottom">
           <label className="notes">
-            Notes (imprimées sur le document)
-            <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} disabled={!editable} />
+            Note imprimée sur le document
+            <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Conditions, références de commande, coordonnées bancaires…" />
           </label>
-          <dl className="totals">
-            {totals.discount > 0 && (<><dt>Remises</dt><dd className="mono" data-testid="discount">-{fm(totals.discount)}</dd></>)}
-            <dt>Total HT</dt><dd className="mono" data-testid="total-ht">{fm(totals.net)}</dd>
-            <dt>TVA</dt><dd className="mono" data-testid="total-vat">{fm(totals.vat)}</dd>
-            <dt className="strong">Total TTC</dt><dd className="mono strong" data-testid="total-ttc">{fm(totals.gross)}</dd>
-            {currency !== "XAF" && (<><dt>Contre-valeur</dt><dd className="mono muted">{formatMoney(Math.round(totals.gross * rate), "XAF")}</dd></>)}
-            {situation && situation.status !== "draft" && (
-              <>
-                {situation.paid > 0 && (<><dt>Encaissé</dt><dd className="mono">{fm(situation.paid)}</dd></>)}
-                {situation.credited > 0 && (<><dt>Avoirs</dt><dd className="mono">{fm(situation.credited)}</dd></>)}
-                <dt className="strong">Reste dû</dt><dd className="mono strong" data-testid="due">{fm(situation.due)}</dd>
-              </>
-            )}
-          </dl>
+          {totalsList}
         </div>
 
         {message && <p className="error" role="alert">{message}</p>}
 
-        {editable && (
-          <div className="form-actions">
-            {record && <button className="ghost danger" onClick={removeDraft}>Supprimer</button>}
-            <button className="ghost" onClick={() => saveDraft()}>Enregistrer le brouillon</button>
-            <button className="primary" onClick={validate} disabled={busy}>{cfg.validateLabel}</button>
-          </div>
-        )}
-
-        {kind === "quotes" && numbered && (
-          <div className="form-actions">
-            {record!.data.status === "sent" && (
-              <>
-                <button className="ghost" onClick={() => setQuoteStatus("refused")}>Marquer refusé</button>
-                <button onClick={() => setQuoteStatus("accepted")}>Marquer accepté</button>
-              </>
-            )}
-            {["sent", "accepted"].includes(text(record!.data.status)) && (
-              <button className="primary" onClick={quoteToInvoice}>Convertir en facture</button>
-            )}
-            {record!.data.invoice_id ? (
-              <button className="link" onClick={() => go("invoices", text(record!.data.invoice_id))}>Voir la facture</button>
-            ) : null}
-          </div>
-        )}
+        <div className="editor-bar">
+          {record && <button className="ghost danger" onClick={removeDraft}>Supprimer</button>}
+          <span className="total-preview"><small>Total TTC</small><b className="mono">{fm(totals.gross)}</b></span>
+          <button onClick={() => saveDraft()}>Enregistrer le brouillon</button>
+          <button className="primary" onClick={validate} disabled={busy}>{cfg.validateLabel}</button>
+        </div>
       </div>
-
-      {kind === "invoices" && numbered && situation && (
-        <Payments invoice={record!} situation={situation} payments={invoicePayments} credits={linked} onCredit={createCreditNote} />
-      )}
-
-      {printing && record && (
-        <PrintView kind={kind} record={{ ...record, data: { ...record.data, lines } }} client={client} situation={situation} onClose={() => setPrinting(false)} />
-      )}
     </section>
   );
 }
 
-function Payments({ invoice, situation, payments, credits, onCredit }: {
-  invoice: SyncRecord; situation: Situation; payments: SyncRecord[]; credits: SyncRecord[]; onCredit: () => void;
-}) {
-  const { db, session, go } = useApp();
+/** Synthèse d'une facture validée : reste dû, part encaissée, échéance, puis saisie d'un encaissement. */
+function InvoiceSummary({ situation, dueDate, invoice }: { situation: Situation; dueDate: string; invoice: SyncRecord }) {
+  const fm = (n: number) => formatMoney(n, situation.currency);
+  const settled = situation.paid + situation.credited;
+  const paidPct = situation.gross > 0 ? Math.min(100, (settled / situation.gross) * 100) : 0;
+  const days = dueDate ? Math.round((Date.parse(today()) - Date.parse(dueDate)) / 86_400_000) : 0;
+  const tone = situation.status === "paid" ? "ok" : situation.status === "overdue" ? "danger" : "";
+  return (
+    <>
+      <div className="aside-label">Reste dû</div>
+      <div className={`aside-amount mono ${tone}`}>{fm(situation.due)}</div>
+      <p className="aside-sub">sur <span className="mono">{fm(situation.gross)}</span> TTC</p>
+      <div className="progress-line" role="img" aria-label={`${Math.round(paidPct)} % réglé`}><span style={{ width: `${paidPct}%` }} /></div>
+      <p className="aside-sub"><span className="mono">{fm(settled)}</span> réglé{situation.credited > 0 ? " (encaissements et avoirs)" : ""}</p>
+      {situation.status === "paid" ? (
+        <p className="status-line ok">Facture réglée intégralement.</p>
+      ) : situation.status === "overdue" ? (
+        <p className="status-line danger">Échue depuis {days} jour{days > 1 ? "s" : ""}.</p>
+      ) : dueDate ? (
+        <p className="status-line info">{days < 0 ? `À régler dans ${-days} jour${-days > 1 ? "s" : ""}, le ${formatDate(dueDate)}.` : `Échéance le ${formatDate(dueDate)}.`}</p>
+      ) : null}
+      {situation.due > 0 && <PaymentForm invoice={invoice} situation={situation} />}
+    </>
+  );
+}
+
+function PaymentForm({ invoice, situation }: { invoice: SyncRecord; situation: Situation }) {
+  const { db, session } = useApp();
   const settings = useSettings();
   const [amount, setAmount] = useState("");
   const [method, setMethod] = useState("cash");
@@ -521,7 +702,7 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
     const d = decimalsOf(currency);
     const typed = Number((amount || String(situation.due)).replace(/\s/g, "").replace(",", "."));
     const value = Math.round(typed * 10 ** d) / 10 ** d;
-    if (!Number.isFinite(value) || value <= 0) return setError("Montant invalide.");
+    if (!Number.isFinite(value) || value <= 0) return setError("Saisissez un montant supérieur à 0.");
     if (value > situation.due && !confirm(`Le montant dépasse le reste dû (${fm(situation.due)}). Enregistrer quand même ?`)) return;
     await db.write("payments", db.newId("pay"), {
       invoice_id: invoice.id,
@@ -538,62 +719,77 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
     setReference("");
   }
 
+  return (
+    <div className="aside-form" id="encaissement">
+      <h3>Enregistrer un encaissement</h3>
+      <label>Montant encaissé<input inputMode="decimal" placeholder={fm(situation.due)} value={amount} onChange={(e) => setAmount(e.target.value)} /></label>
+      <p className="hint">Laissez vide pour solder la facture.</p>
+      <div className="row2">
+        <label>
+          Mode
+          <select value={method} onChange={(e) => setMethod(e.target.value)}>
+            {Object.entries(PAYMENT_METHODS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
+          </select>
+        </label>
+        <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
+      </div>
+      {currency !== "XAF" && (
+        <label>Taux du jour<input type="number" step="any" min="0" value={rate} disabled={fixed} onChange={(e) => setRate(Number(e.target.value))} /></label>
+      )}
+      <label>Référence<input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="N° de transaction, de chèque…" /></label>
+      {error && <p className="error" role="alert">{error}</p>}
+      <button className="primary" onClick={add}>Enregistrer l'encaissement</button>
+    </div>
+  );
+}
+
+function PaymentHistory({ situation, payments, credits, onCredit }: {
+  situation: Situation; payments: SyncRecord[]; credits: SyncRecord[]; onCredit: () => void;
+}) {
+  const { db, go } = useApp();
+  const fm = (n: number) => formatMoney(n, situation.currency);
   async function cancel(p: SyncRecord) {
     if (!confirm(`Annuler l'encaissement de ${fm(Number(p.data.amount))} ?`)) return;
     await db.remove("payments", p.id);
   }
-
   return (
     <div className="card section-card">
-      <h3>Encaissements</h3>
+      <div className="card-head"><h3>Encaissements</h3></div>
       {payments.length === 0 ? (
-        <p className="muted small">Aucun encaissement.</p>
+        <p className="muted small">Aucun encaissement pour l'instant.</p>
       ) : (
-        <table>
+        <table className="pay-list">
           <tbody>
             {payments.map((p) => (
               <tr key={p.id}>
-                <td>{formatDate(p.data.date)}</td>
-                <td>{PAYMENT_METHODS[text(p.data.method)] ?? text(p.data.method)}</td>
-                <td className="muted">{text(p.data.reference)}</td>
-                <td className="right mono">{fm(Number(p.data.amount))}</td>
+                <td className="nowrap">{formatDate(p.data.date)}</td>
+                <td>
+                  {PAYMENT_METHODS[text(p.data.method)] ?? text(p.data.method)}
+                  {text(p.data.reference) && <span className="line-sub">{text(p.data.reference)}</span>}
+                </td>
+                <td className="right mono strong">{fm(Number(p.data.amount))}</td>
                 <td className="right"><button className="ghost small" onClick={() => cancel(p)}>Annuler</button></td>
               </tr>
             ))}
           </tbody>
         </table>
       )}
-      {situation.due > 0 && (
-        <div className="pay-form">
-          <label>Montant<input inputMode="numeric" placeholder={String(situation.due)} value={amount} onChange={(e) => setAmount(e.target.value)} aria-label="Montant encaissé" /></label>
-          <label>
-            Mode
-            <select value={method} onChange={(e) => setMethod(e.target.value)}>
-              {Object.entries(PAYMENT_METHODS).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
-            </select>
-          </label>
-          <label>Date<input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></label>
-          {currency !== "XAF" && (
-            <label>Taux du jour<input type="number" step="any" min="0" value={rate} disabled={fixed} onChange={(e) => setRate(Number(e.target.value))} /></label>
-          )}
-          <label>Référence<input value={reference} onChange={(e) => setReference(e.target.value)} placeholder="n° de transaction, chèque…" /></label>
-          <button className="primary" onClick={add}>Enregistrer l'encaissement</button>
+      <div className="card-sub">
+        <div className="card-head">
+          <h3>Avoirs</h3>
+          {situation.due > 0 && <button className="small" onClick={onCredit}>Créer un avoir</button>}
         </div>
-      )}
-      {error && <p className="error">{error}</p>}
-
-      <h3>Avoirs</h3>
-      {credits.length === 0 ? <p className="muted small">Aucun avoir sur cette facture.</p> : (
-        <ul className="plain">
-          {credits.map((c) => (
-            <li key={c.id}>
-              <button className="link" onClick={() => go("credit_notes", c.id)}>{text(c.data.number) || "Brouillon d'avoir"}</button>
-              {" · "}{fm(totalsOf(c).gross)}{c.data.status !== "validated" && " (non validé)"}
-            </li>
-          ))}
-        </ul>
-      )}
-      {situation.due > 0 && <button className="ghost" onClick={onCredit}>Créer un avoir</button>}
+        {credits.length === 0 ? <p className="muted small">Aucun avoir sur cette facture.</p> : (
+          <ul className="plain">
+            {credits.map((c) => (
+              <li key={c.id}>
+                <button className="link" onClick={() => go("credit_notes", c.id)}>{text(c.data.number) || "Brouillon d'avoir"}</button>
+                {" · "}<span className="mono">{fm(totalsOf(c).gross)}</span>{c.data.status !== "validated" && " (non validé)"}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
@@ -603,18 +799,18 @@ function Payments({ invoice, situation, payments, credits, onCredit }: {
  * message WhatsApp ou e-mail prérempli. Une facture en retard donne un message
  * de relance, et la relance est notée sur la facture.
  */
-function ShareButtons({ kind, record, client, gross, situation, currency }: {
-  kind: DocTable; record: SyncRecord; client: SyncRecord | null; gross: number; situation?: Situation; currency: string;
+function useShare({ kind, record, client, gross, situation, currency }: {
+  kind: DocTable; record: SyncRecord | null; client: SyncRecord | null; gross: number; situation?: Situation; currency: string;
 }) {
   const { db } = useApp();
   const settings = useSettings();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const company = text(settings.name);
-  const number = text(record.data.number);
+  const number = text(record?.data.number);
   const due = situation?.due;
   const reminder = kind === "invoices" && situation?.status === "overdue";
-  const message = documentMessage({ kind, number, client: text(client?.data.name), company, gross, due, currency, dueDate: text(record.data.due_date), validUntil: text(record.data.valid_until), reminder });
+  const message = documentMessage({ kind, number, client: text(client?.data.name), company, gross, due, currency, dueDate: text(record?.data.due_date), validUntil: text(record?.data.valid_until), reminder });
 
   // Numéro au format international uniquement (+241…) : sinon WhatsApp laisse choisir le contact.
   const phone = text(client?.data.phone).replace(/[^\d+]/g, "");
@@ -626,6 +822,7 @@ function ShareButtons({ kind, record, client, gross, situation, currency }: {
 
   // On garde la date du premier envoi ; chaque relance est comptée.
   const markSent = () => {
+    if (!record) return;
     if (reminder) {
       void db.write(kind, record.id, { reminded_at: new Date().toISOString(), reminders: Number(record.data.reminders ?? 0) + 1 });
     } else if (!record.data.sent_at) {
@@ -634,6 +831,7 @@ function ShareButtons({ kind, record, client, gross, situation, currency }: {
   };
 
   async function pdf(mode: "download" | "share") {
+    if (!record) return;
     setError(null);
     setBusy(true);
     try {
@@ -641,20 +839,23 @@ function ShareButtons({ kind, record, client, gross, situation, currency }: {
       if (mode === "download") return downloadFile(file);
       if (await shareFile(file, subject, message)) markSent();
     } catch (e) {
-      setError(`PDF impossible : ${e instanceof Error ? e.message : String(e)}`);
+      setError(`Le PDF n'a pas pu être créé (${e instanceof Error ? e.message : String(e)}). Réessayez.`);
     } finally {
       setBusy(false);
     }
   }
 
+  return { pdf, wa, mail, markSent, reminder, busy, error };
+}
+
+function SendIco({ name }: { name: "wa" | "mail" | "share" }) {
+  const d = name === "wa"
+    ? ["M3.5 20.5l1.3-4.3A8.5 8.5 0 1 1 8 19.3z", "M9 9.5c.3 2.2 2.3 4.3 4.6 4.7l1.1-1.1 1.8.8-.3 1.6c-3.6.4-7.6-3.4-7.3-7.2l1.6-.3.8 1.8z"]
+    : name === "mail" ? ["M3 6h18v12H3z", "m3 7 9 6 9-6"] : ["M12 3v13", "m7 8 5-5 5 5", "M5 14v6h14v-6"];
   return (
-    <>
-      <button onClick={() => pdf("download")} disabled={busy}>Télécharger le PDF</button>
-      {canShare && <button onClick={() => pdf("share")} disabled={busy}>{reminder ? "Relancer (PDF)" : "Partager le PDF"}</button>}
-      <a className="button" href={wa} target="_blank" rel="noopener noreferrer" onClick={markSent}>{reminder ? "Relancer par WhatsApp" : "WhatsApp"}</a>
-      <a className="button" href={mail} onClick={markSent}>{reminder ? "Relancer par e-mail" : "E-mail"}</a>
-      {error && <span className="error" role="alert">{error}</span>}
-    </>
+    <svg className="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {d.map((x) => <path key={x} d={x} />)}
+    </svg>
   );
 }
 

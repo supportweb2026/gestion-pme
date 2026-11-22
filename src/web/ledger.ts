@@ -62,7 +62,7 @@ export function invoiceSituations(invoices: SyncRecord[], payments: SyncRecord[]
 export const SITUATION_LABELS: Record<Situation["status"], string> = {
   draft: "Brouillon",
   unpaid: "À encaisser",
-  partial: "Partielle",
+  partial: "Partiellement payée",
   paid: "Payée",
   overdue: "En retard",
 };
