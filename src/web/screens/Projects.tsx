@@ -14,6 +14,10 @@
  * facture de jalon sur le montant vendu (remplace l'ancien « jalon % du budget »), bloc
  * « À décider » sur la liste des projets, délégation de la validation au responsable du projet.
  *
+ * Lot 4 : budget par poste (onglet Budget), météo du projet (délai, budget, réserves) avec sa
+ * phrase, alertes de tolérance dans « À décider » (décision) ou sur la fiche (information du
+ * responsable du projet), carte de décision (avenant, révision, plan, pause) et révision tracée.
+ *
  * Rédaction : dire ce qui se passe et son effet, sans renvoyer vers une hiérarchie.
  */
 import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from "react";
@@ -24,7 +28,8 @@ import {
   assigneeOf, BLOCK_LABELS, canPin, checkDayHours, daysBetween, hoursOn, isoWeek, matchTeamMember, MAX_WEEK_PRIORITIES, MEMBER_ROLE_LABELS,
   nextDeadline, pct100, projectProgress, soldOf, stagesOf, type StageInfo,
 } from "../../shared/projectControl.ts";
-import { canCloseTask, canDecide, financeIdOf, memberIdOf, teamMemberIdOf } from "../../shared/projectRules.ts";
+import { budgetLocked, canCloseTask, canDecide, financeIdOf, leadsProject, memberIdOf, teamMemberIdOf, type ProjectContext } from "../../shared/projectRules.ts";
+import { alertMode, costForecast, projectAlerts, weather, type ProjectAlert } from "../../shared/projectBudget.ts";
 import { decisionsToMake, soldBases } from "../../shared/projectDecisions.ts";
 import type { SyncRecord } from "../../shared/sync.ts";
 import { currencyOf, totalsOf } from "../ledger.ts";
@@ -37,7 +42,9 @@ import { NewProject } from "./projects/NewProject.tsx";
 import { StageStrip, StagesTab } from "./projects/Stages.tsx";
 import { WeekPriorities } from "./projects/WeekPriorities.tsx";
 import { NEW_FROM_QUOTE } from "./projects/QuoteProjectBanner.tsx";
-import { DecisionsBlock } from "./projects/Decisions.tsx";
+import { DecisionsBlock, type AlertItem } from "./projects/Decisions.tsx";
+import { AlertNotice, BudgetEditor, BudgetTab, DeadlineDialog, ExceptionCard, WeatherBadge, WeatherDetail, type BudgetView } from "./projects/Budget.tsx";
+import type { Choice } from "../projectInvoices.ts";
 
 const PRIORITY: Record<string, string> = { low: "Basse", normal: "Normale", high: "Haute" };
 const hoursLabel = (h: number) => `${(Math.round(h * 100) / 100).toLocaleString("fr-FR")} h`;
@@ -55,8 +62,21 @@ function useProjectData() {
   const project_stages = useTable("project_stages");
   const quotes = useTable("quotes");
   const project_decisions = useTable("project_decisions");
-  return { tasks, time_entries, expenses, invoices, credit_notes, project_finance, cost_rates, project_stages, quotes, project_decisions };
+  const budget_lines = useTable("budget_lines");
+  const payments = useTable("payments");
+  const articles = useTable("articles");
+  const project_members = useTable("project_members");
+  return { tasks, time_entries, expenses, invoices, credit_notes, project_finance, cost_rates, project_stages, quotes, project_decisions, budget_lines, payments, articles, project_members };
 }
+
+/** Qui voit quoi d'une alerte : décide (commanditaire, direction, délégué) ou responsable du projet. */
+function viewerOf(userId: string, role: string, projectId: string, ctx: ProjectContext) {
+  const actor = { userId, role };
+  return { decides: canDecide(actor, projectId, ctx), manages: ctx.rolesIn(projectId, userId).includes("manager"), leads: leadsProject(actor, projectId, ctx) };
+}
+
+/** Ouverture d'un projet depuis la liste : étape à examiner, ou alerte à traiter. */
+type Focus = { stage: string; review: boolean; alert?: string };
 
 /** Membres (non retirés) de l'équipe d'un projet. */
 function useMembers(projectId?: string): SyncRecord[] {
@@ -85,7 +105,7 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
   const [creating, setCreating] = useState<string | null>(fromQuote(initialOpen));
   const [status, setStatus] = useState("open");
   // Ouverture depuis « À décider » : l'onglet Étapes, sur l'étape, avec l'écran de validation.
-  const [focus, setFocus] = useState<{ stage: string; review: boolean } | null>(null);
+  const [focus, setFocus] = useState<Focus | null>(null);
   const [query, setQuery] = useState("");
   const role = session.user.role;
   const manager = can.manageProjects(role);
@@ -123,6 +143,23 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
     .sort((a, b) => text(a.data.end_date || "9999").localeCompare(text(b.data.end_date || "9999")));
 
   const visibleProjects = projects.filter(mine);
+  const day = today();
+  const listCtx = localProjectContext(projects, members);
+  // Météo et prévisions calculées une fois par projet (jamais stockées).
+  const health = new Map(projects.filter(mine).map((p) => {
+    const prog = projectProgress(p, data, day);
+    const fc = costForecast(p, data, day, prog);
+    const w = weather(p, data, day, prog, fc);
+    return [p.id, { prog, fc, w }] as const;
+  }));
+  const alertItems: AlertItem[] = manager && amounts ? projects.filter(mine).flatMap((p) => {
+    const h = health.get(p.id)!;
+    const viewer = viewerOf(session.user.id, role, p.id, listCtx);
+    return projectAlerts(p, data, day, h.prog, h.fc, h.w).flatMap((a) => {
+      const mode = alertMode(a, viewer);
+      return mode ? [{ alert: a, project: p, mode }] : [];
+    });
+  }) : [];
   return (
     <section>
       <div className="section-head">
@@ -141,7 +178,8 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
         <>
           {manager && (
             <DecisionsBlock items={decisionsToMake(projects, data, (p) => canDecide({ userId: session.user.id, role }, p.id, localProjectContext(projects, members)), today(), amounts)}
-              onOpen={(projectId, stageId, review) => { setFocus({ stage: stageId, review }); setOpen(projectId); }} />
+              onOpen={(projectId, stageId, review) => { setFocus({ stage: stageId, review }); setOpen(projectId); }}
+              alerts={alertItems} onAlert={(projectId, a) => { setFocus({ stage: "", review: false, alert: a.key }); setOpen(projectId); }} />
           )}
           {visibleProjects.length > 0 && (
             <div className="toolbar">
@@ -178,14 +216,18 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
             <div className="project-grid">
               {rows.map((p) => {
                 const s = projectStats(p, data, today());
-                const prog = projectProgress(p, data, today());
+                const { prog, fc, w } = health.get(p.id)!;
+                const hasBudget = amounts && fc.budgetSource === "lines" && fc.BP > 0;
                 const lead = managerName(p, members);
                 const blocked = tasks.filter((t) => t.data.project_id === p.id && t.data.blocked && t.data.status !== "done").length;
                 return (
                   <button key={p.id} className="card project-card" onClick={() => setOpen(p.id)}>
                     <div className="project-card-head">
                       <strong>{text(p.data.name)}</strong>
-                      <span className={`badge ${p.data.status === "active" ? "ok" : p.data.status === "on_hold" ? "warn" : ""}`}>{PROJECT_STATUS[text(p.data.status)] ?? "—"}</span>
+                      <span className="project-card-badges">
+                        {w.overall && p.data.status === "active" && <WeatherBadge light={w.overall} />}
+                        <span className={`badge ${p.data.status === "active" ? "ok" : p.data.status === "on_hold" ? "warn" : ""}`}>{PROJECT_STATUS[text(p.data.status)] ?? "—"}</span>
+                      </span>
                     </div>
                     <div className="muted small project-card-meta">
                       <span>{[clientName(p.data.client_id) || (amounts ? "Projet interne" : ""), p.data.end_date ? `fin prévue le ${formatDate(p.data.end_date)}` : ""].filter(Boolean).join(" · ")}</span>
@@ -195,8 +237,17 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
                     {amounts ? (
                       <dl className="mini-stats">
                         <div><dt>Heures</dt><dd>{hoursLabel(s.hours)}</dd></div>
-                        <div><dt>Budget consommé</dt><dd className={s.budgetUsed > 100 ? "danger-text" : s.budgetUsed >= 80 ? "warn-text" : ""}>{s.budget ? `${s.budgetUsed} %` : "—"}</dd></div>
-                        <div><dt>Marge</dt><dd className={s.margin < 0 ? "danger-text" : ""}>{formatXaf(s.margin)}</dd></div>
+                        {hasBudget ? (
+                          <>
+                            <div><dt>Budget consommé</dt><dd className={(fc.consumptionPct ?? 0) > 100 ? "danger-text" : (fc.consumptionPct ?? 0) >= 80 ? "warn-text" : ""}>{fc.consumptionPct === null ? "—" : `${fc.consumptionPct} %`}</dd></div>
+                            <div><dt>Marge estimée</dt><dd className={fc.marginEstimated < 0 ? "danger-text" : ""}>{fc.RP > 0 ? formatXaf(fc.marginEstimated) : "—"}</dd></div>
+                          </>
+                        ) : (
+                          <>
+                            <div><dt>Budget consommé</dt><dd className={s.budgetUsed > 100 ? "danger-text" : s.budgetUsed >= 80 ? "warn-text" : ""}>{s.budget ? `${s.budgetUsed} %` : "—"}</dd></div>
+                            <div><dt>Marge</dt><dd className={s.margin < 0 ? "danger-text" : ""}>{formatXaf(s.margin)}</dd></div>
+                          </>
+                        )}
                       </dl>
                     ) : (
                       <dl className="mini-stats">
@@ -234,7 +285,10 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
   const { db, session } = useApp();
   const team = useTeam().filter((m) => m.data.active !== false);
   const finances = useTable("project_finance");
+  const budgetLines = useTable("budget_lines");
   const members = useMembers(record?.id);
+  // Lot 4 : le budget par poste remplace le budget global, qui disparaît dès qu'une ligne existe.
+  const hasLines = !!record && budgetLines.some((l) => l.data.project_id === record.id && !l.data._deleted);
   const v = (k: string, fallback = "") => (record ? text(record.data[k]) : fallback);
   const fin = record ? financeOf(record, finances) : null;
   const currentLead = members.find((m) => m.data.role === "manager");
@@ -262,8 +316,8 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
     if (Object.keys(patch).length) await db.write("projects", id, patch);
 
     // Montants : ligne protégée, jamais envoyée à l'employé.
-    if (amounts && "budget" in f) {
-      const money: Record<string, number> = { legacy_budget: Math.round(Number(f.budget) || 0), hourly_rate: Math.round(Number(f.hourly_rate) || 0), cost_rate: Math.round(Number(f.cost_rate) || 0) };
+    if (amounts && "hourly_rate" in f) {
+      const money: Record<string, number> = { legacy_budget: "budget" in f ? Math.round(Number(f.budget) || 0) : fin?.budget ?? 0, hourly_rate: Math.round(Number(f.hourly_rate) || 0), cost_rate: Math.round(Number(f.cost_rate) || 0) };
       const before: Record<string, number> = { legacy_budget: fin?.budget ?? 0, hourly_rate: fin?.hourlyRate ?? 0, cost_rate: fin?.costRate ?? 0 };
       if ("sold_manual" in f) { money.sold_manual = Math.round(Number(f.sold_manual) || 0); before.sold_manual = soldManual; }
       const finPatch: Record<string, unknown> = {};
@@ -326,7 +380,7 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
       {amounts && (
         <>
           {record?.data.quote_id ? null : <label>Montant vendu HT (FCFA)<input type="number" min="0" name="sold_manual" defaultValue={soldManual || ""} /></label>}
-          <label>Budget HT (FCFA)<input type="number" min="0" name="budget" defaultValue={fin?.budget || ""} /></label>
+          {hasLines ? null : <label>Budget HT (FCFA)<input type="number" min="0" name="budget" defaultValue={fin?.budget || ""} /></label>}
           <label>Taux de facturation (FCFA / h)<input type="number" min="0" name="hourly_rate" defaultValue={fin?.hourlyRate || ""} /></label>
           <label>Coût horaire interne (FCFA / h)<input type="number" min="0" name="cost_rate" defaultValue={fin?.costRate || ""} /></label>
           <p className="wide muted small form-note">Montants confidentiels : ils ne sont jamais affichés ni envoyés sur les appareils des employés.</p>
@@ -341,29 +395,42 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
   );
 }
 
-type DetailView = "tasks" | "stages" | "gantt" | "time" | "team" | "finance";
+type DetailView = "tasks" | "stages" | "gantt" | "time" | "team" | "finance" | "budget";
 
 const dayMonth = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit" });
 
 /** Rôles qui découpent un projet en étapes (l'employé les consulte). */
 const canPlan = (role: string) => role !== "employee" && can.manageProjects(role);
 
-function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRecord; clientName: string; onBack: () => void; focus?: { stage: string; review: boolean } | null }) {
+function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRecord; clientName: string; onBack: () => void; focus?: Focus | null }) {
   const { session } = useApp();
   const data = useProjectData();
   const clients = useTable("clients");
   const members = useMembers(project.id);
-  const [view, setView] = useState<DetailView>(focus ? "stages" : "tasks");
-  const [stageFilter, setStageFilter] = useState<string>("all");
-  const [pickedStage, setPickedStage] = useState<string | null>(focus?.stage ?? null);
-  const [review, setReview] = useState<string | null>(focus?.review ? focus.stage : null);
   const ctx = localProjectContext([project], members);
-  const [editing, setEditing] = useState(false);
   const day = today();
   const s = projectStats(project, data, day);
   const prog = projectProgress(project, data, day);
   const sold = soldOf(project, data);
   const role = session.user.role;
+  const amountsVisible = can.seeAmounts(role);
+  // Lot 4 : prévisions, météo et alertes, recalculées à chaque affichage.
+  const fc = costForecast(project, data, day, prog);
+  const w = weather(project, data, day, prog, fc);
+  const viewer = viewerOf(session.user.id, role, project.id, ctx);
+  const alerts = amountsVisible ? projectAlerts(project, data, day, prog, fc, w) : [];
+  const hasBudget = amountsVisible && fc.budgetSource !== "none";
+  const [view, setView] = useState<DetailView>(focus?.alert ? (hasBudget && focus.alert !== "delay" && !viewer.decides ? "budget" : "tasks") : focus ? "stages" : "tasks");
+  const [stageFilter, setStageFilter] = useState<string>("all");
+  const [pickedStage, setPickedStage] = useState<string | null>(focus?.stage || null);
+  const [review, setReview] = useState<string | null>(focus?.review ? focus.stage : null);
+  const [reviewChoice, setReviewChoice] = useState<Choice | undefined>(undefined);
+  const [editing, setEditing] = useState(false);
+  const [showWeather, setShowWeather] = useState(false);
+  const [budgetEdit, setBudgetEdit] = useState<{ alert: ProjectAlert | null } | null>(null);
+  const [deadlineEdit, setDeadlineEdit] = useState<{ alert: ProjectAlert | null } | null>(null);
+  const [flash, setFlash] = useState<string | null>(null);
+  const guarded = useGuardedWrite();
   const manager = can.manageProjects(role);
   const planner = canPlan(role);
   const amounts = can.seeAmounts(role);
@@ -372,6 +439,31 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
   const entries = data.time_entries.filter((t) => t.data.project_id === project.id);
   const stages = prog.stages;
   const stageRecords = stagesOf(project.id, data.project_stages);
+  const budgetView: BudgetView = {
+    project, data, stages, fc, w, alerts, amounts: amountsVisible, perPerson: can.seePersonCosts(role),
+    decides: viewer.decides, leads: viewer.leads, locked: budgetLocked(stageRecords, data.project_decisions.filter((d) => d.data.project_id === project.id && live(d))),
+  };
+  const shown = alerts.map((a) => ({ a, mode: alertMode(a, viewer) })).filter((x) => x.mode !== null);
+  const done = (m: string) => { setFlash(m); setBudgetEdit(null); setDeadlineEdit(null); };
+  const revise = (a: ProjectAlert) => (a.key === "delay" ? setDeadlineEdit({ alert: a }) : setBudgetEdit({ alert: a }));
+  async function pause() {
+    // Pause depuis la carte de décision : l'écran de validation de l'étape en cours, sur « Arrêter ou mettre en pause ».
+    const target = stages.find((i) => ["awaiting", "active", "paused"].includes(i.state)) ?? stages.find((i) => i.state === "upcoming");
+    if (target) {
+      setPickedStage(target.stage.id);
+      setReviewChoice("pause");
+      setReview(target.stage.id);
+      setView("stages");
+      return;
+    }
+    if (!confirm(`Mettre le projet ${text(project.data.name)} en pause ? Il pourra reprendre plus tard.`)) return;
+    try {
+      await guarded("projects", project.id, { status: "on_hold" });
+      setFlash("Projet mis en pause. Les alertes sont suspendues jusqu'à la reprise.");
+    } catch (e) {
+      setFlash(e instanceof Error ? e.message : "La pause n'a pas pu être enregistrée.");
+    }
+  }
   const lead = managerName(project, members);
   const leadId = text(members.find((m) => m.data.role === "manager")?.data.team_member_id);
   const estimated = amounts && !can.seePersonCosts(role) && s.hours > 0;
@@ -385,6 +477,7 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
     ["gantt", "Planning"],
     ["time", "Temps", s.hours ? hoursLabel(s.hours) : undefined],
     ["team", "Équipe", members.length ? String(members.length) : undefined],
+    ...(hasBudget || view === "budget" ? [["budget", "Budget"]] as [DetailView, string][] : []),
     ...(amounts ? [["finance", "Facturation"]] as [DetailView, string][] : []),
   ];
   const openStage = (id: string) => { setPickedStage(id); setView("stages"); };
@@ -392,7 +485,12 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
   const P = prog.P === null ? null : pct100(prog.P);
   const showProgress = tasks.length > 0 || stages.length > 0;
   const showMargin = amounts && (started || sold.VXaf > 0);
-  const blocks = [showProgress, s.hours > 0, showMargin || (!amounts && mineOpen > 0), !!deadline].filter(Boolean).length;
+  const showWeatherBlock = w.overall !== null && project.data.status === "active";
+  const showHours = s.hours > 0 && !showWeatherBlock;
+  // Marge estimée : seulement avec un budget chiffré et un travail commencé ; avant, le montant vendu.
+  const showEstimatedMargin = hasBudget && fc.BP > 0 && fc.RP > 0 && started;
+  const blocks = [showWeatherBlock, showProgress, showHours, showMargin || showEstimatedMargin || (!amounts && mineOpen > 0), !!deadline].filter(Boolean).length;
+  const flashNode = flash ? <p className="notice success-note" role="status" data-testid="project-flash">{flash}<button className="link small" onClick={() => setFlash(null)}>Fermer</button></p> : null;
 
   return (
     <section>
@@ -409,12 +507,23 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
             {project.data.site_address ? <span>{text(project.data.site_address)}</span> : null}
           </div>
         </div>
-        {manager && !editing && <button onClick={() => setEditing(true)}>Modifier le projet</button>}
+        <div className="head-actions">
+          {amountsVisible && viewer.leads && !hasBudget && view !== "budget" && <button className="ghost" onClick={() => setView("budget")} data-testid="define-budget"><PIcon name="coins" />Définir un budget</button>}
+          {manager && !editing && <button onClick={() => setEditing(true)}>Modifier le projet</button>}
+        </div>
       </div>
       {editing && <ProjectForm record={project} clients={clients} onClose={() => setEditing(false)} />}
 
       {blocks > 0 && (
-        <div className="card head-blocks" style={{ ["--cols" as string]: blocks }} data-testid="project-head">
+        <div className={`card head-blocks${showWeatherBlock ? " with-weather" : ""}`} style={{ ["--cols" as string]: blocks, ["--rest" as string]: Math.max(1, blocks - 1) }} data-testid="project-head">
+          {showWeatherBlock && w.overall && (
+            <div className={`head-block weather-block ${w.overall}`} data-testid="project-weather">
+              <div className="kpi-label">Météo du projet</div>
+              <div className="head-value"><WeatherBadge light={w.overall} /></div>
+              <div className="small weather-sentence">{w.sentence}</div>
+              <button className="link small" onClick={() => setShowWeather((x) => !x)} aria-expanded={showWeather}>{showWeather ? "Masquer le détail" : "Voir le détail"}</button>
+            </div>
+          )}
           {showProgress && (
             <div className="head-block">
               <div className="kpi-label">Avancement</div>
@@ -429,14 +538,23 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
               </div>
             </div>
           )}
-          {s.hours > 0 && (
+          {showHours && (
             <div className="head-block">
               <div className="kpi-label">Temps passé</div>
               <div className="head-value mono">{hoursLabel(s.hours)}</div>
               <div className="muted small">{s.hoursEstimated ? `sur ${hoursLabel(s.hoursEstimated)} estimées` : "aucune estimation sur les tâches"}</div>
             </div>
           )}
-          {showMargin ? (
+          {showEstimatedMargin ? (
+            <div className={`head-block${fc.marginEstimated < 0 ? " danger" : ""}`}>
+              <div className="kpi-label">Marge estimée</div>
+              <div className={`head-value mono${fc.marginEstimated < 0 ? " danger-text" : ""}`} data-testid="project-margin">{formatXaf(fc.marginEstimated)}</div>
+              <div className="muted small">
+                {fc.marginEstimatedPct !== null ? `${fc.marginEstimatedPct.toLocaleString("fr-FR")} % du vendu` : ""}{fc.marginPlannedPct !== null ? ` · prévue ${fc.marginPlannedPct.toLocaleString("fr-FR")} %` : ""}
+                {estimated ? " · coût moyen" : ""}
+              </div>
+            </div>
+          ) : showMargin ? (
             <div className={`head-block${s.margin < 0 && s.invoiced > 0 ? " danger" : ""}`}>
               <div className="kpi-label">{started ? "Marge" : "Montant vendu"}</div>
               {started ? (
@@ -473,6 +591,12 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
         </div>
       )}
 
+      {showWeather && <WeatherDetail v={budgetView} onClose={() => setShowWeather(false)} />}
+      {shown.map(({ a, mode }) => mode === "decide"
+        ? <ExceptionCard key={a.key} v={budgetView} alert={a} onRevise={revise} onPause={pause} onDone={(m) => setFlash(m)} />
+        : <AlertNotice key={a.key} alert={a} onOpen={hasBudget && a.key !== "delay" && view !== "budget" ? () => setView("budget") : undefined} onNote={viewer.leads && !project.data.pm_note ? () => setShowWeather(true) : undefined} />)}
+      {view !== "budget" && flashNode}
+
       <StageStrip stages={stages} showPct={amounts} onPick={openStage} />
 
       <div className="segmented subnav" role="tablist" aria-label="Rubriques du projet">
@@ -489,12 +613,16 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
       )}
       {view === "stages" && (
         <StagesTab project={project} stages={stages} tasks={tasks} entries={entries} sold={sold} amounts={amounts} canEdit={planner}
-          selected={pickedStage} onSelect={setPickedStage} managerId={leadId} billing={data} ctx={ctx} review={review} onReviewDone={() => setReview(null)} />
+          selected={pickedStage} onSelect={setPickedStage} managerId={leadId} billing={data} ctx={ctx} review={review} onReviewDone={() => { setReview(null); setReviewChoice(undefined); }}
+          budget={hasBudget ? fc : undefined} reviewChoice={reviewChoice} />
       )}
       {view === "gantt" && <Gantt project={project} tasks={tasks} stages={stageRecords} />}
       {view === "time" && <TimeEntries project={project} tasks={tasks} entries={entries} invoices={data.invoices} />}
       {view === "team" && <ProjectTeam project={project} members={members} />}
       {view === "finance" && amounts && <Finance project={project} data={data} onStages={stages.length ? () => setView("stages") : undefined} />}
+      {view === "budget" && amountsVisible && <BudgetTab v={budgetView} onEdit={() => setBudgetEdit({ alert: null })} flash={flashNode} />}
+      {budgetEdit && <BudgetEditor v={budgetView} alert={budgetEdit.alert} onClose={() => setBudgetEdit(null)} onDone={done} />}
+      {deadlineEdit && <DeadlineDialog v={budgetView} alert={deadlineEdit.alert} onClose={() => setDeadlineEdit(null)} onDone={done} />}
     </section>
   );
 }

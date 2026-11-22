@@ -7,8 +7,8 @@ import { SYNC_TABLES, type SyncTable } from "./sync.ts";
 export type ApiMode = "r" | "rw";
 export type ApiScopes = Partial<Record<SyncTable, ApiMode>>;
 
-/** Coûts horaires, données financières des projets et réglages : jamais par l'API. */
-export const API_FORBIDDEN: readonly string[] = ["cost_rates", "project_finance", "settings"];
+/** Coûts horaires, données financières et budgets des projets, réglages : jamais par l'API. */
+export const API_FORBIDDEN: readonly string[] = ["cost_rates", "project_finance", "budget_lines", "settings"];
 
 export const API_TABLES = SYNC_TABLES.filter((t) => !API_FORBIDDEN.includes(t));
 

@@ -379,7 +379,7 @@ async function loadProjectContext(env: Env, companyId: string, incoming: Change[
   const ids = new Set<string>();
   for (const c of incoming) {
     let pid: unknown;
-    if (["tasks", "time_entries", "project_stages", "project_decisions"].includes(c.tbl)) {
+    if (["tasks", "time_entries", "project_stages", "project_decisions", "budget_lines"].includes(c.tbl)) {
       pid = c.patch.project_id ?? records.get(`${c.tbl}/${c.row}`)?.data.project_id;
     } else if (c.tbl === "projects" && "manager_can_validate" in c.patch) {
       pid = c.row;

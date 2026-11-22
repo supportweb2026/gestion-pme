@@ -4,7 +4,7 @@
  * Statuts calculés (À venir, En cours, À valider…), jamais stockés.
  * L'employé voit les étapes, leurs dates et leur avancement, sans part ni montant.
  */
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { formatDate, text, today, useApp } from "../../context.ts";
 import { formatMoney } from "../../../shared/currency.ts";
 import { formatXaf } from "../../../shared/invoice.ts";
@@ -17,6 +17,8 @@ import { Initials, PIcon } from "../ProjectIcons.tsx";
 import { StageDecisionPanel, ValidationDialog, type Flash, type StageContext } from "./StageValidation.tsx";
 import { invoiceOfStage, type BillingData } from "../../../shared/projectDecisions.ts";
 import type { ProjectContext } from "../../../shared/projectRules.ts";
+import { tolerances, type Forecast } from "../../../shared/projectBudget.ts";
+import type { Choice } from "../../projectInvoices.ts";
 
 const dm = (iso: unknown) => (typeof iso === "string" && iso ? formatDate(iso).slice(0, 5) : "");
 const range = (s: SyncRecord) => {
@@ -76,19 +78,25 @@ export function StageStrip({ stages, showPct, onPick }: { stages: StageInfo<Sync
 }
 
 /** Onglet Étapes : cartes, livrables de l'étape choisie, réglages de l'étape. */
-export function StagesTab({ project, stages, tasks, entries, sold, amounts, canEdit, selected, onSelect, managerId, billing, ctx, review, onReviewDone }: {
+export function StagesTab({ project, stages, tasks, entries, sold, amounts, canEdit, selected, onSelect, managerId, billing, ctx, review, onReviewDone, budget, reviewChoice }: {
   project: SyncRecord; stages: StageInfo<SyncRecord>[]; tasks: SyncRecord[]; entries: SyncRecord[];
   sold: { V: number; currency: string; source: string }; amounts: boolean; canEdit: boolean;
   selected: string | null; onSelect: (id: string | null) => void; managerId: string;
   billing: BillingData; ctx: ProjectContext; review?: string | null; onReviewDone?: () => void;
+  /** Lot 4 : prévisions de coût (montants visibles seulement). */
+  budget?: Forecast;
+  /** Ouverture depuis la carte de décision : « pause » pré-choisit Arrêter ou mettre en pause. */
+  reviewChoice?: Choice;
 }) {
   const { db, session } = useApp();
   const write = useGuardedWrite();
   const team = useTeam();
   const [error, setError] = useState<string | null>(null);
   const [deciding, setDeciding] = useState<string | null>(review ?? null);
+  // Ouverture demandée alors que l'onglet est déjà affiché (pause depuis la carte de décision).
+  useEffect(() => { if (review) setDeciding(review); }, [review]);
   const [flash, setFlash] = useState<Flash | null>(null);
-  const c: StageContext = { project, stages, tasks, entries, billing, ctx, amounts };
+  const c: StageContext = { project, stages, tasks, entries, billing, ctx, amounts, ...(amounts && budget ? { budget } : {}) };
   const day = today();
   const records = stages.map((i) => i.stage);
   const share = billingShareTotal(records);
@@ -189,7 +197,7 @@ export function StagesTab({ project, stages, tasks, entries, sold, amounts, canE
         </div>
       )}
       {deciding && stages.find((i) => i.stage.id === deciding) && (
-        <ValidationDialog c={c} info={stages.find((i) => i.stage.id === deciding)!}
+        <ValidationDialog c={c} info={stages.find((i) => i.stage.id === deciding)!} initialChoice={deciding === review ? reviewChoice : undefined}
           onClose={() => { setDeciding(null); onReviewDone?.(); }}
           onDone={(f) => { onSelect(deciding); setDeciding(null); setFlash(f); onReviewDone?.(); }} />
       )}
@@ -233,6 +241,14 @@ export function StagesTab({ project, stages, tasks, entries, sold, amounts, canE
             <dl className="stage-facts">
               <div><dt>Heures passées</dt><dd className="mono">{hoursFr(hours)}{estimated ? <span className="muted"> / {hoursFr(estimated)} estimées</span> : null}</dd></div>
               <div><dt>Avancement prévu à date</dt><dd className="mono">{current.planned === null ? "—" : `${pct100(current.planned)} %`}</dd></div>
+              {amounts && budget && (() => {
+                const sf = budget.stages.find((x) => x.stageId === current.stage.id);
+                if (!sf || (sf.BP <= 0 && sf.CR + sf.committed <= 0)) return null;
+                const tol = tolerances(project).budgetPct;
+                return (
+                  <div data-testid="stage-cost"><dt>Coût réel / budget</dt><dd className="mono">{formatXaf(sf.CR + sf.committed)}{sf.BP > 0 ? <span className="muted"> / {formatXaf(sf.BP)}</span> : <span className="muted"> · pas de budget d'étape</span>}{sf.deltaPct !== null && sf.deltaPct >= tol / 2 ? <span className={sf.deltaPct > tol ? "danger-text" : "warn-text"}> · estimé {sf.deltaPct > 0 ? "+" : ""}{sf.deltaPct} %</span> : null}</dd></div>
+                );
+              })()}
             </dl>
           </div>
           {canEdit ? <StageForm key={current.stage.id} info={current} amounts={amounts} stages={records} tasks={tasks} onRemoved={() => onSelect(null)} /> : (

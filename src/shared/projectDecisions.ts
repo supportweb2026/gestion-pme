@@ -30,6 +30,11 @@ export const DECISION_LABELS: Record<string, string> = {
   project_paused: "Projet mis en pause",
   project_resumed: "Projet repris",
   project_stopped: "Projet arrêté",
+  // Lot 4 : réponses aux alertes et révisions tracées.
+  budget_revised: "Budget révisé",
+  deadline_revised: "Date de fin révisée",
+  amendment_proposed: "Avenant proposé au client",
+  plan_requested: "Plan de redressement demandé",
 };
 
 /** Identifiants déterministes (§2.1) : deux appareils produisent la même ligne, jamais un doublon. */
