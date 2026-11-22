@@ -162,6 +162,8 @@ async function handleSignup(req: Request, env: Env) {
 
 /** Verrouillage temporaire après des échecs répétés de connexion. */
 const MAX_LOGIN_FAILURES = 8;
+/** Hash factice (calculé une fois) pour les e-mails inconnus. */
+let dummyHash: Promise<string> | null = null;
 const LOGIN_WINDOW_MS = 15 * 60_000;
 
 async function handleLogin(req: Request, env: Env) {
@@ -196,6 +198,9 @@ async function handleLogin(req: Request, env: Env) {
        ON CONFLICT(key) DO UPDATE SET failures = excluded.failures, window_start = excluded.window_start, locked_until = excluded.locked_until`,
     ).bind(email, failures, fresh ? now() : attempt!.window_start, locked).run();
   };
+  // E-mail inconnu : on calcule quand même un hash, pour que le temps de réponse ne
+  // révèle pas si un compte existe.
+  if (!user) await verifyPassword(password, await (dummyHash ??= hashPassword("gestia-compte-inexistant")));
   if (!user || !user.active || !(await verifyPassword(password, user.password_hash))) {
     await fail();
     throw new HttpError(401, "e-mail ou mot de passe incorrect");
@@ -924,7 +929,11 @@ async function route(req: Request, env: Env): Promise<Response> {
   const m = req.method;
   const connector = await handleConnector(req, env); // connecteur MCP et OAuth (oauth.ts, mcp.ts)
   if (connector) return connector;
-  if (p === "/api/health") return json({ ok: true, time: now() });
+  if (p === "/api/health") {
+    // Sonde de disponibilité : vérifie aussi que la base répond (une lecture, aucune écriture).
+    const db = await env.DB.prepare(`SELECT 1 AS ok`).first<{ ok: number }>().then((r) => r?.ok === 1, () => false);
+    return json({ ok: db, db, time: now() }, db ? 200 : 503);
+  }
   if (p === "/api/status" && m === "GET") {
     // Coordonnées du support Gestia : celles saisies dans les réglages de l'entreprise éditrice.
     let support: Record<string, unknown> = {};
@@ -960,8 +969,33 @@ async function route(req: Request, env: Env): Promise<Response> {
   throw new HttpError(404, "route inconnue");
 }
 
+/**
+ * En-têtes de sécurité de toutes les réponses du Worker (API, OAuth, MCP). Les fichiers
+ * statiques reçoivent les leurs depuis src/web/public/_headers. Une page qui fixe déjà sa
+ * propre CSP (pages OAuth) la garde.
+ */
+export const SECURITY_HEADERS: Record<string, string> = {
+  "strict-transport-security": "max-age=31536000",
+  "x-content-type-options": "nosniff",
+  "x-frame-options": "DENY",
+  "referrer-policy": "strict-origin-when-cross-origin",
+  "content-security-policy": "default-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+};
+
+export function withSecurityHeaders(res: Response): Response {
+  // Les en-têtes d'une redirection (Response.redirect) sont figés : on recopie la réponse.
+  const out = new Response(res.body, res);
+  for (const [k, v] of Object.entries(SECURITY_HEADERS)) if (!out.headers.has(k)) out.headers.set(k, v);
+  return out;
+}
+
 export default {
   async fetch(req: Request, env: Env): Promise<Response> {
+    return withSecurityHeaders(await handle(req, env));
+  },
+};
+
+async function handle(req: Request, env: Env): Promise<Response> {
     try {
       return await route(req, env);
     } catch (e) {
@@ -974,5 +1008,4 @@ export default {
       console.error(e);
       return json({ error: "erreur serveur" }, 500);
     }
-  },
-};
+}
