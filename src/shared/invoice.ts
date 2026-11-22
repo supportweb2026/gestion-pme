@@ -10,9 +10,13 @@ export interface InvoiceLine {
   unit?: string;
   /** Article du catalogue d'origine, s'il y en a un. */
   articleId?: string;
+  /** Remise commerciale en pourcentage du montant de la ligne (0 à 100), facultative. */
+  discount?: number;
 }
 
 export interface InvoiceTotals {
+  /** Total des remises accordées. */
+  discount: number;
   net: number;
   vat: number;
   gross: number;
@@ -26,18 +30,33 @@ export function roundAmount(n: number, decimals = 0): number {
   return Math.round((n + Number.EPSILON) * f) / f;
 }
 
-/** Montant HT d'une ligne, arrondi à la précision de la devise. */
-export const lineNet = (l: InvoiceLine, decimals = 0) => roundAmount(l.qty * l.unitPrice, decimals);
+/** Remise de la ligne, bornée entre 0 et 100 %. */
+export const lineDiscount = (l: InvoiceLine) => Math.min(100, Math.max(0, Number(l.discount) || 0));
+
+/** Montant HT d'une ligne, remise déduite, arrondi à la précision de la devise. */
+export const lineNet = (l: InvoiceLine, decimals = 0) =>
+  roundAmount((l.qty * l.unitPrice * (100 - lineDiscount(l))) / 100, decimals);
+
+/** Montant de la remise d'une ligne (avant TVA). */
+export const lineDiscountAmount = (l: InvoiceLine, decimals = 0) =>
+  roundAmount(l.qty * l.unitPrice, decimals) - lineNet(l, decimals);
 export const lineVat = (l: InvoiceLine, decimals = 0) => roundAmount((lineNet(l, decimals) * l.vatRate) / 100, decimals);
 
 export function computeTotals(lines: InvoiceLine[], decimals = 0): InvoiceTotals {
   let net = 0;
   let vat = 0;
+  let discount = 0;
   for (const l of lines) {
     net += lineNet(l, decimals);
     vat += lineVat(l, decimals);
+    discount += lineDiscountAmount(l, decimals);
   }
-  return { net: roundAmount(net, decimals), vat: roundAmount(vat, decimals), gross: roundAmount(net + vat, decimals) };
+  return {
+    discount: roundAmount(discount, decimals),
+    net: roundAmount(net, decimals),
+    vat: roundAmount(vat, decimals),
+    gross: roundAmount(net + vat, decimals),
+  };
 }
 
 /** "1 250 000 FCFA" : espace comme séparateur de milliers, sans décimales. */

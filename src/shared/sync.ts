@@ -64,7 +64,7 @@ export function isDeleted(record: SyncRecord | null | undefined): boolean {
  * devis envoyé), leur contenu est figé : seuls certains champs de suivi bougent.
  */
 export const NUMBERED_DOCS = {
-  invoices: { numberedStatus: "validated", series: "FA", afterNumbering: ["sent_at", "paid_amount", "payment_status"] },
+  invoices: { numberedStatus: "validated", series: "FA", afterNumbering: ["sent_at", "paid_amount", "payment_status", "reminded_at", "reminders"] },
   credit_notes: { numberedStatus: "validated", series: "AV", afterNumbering: ["sent_at"] },
   quotes: { numberedStatus: "sent", series: "DV", afterNumbering: ["status", "invoice_id", "sent_at", "decided_at"] },
 } as const;

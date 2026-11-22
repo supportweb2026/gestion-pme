@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { preloadPdf } from "./pdfActions.ts";
 import { LocalDb } from "./local/db.ts";
 import { SyncEngine } from "./local/sync.ts";
 import { api, ApiError, setToken } from "./api.ts";
@@ -302,6 +303,8 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
 
   useEffect(() => {
     sync.start();
+    // Générateur de PDF chargé en tâche de fond : disponible ensuite sans réseau.
+    preloadPdf();
     return () => sync.stop();
   }, [sync]);
 

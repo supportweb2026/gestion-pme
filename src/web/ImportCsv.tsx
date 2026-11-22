@@ -32,7 +32,9 @@ export function ImportCsv({ kind }: { kind: "clients" | "articles" }) {
     const result = kind === "clients" ? rowsToClients(rows) : rowsToArticles(rows);
     if (result.missing) return setError(`Fichier non reconnu : ${result.missing}.`);
     // Les doublons (même nom déjà présent) sont ignorés.
-    const known = new Set(existing.map((r) => normalize(text(r.data[nameField]))));
+    // Liste relue dans la base locale : l'écran peut ne pas l'avoir encore chargée.
+    const current = await db.list(kind);
+    const known = new Set([...existing, ...current].map((r) => normalize(text(r.data[nameField]))));
     const fresh = (result.items as Item[]).filter((i) => {
       const k = normalize(String(i[nameField]));
       if (known.has(k)) return false;
