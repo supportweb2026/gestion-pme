@@ -19,6 +19,9 @@ import {
   QUOTE_TYPES, quoteTypeOf, sectionSubtotals, type QuoteType,
 } from "../../shared/documents.ts";
 import { canShareFiles, downloadFile, makePdfFile, shareFile } from "../pdfActions.ts";
+import {
+  describe, isFinished, nextAfter, RECURRENCE_FREQS, recurrenceOf, type RecurrenceFreq,
+} from "../../shared/recurrence.ts";
 
 interface DocConfig {
   title: string;
@@ -45,7 +48,13 @@ export const DOCS: Record<DocTable, DocConfig> = {
   },
 };
 
-type Filter = "all" | "draft" | "open" | "overdue" | "remind";
+type Filter = "all" | "draft" | "open" | "overdue" | "remind" | "recurring";
+
+/** Facture modèle d'une série encore active. */
+export function activeSeries(d: SyncRecord): boolean {
+  const rec = recurrenceOf(d.data);
+  return !!rec && d.data.status === "validated" && !isFinished(rec, text(d.data.recurrence_next));
+}
 
 /** Relance à envoyer aujourd'hui pour une facture validée (calendrier des réglages). */
 export function invoiceReminder(inv: SyncRecord, situation: Situation | undefined, settings: Record<string, unknown>): ReminderDue | null {
@@ -94,17 +103,22 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
     if (f === "open") return ["unpaid", "partial", "overdue", "sent"].includes(k);
     if (f === "overdue") return k === "overdue" || k === "expired";
     if (f === "remind") return remindOf(d) !== null;
+    if (f === "recurring") return activeSeries(d);
     return true;
   };
   const rows = docs
     .filter((d) => {
       if (q && !normalize(`${text(d.data.number)} ${clientName(d.data.client_id)}`).includes(q)) return false;
-      return matchesFilter(d, filter);
+      return matchesFilter(d, filter === "recurring" && !docs.some(activeSeries) ? "all" : filter);
     })
     .sort((a, b) => text(b.data.date).localeCompare(text(a.data.date)) || text(b.data.number).localeCompare(text(a.data.number)));
-  const filters = ([["all", "Tous"], ["draft", "Brouillons"], ["open", kind === "quotes" ? "En attente" : "À encaisser"], ["overdue", kind === "quotes" ? "Expirés" : "En retard"], ["remind", "À relancer"]] as [Filter, string][])
-    .filter(([f]) => (kind !== "credit_notes" || f === "all" || f === "draft") && (f !== "remind" || kind === "invoices"));
+  const filters = ([["all", "Tous"], ["draft", "Brouillons"], ["open", kind === "quotes" ? "En attente" : "À encaisser"], ["overdue", kind === "quotes" ? "Expirés" : "En retard"], ["remind", "À relancer"], ["recurring", "Récurrentes"]] as [Filter, string][])
+    .filter(([f]) => (kind !== "credit_notes" || f === "all" || f === "draft") && ((f !== "remind" && f !== "recurring") || kind === "invoices"))
+    // « Récurrentes » n'apparaît qu'une fois une série créée.
+    .filter(([f]) => f !== "recurring" || docs.some(activeSeries));
   const count = (f: Filter) => docs.filter((d) => matchesFilter(d, f)).length;
+  // Filtre devenu sans objet (dernière série arrêtée) : retour à « Tous ».
+  const shownFilter: Filter = filters.some(([f]) => f === filter) ? filter : "all";
   const noClient = clients.length === 0;
   const withDue = kind !== "credit_notes";
 
@@ -132,7 +146,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
             {filters.map(([f, label]) => {
               const n = f === "all" ? 0 : count(f);
               return (
-                <button key={f} className={filter === f ? "active" : ""} aria-pressed={filter === f} onClick={() => setFilter(f)}>
+                <button key={f} className={shownFilter === f ? "active" : ""} aria-pressed={shownFilter === f} onClick={() => setFilter(f)}>
                   {label}{n > 0 && <span className="seg-count">{n}</span>}
                 </button>
               );
@@ -177,7 +191,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
                 const dueDate = text(d.data.due_date ?? d.data.valid_until);
                 return (
                   <tr key={d.id} className="clickable">
-                    <td className="c-num mono"><button className="row-link" onClick={() => setOpen(d.id)}>{text(d.data.number) || <i className="draft-num">Brouillon</i>}</button>{(kind === "quotes" && quoteTypeOf(d.data) !== "quote") || d.data.deposit ? <span className="doc-type">{docTitle(kind, d.data)}</span> : null}</td>
+                    <td className="c-num mono"><button className="row-link" onClick={() => setOpen(d.id)}>{text(d.data.number) || <i className="draft-num">Brouillon</i>}</button>{(kind === "quotes" && quoteTypeOf(d.data) !== "quote") || d.data.deposit ? <span className="doc-type">{docTitle(kind, d.data)}</span> : null}{kind === "invoices" && (activeSeries(d) || d.data.recurrence_of) ? <span className="doc-type recur-tag" title={activeSeries(d) ? `Prochaine facture le ${formatDate(d.data.recurrence_next)}` : "Préparée automatiquement"}>{activeSeries(d) ? `Récurrente · ${RECURRENCE_FREQS[recurrenceOf(d.data)!.freq].adjective}` : "Récurrente"}</span> : null}</td>
                     <td className="c-client">{clientName(d.data.client_id)}</td>
                     <td className="c-date">{formatDate(d.data.date)}</td>
                     {withDue && <td className={`c-due-date ${st.key === "overdue" || st.key === "expired" ? "danger-text" : "muted"}`}>{dueDate ? formatDate(dueDate) : "—"}</td>}
@@ -552,6 +566,12 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
           {originPhrase(text(record.data.quote_number))} <button className="link" onClick={() => go("quotes", text(record.data.quote_id))}>{text(record.data.quote_number)}</button>
         </p>
       ) : null}
+      {kind === "invoices" && record?.data.recurrence_of ? (
+        <p className="muted small recur-origin">
+          {numbered ? "Facture récurrente, d'après" : "Préparée automatiquement d'après la facture récurrente"} <button className="link" onClick={() => go("invoices", text(record.data.recurrence_of))}>{text(record.data.recurrence_number)}</button>
+          {numbered ? "" : ". Vérifiez les quantités et les mentions de période, puis validez-la."}
+        </p>
+      ) : null}
       {kind === "quotes" && record?.data.source_id ? (
         <p className="muted small">
           Établi d'après <button className="link" onClick={() => go(invoices.some((i) => i.id === record.data.source_id) ? "invoices" : "quotes", text(record.data.source_id))}>{text(record.data.source_number)}</button>
@@ -720,6 +740,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                 <p className="hint">Le message est prérempli{share.reminder ? " avec le montant restant dû" : ""}. {canShare ? "« Partager le PDF » joint la facture au message." : "Joignez le PDF téléchargé si besoin."}</p>
                 {share.error && <p className="error" role="alert">{share.error}</p>}
               </div>
+              {kind === "invoices" && !record!.data.deposit && !record!.data.final_invoice && <RecurrenceCard invoice={record!} invoices={invoices} />}
               {kind === "invoices" && <EfactCard invoice={record!} />}
             </aside>
           )}
@@ -1194,5 +1215,103 @@ function EfactCard({ invoice }: { invoice: SyncRecord }) {
         <button disabled={value.trim() === current}>Enregistrer</button>
       </div>
     </form>
+  );
+}
+
+/**
+ * Répéter une facture validée : abonnement, loyer, maintenance. Gestia prépare un
+ * brouillon à chaque échéance (à vérifier puis valider) ; la série s'arrête à tout moment.
+ */
+function RecurrenceCard({ invoice, invoices }: { invoice: SyncRecord; invoices: SyncRecord[] }) {
+  const { db, go } = useApp();
+  const rec = recurrenceOf(invoice.data);
+  const next = text(invoice.data.recurrence_next);
+  const running = !!rec && !isFinished(rec, next);
+  const [editing, setEditing] = useState(false);
+  const [freq, setFreq] = useState<RecurrenceFreq>(rec?.freq ?? "monthly");
+  const date = text(invoice.data.date);
+  const proposed = (f: RecurrenceFreq) => {
+    const day = Number(date.slice(8, 10)) || 1;
+    let d = nextAfter({ freq: f, day }, date);
+    while (d < today()) d = nextAfter({ freq: f, day }, d);
+    return d;
+  };
+  const [first, setFirst] = useState(running ? next : proposed(freq));
+  const [until, setUntil] = useState(rec?.until ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const made = invoices
+    .filter((i) => i.data.recurrence_of === invoice.id)
+    .sort((a, b) => text(b.data.date).localeCompare(text(a.data.date)));
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setError(null);
+    if (!first) return setError("Indiquez la date de la prochaine facture.");
+    if (first < today()) return setError("La prochaine facture ne peut pas être dans le passé.");
+    if (until && until < first) return setError("La fin doit venir après la prochaine facture.");
+    const day = Number(first.slice(8, 10)) || 1;
+    await db.write("invoices", invoice.id, { recurrence: { freq, day, until, active: true }, recurrence_next: first });
+    setEditing(false);
+  }
+
+  async function stop() {
+    if (!confirm("Arrêter la répétition ? Les factures déjà préparées sont conservées.")) return;
+    await db.write("invoices", invoice.id, { recurrence: { ...rec!, active: false } });
+  }
+
+  const form = (
+    <form onSubmit={save} className="recur-form">
+      <label>Fréquence
+        <select value={freq} onChange={(e) => { const f = e.target.value as RecurrenceFreq; setFreq(f); if (!running) setFirst(proposed(f)); }}>
+          {(Object.keys(RECURRENCE_FREQS) as RecurrenceFreq[]).map((f) => <option key={f} value={f}>{RECURRENCE_FREQS[f].label}</option>)}
+        </select>
+      </label>
+      <label>Prochaine facture le<input type="date" value={first} min={today()} onChange={(e) => setFirst(e.target.value)} /></label>
+      <label>Fin de la série (facultatif)<input type="date" value={until} min={first} onChange={(e) => setUntil(e.target.value)} /></label>
+      {error && <p className="error" role="alert">{error}</p>}
+      <div className="form-actions">
+        {running && <button type="button" className="ghost" onClick={() => setEditing(false)}>Annuler</button>}
+        <button className="primary">{running ? "Enregistrer la répétition" : "Activer la répétition"}</button>
+      </div>
+    </form>
+  );
+
+  return (
+    <div className="card aside-actions recurrence-card">
+      <h3>Facturation récurrente</h3>
+      {running && !editing ? (
+        <>
+          <p className="recur-status" data-testid="recur-status">
+            Répétée {describe(rec!)}{rec!.until ? `, jusqu'au ${formatDate(rec!.until)}` : ""}.<br />
+            <b>Prochaine facture le {formatDate(next)}</b>
+          </p>
+          <p className="hint">Un brouillon identique est préparé à chaque échéance, daté du jour prévu. Il apparaît dans Brouillons : vérifiez-le, puis validez-le.</p>
+          <div className="form-actions">
+            <button onClick={() => { setFreq(rec!.freq); setFirst(next); setUntil(rec!.until); setEditing(true); }}>Modifier la répétition</button>
+            <button className="ghost" onClick={stop}>Arrêter la répétition</button>
+          </div>
+        </>
+      ) : editing || !rec ? (
+        <>
+          {!editing && <p className="hint">Pour un abonnement, un loyer ou un contrat de maintenance : Gestia prépare la même facture à chaque échéance, il ne reste qu'à la valider.</p>}
+          {form}
+        </>
+      ) : (
+        <>
+          <p className="hint">{rec.active ? "Série terminée" : "Répétition arrêtée"}{made.length ? ` après ${made.length} facture${made.length > 1 ? "s" : ""}` : ""}.</p>
+          <button onClick={() => { setFirst(proposed(rec.freq)); setUntil(""); setEditing(true); }}>Reprendre la répétition</button>
+        </>
+      )}
+      {made.length > 0 && (
+        <ul className="deposit-list recur-list" aria-label="Factures de la série">
+          {made.slice(0, 4).map((i) => (
+            <li key={i.id}>
+              <button className="link" onClick={() => go("invoices", i.id)}>{text(i.data.number) || `Brouillon du ${formatDate(i.data.date)}`}</button>
+              <span className="mono">{formatMoney(totalsOf(i).gross, currencyOf(i))}</span>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }
