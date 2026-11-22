@@ -13,6 +13,7 @@ import { decodeHlc, encodeHlc } from "../shared/hlc.ts";
 import { allows, API_TOKEN_RE, parseScopes, type ApiScopes } from "../shared/apiKeys.ts";
 import { extendPaidUntil, PLANS, subscriptionInfo, TRIAL_DAYS, type CompanySubscription } from "../shared/plans.ts";
 import { hashRecoveryCode, newRecoveryCodes, newTotpSecret, otpauthUri, verifyTotp } from "../shared/totp.ts";
+import { handleConnections, handleConnector } from "./oauth.ts";
 
 /** Taille d'un bloc de numéros de facture réservé par un appareil. */
 const NUMBER_BLOCK_SIZE = 50;
@@ -421,7 +422,7 @@ async function loadProjectContext(env: Env, companyId: string, incoming: Change[
  * Applique un lot de modifications (appareil ou API) : idempotence, règles de droits,
  * fusion champ par champ, puis écriture en une transaction.
  */
-async function applyIncoming(env: Env, s: Pick<Session, "sub" | "cid" | "role" | "dev">, incoming: Change[]) {
+export async function applyIncoming(env: Env, s: Pick<Session, "sub" | "cid" | "role" | "dev">, incoming: Change[]) {
   const accepted: string[] = [];
   const rejected: SyncResponse["rejected"] = [];
   // Lectures groupées : modifications déjà reçues (renvoi après coupure) et lignes concernées.
@@ -899,6 +900,8 @@ async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const p = url.pathname;
   const m = req.method;
+  const connector = await handleConnector(req, env); // connecteur MCP et OAuth (oauth.ts, mcp.ts)
+  if (connector) return connector;
   if (p === "/api/health") return json({ ok: true, time: now() });
   if (p === "/api/status" && m === "GET") {
     // Coordonnées du support Gestia : celles saisies dans les réglages de l'entreprise éditrice.
@@ -928,6 +931,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (p === "/api/users/update" && m === "POST") return handleUpdateUser(req, env, session);
   if (p === "/api/users/password" && m === "POST") return handleResetPassword(req, env, session);
   if (p === "/api/export" && m === "GET") return handleExport(env, session);
+  if (p === "/api/connections" || p.startsWith("/api/connections/")) return handleConnections(req, env, session, p.slice("/api/connections".length).replace(/^\//, ""));
   if (p === "/api/keys" || p.startsWith("/api/keys/")) return handleApiKeys(req, env, session, p.slice("/api/keys".length).replace(/^\//, ""));
   if (p.startsWith("/api/platform/")) return handlePlatform(req, env, session, p.slice("/api/platform/".length));
   if (p.startsWith("/api/files/")) return handleFile(req, env, session, p.slice("/api/files/".length));

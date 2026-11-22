@@ -55,6 +55,7 @@ export function Settings() {
       <div className="section-head"><h2>Réglages</h2></div>
       <MyAccount />
       <DeviceSecurity />
+      <Connections />
       {can.manageCompany(session.user.role) && <SubscriptionCard />}
       {can.manageCompany(session.user.role) && <CompanySettings />}
       {can.manageCompany(session.user.role) && <DocumentLookCard />}
@@ -1007,6 +1008,74 @@ function ApiKeys() {
           ))}
         </ul>
       ) : !creating && !created && <p className="muted small">Aucun jeton actif.</p>}
+    </section>
+  );
+}
+
+interface ConnectionRow { id: string; client_name: string; user_name: string; created_at: string; last_used_at: string | null; mine: boolean }
+
+/** Date et heure locales : « 22/11/2026 à 14 h 05 ». */
+const when = (iso: string | null) => {
+  if (!iso) return "";
+  const d = new Date(iso);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} à ${d.getHours()} h ${p(d.getMinutes())}`;
+};
+
+/**
+ * Applications connectées par OAuth (Claude…) : chacun voit et retire les siennes,
+ * l'administrateur voit et retire toutes celles de l'entreprise.
+ */
+function Connections() {
+  const { session } = useApp();
+  const [rows, setRows] = useState<ConnectionRow[] | null>(null);
+  const [all, setAll] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = () => api<{ connections: ConnectionRow[]; all: boolean }>("/api/connections")
+    .then((r) => { setRows(r.connections); setAll(r.all); })
+    .catch(() => setRows(null));
+  useEffect(() => { load(); }, []);
+
+  async function revoke(c: ConnectionRow) {
+    const whose = c.mine ? "" : ` de ${c.user_name}`;
+    if (!confirm(`Déconnecter ${c.client_name}${whose} ? L'application perdra l'accès à Gestia immédiatement.`)) return;
+    setError(null);
+    try {
+      await api("/api/connections/revoke", { id: c.id });
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? sentence(err.message) : "Connexion internet nécessaire.");
+    }
+  }
+
+  if (rows === null) return null;
+  return (
+    <section className="card section-card connections" aria-label="Connexions">
+      <div className="section-head">
+        <div>
+          <h3>Connexions</h3>
+          <p className="muted small">
+            Applications que vous avez autorisées à travailler dans Gestia en votre nom, par exemple Claude pour suivre vos projets et vos tâches.
+            {all ? " En tant qu'administrateur, vous voyez celles de toute l'entreprise." : ""}
+            {" "}Pour en ajouter une, indiquez l'adresse <code>{location.origin}/mcp</code> dans l'application.
+          </p>
+        </div>
+      </div>
+      {rows.length > 0 ? (
+        <ul className="list-rows connection-list">
+          {rows.map((c) => (
+            <li key={c.id} className="connection-row">
+              <span className="connection-icon" aria-hidden="true">{c.client_name.trim().charAt(0).toUpperCase() || "?"}</span>
+              <span className="grow">
+                <span><b>{c.client_name}</b>{all && <span className="muted small"> · {c.mine ? `${session.user.name} (vous)` : c.user_name}</span>}</span>
+                <small className="muted">Connectée le {when(c.created_at)} · {c.last_used_at ? `dernier usage le ${when(c.last_used_at)}` : "pas encore utilisée"}</small>
+              </span>
+              <button className="ghost danger" onClick={() => revoke(c)}>Déconnecter</button>
+            </li>
+          ))}
+        </ul>
+      ) : <p className="muted small">Aucune application connectée.</p>}
+      {error && <p className="error" role="alert">{error}</p>}
     </section>
   );
 }

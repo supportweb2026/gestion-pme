@@ -8,6 +8,7 @@ import { mkdirSync, readFileSync, existsSync, statSync } from "node:fs";
 import { join, extname, normalize } from "node:path";
 import worker from "../src/worker/index.ts";
 import { createLocalD1 } from "./d1-local.ts";
+import { isConnectorPath } from "../src/worker/oauth.ts";
 
 const root = join(import.meta.dirname, "..");
 const dist = join(root, "dist");
@@ -40,12 +41,12 @@ const TYPES: Record<string, string> = {
 
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);
-  if (url.pathname.startsWith("/api/")) {
+  if (url.pathname.startsWith("/api/") || isConnectorPath(url.pathname)) {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     const body = chunks.length ? Buffer.concat(chunks) : undefined;
     const response = await worker.fetch(
-      new Request(url, { method: req.method, headers: req.headers as Record<string, string>, body: req.method === "GET" ? undefined : body }),
+      new Request(url, { method: req.method, headers: req.headers as Record<string, string>, body: req.method === "GET" || req.method === "HEAD" ? undefined : body }),
       env,
     );
     res.writeHead(response.status, Object.fromEntries(response.headers));
