@@ -178,7 +178,8 @@ try {
   await nav(A.page, "Projets");
   await A.page.getByRole("button", { name: "Nouveau projet" }).click();
   await A.page.getByLabel("Nom du projet").fill("Site web Total");
-  await A.page.getByLabel("Client").selectOption({ label: "Total Gabon" });
+  await A.page.getByRole("combobox", { name: /^Client/ }).selectOption({ label: "Total Gabon" });
+  await A.page.getByRole("button", { name: /^Montant vendu et taux/ }).click();
   await A.page.getByLabel("Budget HT (FCFA)").fill("2000000");
   await A.page.getByLabel("Taux de facturation (FCFA / h)").fill("25000");
   await A.page.getByLabel("Coût horaire interne (FCFA / h)").fill("10000");
