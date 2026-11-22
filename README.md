@@ -125,6 +125,12 @@ La base D1 `gestion-pme` est déjà créée (identifiant dans `wrangler.jsonc`).
 4. **Settings → Variables and Secrets** : ajouter le secret `JWT_SECRET` (chaîne aléatoire d'au moins 32 caractères, obligatoire : sans lui, le serveur refuse les connexions).
 5. Chaque `git push` sur `main` redéploie automatiquement. Adresse : `https://gestion-pme.<compte>.workers.dev`.
 
+Exploitation (sauvegardes, restauration Time Travel, sonde `/api/health`, retour arrière,
+secrets) : voir [`docs/exploitation.md`](docs/exploitation.md). Les en-têtes de sécurité
+(CSP, HSTS, anti-cadre) sont posés par `src/web/public/_headers` pour l'application et par
+le Worker pour `/api`, `/oauth` et `/mcp`. `package-lock.json` fige les versions installées
+par Workers Builds.
+
 Ouvrez l'adresse : « Créer mon entreprise » ouvre un espace en essai de 30 jours.
 Les entreprises existantes avant la v5 passent en formule Pro jusqu'au 31/12/2027 (migration `0002`).
 Les abonnements sont encaissés hors ligne (virement, mobile money) puis enregistrés dans la console Plateforme.

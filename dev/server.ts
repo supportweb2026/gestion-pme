@@ -39,6 +39,35 @@ const TYPES: Record<string, string> = {
   ".png": "image/png",
 };
 
+/**
+ * En-têtes de dist/_headers (format Cloudflare), appliqués comme en production :
+ * motifs « /chemin » exacts ou terminés par « * ». HSTS est ignoré en http local.
+ */
+function parseHeadersFile(): { pattern: string; headers: Record<string, string> }[] {
+  const path = join(dist, "_headers");
+  if (!existsSync(path)) return [];
+  const rules: { pattern: string; headers: Record<string, string> }[] = [];
+  for (const line of readFileSync(path, "utf8").split("\n")) {
+    if (!line.trim() || line.trim().startsWith("#")) continue;
+    if (!/^\s/.test(line)) rules.push({ pattern: line.trim(), headers: {} });
+    else if (rules.length) {
+      const i = line.indexOf(":");
+      if (i > 0) rules[rules.length - 1].headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
+    }
+  }
+  return rules;
+}
+const headerRules = parseHeadersFile();
+function staticHeaders(pathname: string): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const r of headerRules) {
+    const match = r.pattern.endsWith("*") ? pathname.startsWith(r.pattern.slice(0, -1)) : pathname === r.pattern;
+    if (match) Object.assign(out, r.headers);
+  }
+  delete out["strict-transport-security"];
+  return out;
+}
+
 createServer(async (req, res) => {
   const url = new URL(req.url ?? "/", `http://localhost:${port}`);
   if (url.pathname.startsWith("/api/") || isConnectorPath(url.pathname)) {
@@ -57,6 +86,6 @@ createServer(async (req, res) => {
   // Fichiers statiques, avec repli sur index.html (application monopage).
   let file = normalize(join(dist, url.pathname));
   if (!file.startsWith(dist) || !existsSync(file) || statSync(file).isDirectory()) file = join(dist, "index.html");
-  res.writeHead(200, { "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
+  res.writeHead(200, { ...staticHeaders(url.pathname), "content-type": TYPES[extname(file)] ?? "application/octet-stream" });
   res.end(readFileSync(file));
 }).listen(port, () => console.log(`Gestia en local : http://localhost:${port}`));
