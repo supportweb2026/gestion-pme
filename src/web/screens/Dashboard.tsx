@@ -1,13 +1,16 @@
 import { useMemo } from "react";
-import { formatDate, text, today, useApp, useSyncStatus, useTable } from "../context.ts";
+import { formatDate, text, today, useApp, useSettings, useSyncStatus, useTable } from "../context.ts";
 import { formatXaf } from "../../shared/invoice.ts";
-import { invoiceSituations, netXafOf, quoteStatus } from "../ledger.ts";
+import { forecast, monthlyTarget, targetProgress } from "../../shared/treasury.ts";
+import { invoiceSituations, netXafOf, quoteStatus, rateOf, totalsOf } from "../ledger.ts";
+import { buildReport, EMPTY_FILTERS } from "../reports.ts";
 import { Gains } from "./Gains.tsx";
 
 /**
  * Tableau de bord unique.
  *  1. « À traiter » : ce qui demande une action aujourd'hui (argent à encaisser, retards,
- *     devis sans réponse, brouillons). Indépendant de la période.
+ *     devis sans réponse, brouillons), avec l'objectif du mois s'il est fixé. Indépendant de la période.
+ *  1 bis. « Trésorerie à venir » : entrées et sorties attendues à 30, 60 et 90 jours.
  *  2. « Performance » : chiffre d'affaires, encaissements, marge et devis sur une période
  *     choisie, avec comparaison ; l'analyse détaillée (filtres, répartitions, export) se déplie.
  * Tout est calculé sur l'appareil, donc disponible hors ligne.
@@ -19,6 +22,9 @@ export function Dashboard() {
   const credits = useTable("credit_notes");
   const quotes = useTable("quotes");
   const clients = useTable("clients");
+  const orders = useTable("purchase_orders");
+  const articles = useTable("articles");
+  const settings = useSettings();
   const sync = useSyncStatus();
 
   const data = useMemo(() => {
@@ -51,6 +57,27 @@ export function Dashboard() {
     };
   }, [invoices, payments, credits, quotes]);
 
+  // Trésorerie à venir : reste dû à échéance, séries récurrentes, commandes fournisseurs.
+  const cash = useMemo(() => {
+    const sit = invoiceSituations(invoices, payments, credits);
+    const list = invoices.map((rec) => {
+      const s = sit.get(rec.id);
+      return { rec, due: s ? Math.round(s.due * s.rate) : 0, grossXaf: Math.round(totalsOf(rec).gross * rateOf(rec)) };
+    });
+    return forecast({ today: today(), invoices: list, orders });
+  }, [invoices, payments, credits, orders]);
+
+  // Objectif du mois : chiffre d'affaires HT du mois (avoirs déduits), comme dans « Performance ».
+  const target = monthlyTarget(settings);
+  const progress = useMemo(() => {
+    if (target <= 0) return null;
+    const t = today();
+    const r = buildReport({ invoices, credits, payments, quotes, articles, today: t }, { ...EMPTY_FILTERS, from: `${t.slice(0, 7)}-01`, to: t });
+    return targetProgress(target, Math.round(r.kpis.revenue), t);
+  }, [target, invoices, credits, payments, quotes, articles]);
+  const monthName = new Date(`${today()}T12:00:00Z`).toLocaleDateString("fr-FR", { month: "long", timeZone: "UTC" });
+  const hasCash = cash.buckets.some((b) => b.inflow || b.recurring || b.outflow);
+
   const clientName = (id: string) => text(clients.find((c) => c.id === id)?.data.name) || "—";
   const synced = sync.lastSync
     ? `Synchronisé à ${new Date(sync.lastSync).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" })}`
@@ -71,6 +98,18 @@ export function Dashboard() {
           <button className="primary" onClick={() => go("invoices", "new")}>Nouvelle facture</button>
         </div>
       </div>
+
+      {progress && (
+        <div className="target-line" data-testid="target">
+          <div className="target-text">
+            <span>Objectif de {monthName} : <b className="mono">{formatXaf(progress.achieved).replace(/ FCFA$/, "")}</b> / <span className="mono">{formatXaf(progress.target)}</span> HT</span>
+            <span className={`mono ${progress.onTrack ? "ok-text" : "muted"}`}>{Math.round(progress.ratio * 100)} %</span>
+          </div>
+          <div className="split-bar" role="progressbar" aria-label={`Objectif de ${monthName}`} aria-valuemin={0} aria-valuemax={100} aria-valuenow={Math.min(100, Math.round(progress.ratio * 100))}>
+            {progress.achieved > 0 && <span className="soon" style={{ width: `${Math.min(100, Math.max(2, progress.ratio * 100))}%` }} />}
+          </div>
+        </div>
+      )}
 
       <h3 className="section-title">À traiter</h3>
       <div className="dash-grid">
@@ -134,6 +173,30 @@ export function Dashboard() {
             </ul>
           )}
         </div>
+      </div>
+
+      <h3 className="section-title">Trésorerie à venir</h3>
+      <div className="card cash-card" role="region" aria-label="Trésorerie à venir">
+        {!hasCash ? (
+          <p className="empty-inline">Aucune échéance de facture ni commande fournisseur dans les 90 prochains jours.</p>
+        ) : (
+          <>
+            <div className="cash-cols">
+              {cash.buckets.map((b) => (
+                <dl key={b.days} className="cash-col" data-testid={`cash-${b.days}`}>
+                  <div className="cash-head">D'ici {b.days} jours</div>
+                  <div><dt>Entrées</dt><dd className="mono">{formatXaf(b.inflow + b.recurring)}</dd></div>
+                  <div><dt>Sorties</dt><dd className="mono">{b.outflow ? `− ${formatXaf(b.outflow)}` : formatXaf(0)}</dd></div>
+                  <div className="cash-net"><dt>Solde prévu</dt><dd className={`mono ${b.net < 0 ? "danger-text" : ""}`}>{formatXaf(b.net)}</dd></div>
+                </dl>
+              ))}
+            </div>
+            <p className="muted small cash-note">
+              Entrées : reste dû des factures à leur échéance{cash.buckets.some((b) => b.recurring) ? " et prochaines factures récurrentes" : ""}. Sorties : commandes fournisseurs en cours, à leur livraison prévue.
+              {cash.overdue > 0 && <> Les {formatXaf(cash.overdue)} en retard ne sont pas comptés.</>}
+            </p>
+          </>
+        )}
       </div>
 
       <Gains />

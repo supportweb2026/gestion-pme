@@ -59,6 +59,7 @@ export function Settings() {
       {can.manageCompany(session.user.role) && <DocumentLookCard />}
       {can.manageCompany(session.user.role) && <FiscalSettingsCard />}
       {can.manageCompany(session.user.role) && <RemindersCard />}
+      {can.manageCompany(session.user.role) && <TargetCard />}
       {can.manageCompany(session.user.role) && <CurrencySettings />}
       {can.manageUsers(session.user.role) && <Users />}
       {can.manageCompany(session.user.role) && <DataExport />}
@@ -874,6 +875,33 @@ function DocumentLookCard() {
       <div className="form-actions">
         {saved && <span className="ok-text">Enregistré</span>}
         <button className="primary">Enregistrer l'apparence</button>
+      </div>
+    </form>
+  );
+}
+
+/** Objectif mensuel de chiffre d'affaires HT : suivi en haut du tableau de bord. */
+function TargetCard() {
+  const { db } = useApp();
+  const s = useSettings();
+  const [saved, setSaved] = useState(false);
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const v = Math.max(0, Math.round(Number(new FormData(e.currentTarget).get("monthly_target")) || 0));
+    await db.write("settings", "company", { monthly_target: v });
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  }
+  return (
+    <form className="card section-card" onSubmit={save} aria-label="Objectif mensuel">
+      <h3>Objectif mensuel</h3>
+      <p className="muted small">Chiffre d'affaires HT visé chaque mois. Sa progression s'affiche en haut du tableau de bord ; laissez vide pour ne rien afficher.</p>
+      <div className="form-grid">
+        <label>Objectif de chiffre d'affaires HT (FCFA)<input name="monthly_target" type="number" min="0" step="1000" defaultValue={Number(s.monthly_target) > 0 ? String(s.monthly_target) : ""} /></label>
+      </div>
+      <div className="form-actions">
+        {saved && <span className="ok-text">Enregistré</span>}
+        <button className="primary">Enregistrer</button>
       </div>
     </form>
   );

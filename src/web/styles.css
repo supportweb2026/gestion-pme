@@ -1182,10 +1182,10 @@ button.reason.selected .radio-dot { border: 5px solid var(--accent); }
 .stock-panel { margin-bottom: 16px; }
 .stock-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; }
 .stock-head .actions { display: flex; flex-wrap: wrap; gap: 8px; }
-.stock-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line, #E6E9EF); }
+.stock-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 .stock-history-title { margin: 20px 0 8px; font-size: 0.875rem; }
 .stock-history { list-style: none; margin: 0; padding: 0; }
-.stock-history li { display: grid; grid-template-columns: 96px 1fr auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line, #E6E9EF); font-size: 0.875rem; }
+.stock-history li { display: grid; grid-template-columns: 96px 1fr auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line); font-size: 0.875rem; }
 .stock-history li .link { text-align: left; }
 .stock-hint { display: block; margin-top: 4px; font-size: 0.75rem; color: var(--ink-3); }
 .stock-history li .link { justify-self: start; }
@@ -1289,3 +1289,18 @@ label.people-filter { flex-direction: row; align-items: center; gap: 8px; font-w
 .open-order-main { display: grid; gap: 2px; min-width: 0; flex: 1 1 320px; }
 .open-order .actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .on-order { font-family: var(--font); font-size: 0.75rem; color: var(--ink-3); white-space: nowrap; }
+
+/* Tableau de bord : objectif du mois et trésorerie à venir (lot 8c). */
+.target-line { display: grid; gap: 8px; margin: 0 0 20px; max-width: 560px; }
+.target-text { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; font-size: 0.875rem; color: var(--ink-2); }
+.cash-cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.cash-col { margin: 0; display: grid; gap: 6px; }
+.cash-col > div { display: flex; justify-content: space-between; gap: 12px; font-size: 0.875rem; }
+.cash-col dt { color: var(--ink-3); }
+.cash-col dd { margin: 0; }
+.cash-head { font-weight: 600; color: var(--ink-2); padding-bottom: 4px; border-bottom: 1px solid var(--line); }
+.cash-col .cash-net { padding-top: 6px; border-top: 1px solid var(--line); font-weight: 600; }
+.cash-col .cash-net dt { color: var(--ink-2); }
+.cash-note { margin: 16px 0 0; }
+.cash-card { margin-bottom: 24px; }
+@media (max-width: 700px) { .cash-cols { grid-template-columns: 1fr; gap: 16px; } }
