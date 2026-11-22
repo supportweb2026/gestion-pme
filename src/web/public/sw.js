@@ -1,6 +1,6 @@
 // Service worker : garde une copie de l'application pour l'ouvrir sans réseau.
 // Les données ne passent jamais par ce cache : elles vivent dans la base locale.
-const CACHE = "gestia-v7";
+const CACHE = "gestia-v8";
 const SHELL = [
   "/", "/manifest.webmanifest", "/favicon.ico", "/favicon-32.png", "/icon-192.png",
   "/brand/gestia-logo.png", "/brand/gestia-logo-blanc.png",
@@ -52,7 +52,8 @@ self.addEventListener("fetch", (event) => {
     );
     return;
   }
-  if (url.origin !== location.origin || url.pathname.startsWith("/api/")) return;
+  // Connecteur MCP et pages OAuth : toujours le réseau, jamais en cache (ils ne remplacent pas l'application).
+  if (url.origin !== location.origin || /^\/(api|oauth|mcp|\.well-known)(\/|$)/.test(url.pathname)) return;
 
   // Pages : réseau d'abord (nouvelle version), copie locale si hors ligne.
   if (event.request.mode === "navigate") {

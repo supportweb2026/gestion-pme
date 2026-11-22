@@ -1836,3 +1836,11 @@ button.primary.danger:hover { background: #962017; border-color: #962017; }
 .val-body > label.check-line { flex-direction: row; align-items: flex-start; gap: 10px; font-weight: 500; }
 .val-body > label.check-line input { margin-top: 3px; flex: none; }
 .budget-grid .money-input { display: block; max-width: 220px; margin-left: auto; }
+
+/* Réglages › Connexions (connecteur MCP). */
+.connections .section-head { align-items: flex-start; }
+.connections code { overflow-wrap: anywhere; font-size: 0.8125rem; background: var(--subtle); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+.connection-list { margin-top: 8px; }
+.connection-row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-top: 1px solid var(--line); }
+.connection-row .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
+.connection-icon { flex: none; width: 36px; height: 36px; border-radius: 10px; background: var(--accent-soft); color: var(--accent); display: grid; place-items: center; font-family: var(--font-display); font-weight: 700; }

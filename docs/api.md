@@ -22,3 +22,13 @@ curl -X PATCH https://gestia.ido.ga/api/v1/tasks/tsk-0001 \
   -H "Authorization: Bearer $GESTIA_TOKEN" -H "content-type: application/json" \
   -d '{"project_id":"prj-0001","title":"Importer les cartes","status":"todo"}'
 ```
+
+## Connecteur MCP (Claude)
+
+Adresse : `https://gestia.ido.ga/mcp` (MCP « Streamable HTTP », sans état, réponses JSON ; `GET` → 405). Ajout dans claude.ai : Réglages › Connecteurs › Ajouter un connecteur personnalisé, avec cette adresse.
+
+- OAuth 2.1 : `/.well-known/oauth-protected-resource/mcp`, `/.well-known/oauth-authorization-server`, enregistrement dynamique `POST /oauth/register`, `GET /oauth/authorize` (PKCE S256 obligatoire, connexion Gestia avec double authentification, puis consentement), `POST /oauth/token` (`authorization_code`, `refresh_token` à rotation), `POST /oauth/revoke`.
+- Jeton d'accès 1 h, de rafraîchissement 30 jours ; codes et jetons stockés en empreinte SHA-256 (migration `0005_connecteur_mcp`). Un code ou un jeton de rafraîchissement rejoué coupe la connexion.
+- Le jeton agit au nom de l'utilisateur, avec son rôle lu à chaque appel ; chaque connexion a son pseudo-appareil `mcp-…` et écrit par `applyIncoming`. Aucune table de montants n'est lue.
+- Outils : `list_projects`, `get_project`, `list_tasks`, `list_people`, `my_day`, `create_task`, `update_task`, `log_time`. Pas de suppression.
+- Réglages › Connexions (`GET /api/connections`, `POST /api/connections/revoke`) : chacun ses connexions, l'administrateur toutes celles de l'entreprise.
