@@ -5,7 +5,6 @@ import { SyncEngine } from "./local/sync.ts";
 import { api, ApiError, setToken } from "./api.ts";
 import { COMING_SOON, Ctx, ROLE_LABELS, TAB_LABELS, TABS_BY_ROLE, text, useApp, useSettings, useSyncStatus, type Session, type Tab } from "./context.ts";
 import { Dashboard } from "./screens/Dashboard.tsx";
-import { Gains } from "./screens/Gains.tsx";
 import { Documents } from "./screens/Documents.tsx";
 import { Clients } from "./screens/Clients.tsx";
 import { Articles } from "./screens/Articles.tsx";
@@ -312,6 +311,12 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
   });
   const [open, setOpen] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
+  // Menu latéral replié en icônes (ordinateur) : choix mémorisé sur l'appareil.
+  const [collapsed, setCollapsed] = useState(() => { try { return localStorage.getItem("gestia:menu-replie") === "1"; } catch { return false; } });
+  const toggleMenu = () => setCollapsed((c) => {
+    try { localStorage.setItem("gestia:menu-replie", c ? "0" : "1"); } catch { /* stockage indisponible */ }
+    return !c;
+  });
   const moreBtn = useRef<HTMLButtonElement>(null);
   const sheet = useRef<HTMLDivElement>(null);
   const closeMore = () => { setMoreOpen(false); moreBtn.current?.focus(); };
@@ -369,10 +374,11 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
 
   return (
     <Ctx.Provider value={{ db, sync, session, logout, go }}>
-      <div className="app">
+      <div className={`app${collapsed ? " side-collapsed" : ""}`}>
         <aside className="sidebar">
           <div className="side-brand">
             <GestiaLogo />
+            <img src="/brand/gestia-icone.png" alt="Gestia" className="gestia-mark side-mark" width={298} height={309} />
             <CompanyName fallback={session.company.name} />
           </div>
           <nav className="side-nav" aria-label="Sections">
@@ -381,13 +387,17 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
                 {g.label && <div className="nav-group-label" id={`grp-${g.key}`}>{g.label}</div>}
                 <ul aria-labelledby={g.label ? `grp-${g.key}` : undefined}>
                   {g.tabs.map((t) => (
-                    <li key={t}><NavItem tab={t} active={tab === t} onClick={() => go(t)} /></li>
+                    <li key={t}><NavItem tab={t} active={tab === t} onClick={() => go(t)} tip={collapsed} /></li>
                   ))}
                 </ul>
               </div>
             ))}
           </nav>
           <div className="side-foot">
+            <button className="nav-item collapse-btn" onClick={toggleMenu} aria-expanded={!collapsed} title={collapsed ? "Agrandir le menu" : undefined}>
+              <Icon name={collapsed ? "expand" : "collapse"} />
+              <span className="nav-label">{collapsed ? "Agrandir le menu" : "Réduire le menu"}</span>
+            </button>
             <InstallButton />
             <SyncPill onAuthLost={(revoked) => { sync.stop(); onLogout(revoked); }} />
             <div className="user-id">
@@ -453,8 +463,8 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
         <div className="main" inert={moreOpen || undefined}>
         <SubscriptionBanner />
         <main className="content">
-          {tab === "dashboard" && <Dashboard />}
-          {tab === "gains" && <Gains />}
+          {/* L'ancien onglet « Gains » fait désormais partie du tableau de bord. */}
+          {(tab === "dashboard" || tab === "gains") && <Dashboard />}
           {(tab === "quotes" || tab === "invoices" || tab === "credit_notes") && (
             <Documents key={tab} kind={tab} open={open} setOpen={setOpen} />
           )}
@@ -525,7 +535,7 @@ function navGroups(ready: Tab[], soon: Tab[]): NavGroup[] {
   const pick = (list: Tab[]) => list.filter((t) => ready.includes(t));
   const used = new Set<Tab>(["dashboard", "gains", "quotes", "invoices", "credit_notes", "clients", "articles", "settings", "platform"]);
   const groups: NavGroup[] = [
-    { key: "home", label: null, tabs: pick(["dashboard", "gains"]) },
+    { key: "home", label: null, tabs: pick(["dashboard"]) },
     { key: "sales", label: "Ventes", tabs: pick(["quotes", "invoices", "credit_notes"]) },
     { key: "files", label: "Répertoire", tabs: pick(["clients", "articles"]) },
     { key: "other", label: "Gestion", tabs: ready.filter((t) => !used.has(t)) },
@@ -541,7 +551,7 @@ const TAB_ICONS: Record<Tab, IconName> = {
 };
 
 /** Lien du menu. Un module pas encore ouvert est grisé et porte la mention « Bientôt ». */
-function NavItem({ tab, active, onClick, short = false }: { tab: Tab; active: boolean; onClick: () => void; short?: boolean }) {
+function NavItem({ tab, active, onClick, short = false, tip = false }: { tab: Tab; active: boolean; onClick: () => void; short?: boolean; tip?: boolean }) {
   const soon = Boolean(COMING_SOON[tab]);
   const label = short && tab === "dashboard" ? "Accueil" : TAB_LABELS[tab];
   return (
@@ -549,7 +559,7 @@ function NavItem({ tab, active, onClick, short = false }: { tab: Tab; active: bo
       className={`nav-item${active ? " active" : ""}${soon ? " soon" : ""}`}
       onClick={onClick}
       aria-current={active ? "page" : undefined}
-      title={soon ? "Bientôt disponible" : undefined}
+      title={tip ? `${TAB_LABELS[tab]}${soon ? " (bientôt disponible)" : ""}` : soon ? "Bientôt disponible" : undefined}
     >
       <Icon name={TAB_ICONS[tab]} />
       <span className="nav-label">{label}</span>
@@ -558,7 +568,7 @@ function NavItem({ tab, active, onClick, short = false }: { tab: Tab; active: bo
   );
 }
 
-type IconName = "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more" | "close" | "clock" | "chart";
+type IconName = "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more" | "close" | "clock" | "chart" | "collapse" | "expand";
 const ICON_PATHS: Record<IconName, string[]> = {
   home: ["M3 10.5 12 3l9 7.5", "M5 9.5V20h14V9.5", "M10 20v-6h4v6"],
   quote: ["M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z", "M14 3v5h5", "M8.5 13h7", "M8.5 17h4"],
@@ -575,6 +585,8 @@ const ICON_PATHS: Record<IconName, string[]> = {
   more: ["M4 6h16", "M4 12h16", "M4 18h16"],
   close: ["M6 6l12 12", "M18 6 6 18"],
   clock: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 7v5l3 2"],
+  collapse: ["M4 4h16v16H4z", "M9 4v16", "M16 10l-2 2 2 2"],
+  expand: ["M4 4h16v16H4z", "M9 4v16", "M14 10l2 2-2 2"],
   chart: ["M4 20V10", "M10 20V4", "M16 20v-7", "M22 20H2"],
 };
 

@@ -97,9 +97,10 @@ try {
   await page.getByRole("button", { name: "Démarrer l'essai gratuit" }).click();
   await waitSynced();
 
-  step("Tableau des gains vide : pas d'erreur, message d'attente");
-  await nav("Gains");
-  await page.getByRole("heading", { name: "Tableau de bord des gains" }).waitFor();
+  step("Tableau de bord vide (partie Performance) : pas d'erreur, message d'attente ; plus d'onglet « Gains » séparé");
+  await nav("Tableau de bord");
+  await page.getByRole("heading", { name: "Performance" }).waitFor();
+  assert.equal(await page.getByRole("navigation").getByRole("button", { name: "Gains", exact: true }).count(), 0, "l'onglet Gains est fusionné dans le tableau de bord");
   await expectKpi("kpi-ca", "0");
   await page.getByText("Aucune vente ni encaissement sur cette période.").waitFor();
 
@@ -117,19 +118,20 @@ try {
   await waitSynced();
 
   step("Indicateurs du mois : CA 200 000, encaissé 168 000, marge 40 000 (40 % sur la moitié du CA), reste 68 000");
-  await nav("Gains");
+  await nav("Tableau de bord");
   await page.getByLabel("Période").selectOption("month");
   await expectKpi("kpi-ca", "200 000");
   await expectKpi("kpi-encaisse", "168 000");
   await expectKpi("kpi-marge", "40 000");
-  await expectKpi("kpi-du", "68 000");
+  await page.getByRole("button", { name: "Afficher l'analyse détaillée" }).click();
+  await page.locator(".receivable-amount").filter({ hasText: /^68 000FCFA$/ }).waitFor();
   await page.getByTestId("kpi-marge").getByText("Taux de marge 40 % · sur 50 % du CA").waitFor();
   await page.getByTestId("kpi-ca").getByText("236 000 FCFA TTC · TVA 36 000 FCFA").waitFor();
-  await page.getByTestId("kpi-ca").getByText(/nouveau/).waitFor();
+  await page.getByTestId("kpi-ca").getByText(/pas d'historique/).waitFor();
   await shot("gains-bureau.png");
 
   step("Filtre client (Comilog) : CA 100 000, une facture");
-  await page.getByRole("button", { name: "Plus de filtres" }).click();
+  await page.getByRole("button", { name: "Filtres", exact: true }).click();
   await page.getByLabel("Client : Tous").click();
   await page.getByRole("checkbox", { name: "Comilog" }).check();
   await page.keyboard.press("Escape");
@@ -154,7 +156,7 @@ try {
   await expectKpi("kpi-ca", "100 000");
   await page.getByTestId("kpi-marge").getByText("Taux de marge 40 %", { exact: true }).waitFor();
   await page.getByRole("button", { name: "Tout effacer" }).click();
-  await page.getByRole("button", { name: "Plus de filtres" }).click();
+  await page.getByRole("button", { name: "Filtres", exact: true }).click();
 
   step("Répartition par produit, puis clic = filtre ; moyens de paiement");
   await page.getByRole("tab", { name: "Produits et services" }).click();
@@ -190,7 +192,8 @@ try {
 
   step("Les filtres sont mémorisés après rechargement");
   await page.reload();
-  await nav("Gains");
+  await nav("Tableau de bord");
+  await page.getByRole("button", { name: "Masquer l'analyse détaillée" }).waitFor();
   assert.equal(await page.getByLabel("Période").inputValue(), "12m");
   assert.equal(await page.getByLabel("Comparer à").inputValue(), "year");
 
