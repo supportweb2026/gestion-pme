@@ -613,6 +613,11 @@ async function handleClientError(req: Request, env: Env) {
   const cut = (v: unknown, n: number) => (typeof v === "string" ? v.slice(0, n) : null);
   const message = cut(body.message, 500);
   if (!message) throw new HttpError(400, "message manquant");
+  // Limite par adresse IP (200 rapports par jour) : protège le quota d'écritures D1 de tous les clients.
+  const errKey = `err:${req.headers.get("cf-connecting-ip") ?? "local"}`;
+  const seen = await env.DB.prepare(`SELECT count FROM signup_limits WHERE ip = ? AND day = ?`).bind(errKey, today()).first<{ count: number }>();
+  if ((seen?.count ?? 0) >= 200) return json({ ok: false, ignored: true }, 429);
+  await env.DB.prepare(`INSERT INTO signup_limits (ip, day, count) VALUES (?, ?, 1) ON CONFLICT(ip, day) DO UPDATE SET count = count + 1`).bind(errKey, today()).run();
   const r = await env.DB.prepare(
     `INSERT INTO client_errors (company_id, user_id, at, message, detail, url, agent) VALUES (?, ?, ?, ?, ?, ?, ?)`,
   ).bind(who?.cid ?? null, who?.sub ?? null, now(), message, cut(body.detail, 4000), cut(body.url, 300), cut(req.headers.get("user-agent"), 300)).run();

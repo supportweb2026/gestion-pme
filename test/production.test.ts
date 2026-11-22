@@ -64,3 +64,11 @@ test("fichier _headers : CSP, HSTS, anti-cadre et cache long des fichiers à emp
   // La page de l'application ne charge aucun script hors de son origine.
   assert.doesNotMatch(h, /script-src[^;]*(unsafe-inline|unsafe-eval|https:)/);
 });
+
+test("/api/errors : limité à 200 rapports par jour et par adresse IP", async () => {
+  const send = () => req("/api/errors", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.9" }, body: JSON.stringify({ message: "boom" }) });
+  for (let i = 0; i < 200; i++) assert.equal((await send()).status, 201);
+  assert.equal((await send()).status, 429);
+  const other = await req("/api/errors", { method: "POST", headers: { "content-type": "application/json", "cf-connecting-ip": "203.0.113.10" }, body: JSON.stringify({ message: "boom" }) });
+  assert.equal(other.status, 201);
+});
