@@ -211,11 +211,15 @@ test("MCP : initialize, tools/list avec annotations, notification", async () => 
   assert.equal(init.data.result.serverInfo.name, "gestia");
   const list = await rpc(c.access!, "tools/list");
   const names = list.data.result.tools.map((t: any) => t.name);
-  assert.deepEqual(names.sort(), ["create_task", "get_project", "list_people", "list_projects", "list_tasks", "log_time", "my_day", "update_task"]);
+  assert.deepEqual(names.sort(), ["add_comment", "create_task", "get_project", "get_task", "list_categories", "list_people", "list_projects", "list_tasks", "log_time", "my_day", "update_task"]);
   for (const t of list.data.result.tools) {
     assert.equal(typeof t.annotations.readOnlyHint, "boolean");
     assert.equal(t.annotations.destructiveHint, false);
   }
+  const hint = (n: string) => list.data.result.tools.find((t: any) => t.name === n).annotations.readOnlyHint;
+  assert.equal(hint("get_task"), true);
+  assert.equal(hint("list_categories"), true);
+  assert.equal(hint("add_comment"), false);
   const note = await raw("/mcp", { method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${c.access}` }, body: JSON.stringify({ jsonrpc: "2.0", method: "notifications/initialized" }) });
   assert.equal(note.status, 202);
 });
@@ -279,4 +283,94 @@ test("écritures : chemin de la synchronisation, auteur tracé, reçues par les 
   assert.equal(got.length, 2, "l'appareil reçoit la création et la modification");
   const tasks = await tool(c.access!, "list_tasks", { person: "Paul", status: "review" });
   assert.equal(tasks.structuredContent.tasks[0].title, "Recette client");
+});
+
+test("lot 5 : catégorie par nom, commentaire ajouté puis lu, historique et archivage", async () => {
+  const c = await connect("dnt@ido.ga");
+  const cats = await tool(c.access!, "list_categories");
+  assert.deepEqual(cats.structuredContent.categories.map((x: any) => x.name), ["Client", "Infra", "Sécurité", "Coûts", "Interne"]);
+  // Catégorie par son nom, sans accent ni majuscule.
+  const created = await tool(c.access!, "create_task", { project: "Portail SEEG", title: "Pare-feu du portail", category: "securite", assignee: "moi" });
+  assert.equal(created.isError, false, created.content[0].text);
+  const id = created.structuredContent.task.id;
+  assert.equal(created.structuredContent.task.category_id, "cat-securite");
+  assert.equal(created.structuredContent.task.category, "Sécurité");
+  assert.equal(created.structuredContent.task.comments, 0);
+  const unknown = await tool(c.access!, "create_task", { project: "Portail SEEG", title: "X", category: "Marketing" });
+  assert.equal(unknown.isError, true);
+  assert.match(unknown.content[0].text, /Catégorie « Marketing » introuvable.*Client, Infra/);
+  // Filtre par catégorie, par identifiant ou par nom.
+  const bySec = await tool(c.access!, "list_tasks", { category: "Sécurité" });
+  assert.deepEqual(bySec.structuredContent.tasks.map((t: any) => t.id), [id]);
+  assert.deepEqual((await tool(c.access!, "list_tasks", { category: "cat-securite" })).structuredContent.tasks.map((t: any) => t.id), [id]);
+  assert.ok((await tool(c.access!, "list_tasks", { category: "aucune" })).structuredContent.tasks.every((t: any) => t.category_id === ""));
+  // Commentaire au nom de l'utilisateur connecté, relu par get_task et compté par list_tasks.
+  const com = await tool(c.access!, "add_comment", { task_id: id, body: "Règles d'ouverture validées avec la SEEG." });
+  assert.equal(com.isError, false, com.content[0].text);
+  assert.equal(com.structuredContent.comment.author, "Jimmy Dnt");
+  const empty = await tool(c.access!, "add_comment", { task_id: id, body: "   " });
+  assert.equal(empty.isError, true);
+  const row = await env.DB.prepare(`SELECT data FROM records WHERE tbl = 'task_comments' AND id = ?`).bind(com.structuredContent.comment.id).first<{ data: string }>();
+  assert.equal(JSON.parse(row!.data).author_id, admin.id);
+  const listed = await tool(c.access!, "list_tasks", { category: "Sécurité" });
+  assert.equal(listed.structuredContent.tasks[0].comments, 1);
+  // Historique : déplacement et échéance écrits par le serveur pour le connecteur.
+  await tool(c.access!, "update_task", { task_id: id, status: "doing", due_date: "2026-12-20", category: "Infra" });
+  const done = await tool(c.access!, "update_task", { task_id: id, status: "done" });
+  assert.equal(done.isError, false, done.content[0].text);
+  await env.DB.prepare(`INSERT INTO records (company_id, tbl, id, data, clocks, updated_seq) SELECT company_id, 'attachments', 'att-1', ?, '{}', 0 FROM records WHERE id = 'prj-1'`)
+    .bind(JSON.stringify({ tbl: "tasks", row_id: id, project_id: "prj-1", kind: "link", url: "https://seeg.ga/specs", label: "Cahier des charges", created_by: admin.id, created_at: "2026-11-22T10:00:00.000Z" })).run();
+  const fiche = await tool(c.access!, "get_task", { task_id: id });
+  assert.equal(fiche.isError, false, fiche.content[0].text);
+  const f = fiche.structuredContent;
+  assert.equal(f.task.category, "Infra");
+  assert.equal(f.comments.length, 1);
+  assert.equal(f.comments[0].body, "Règles d'ouverture validées avec la SEEG.");
+  assert.equal(f.comments[0].author, "Jimmy Dnt");
+  assert.equal(f.comments[0].editable, true);
+  const labels = f.history.map((h: any) => h.label);
+  assert.ok(labels.includes("Déplacée de « À faire » vers « En cours »"), labels.join(" | "));
+  assert.ok(labels.includes("Déplacée de « En cours » vers « Terminé »"));
+  assert.ok(labels.includes("Échéance fixée au 20/12/2026"));
+  assert.equal(labels.at(-1), "Tâche créée");
+  assert.ok(f.history.every((h: any) => h.by.startsWith("Jimmy Dnt")), JSON.stringify(f.history));
+  assert.deepEqual(f.attachments, [{ id: "att-1", kind: "link", name: "Cahier des charges", url: "https://seeg.ga/specs", added_at: "2026-11-22T10:00:00.000Z" }]);
+  // Archivage : seulement une tâche terminée ; masquée par défaut, visible avec include_archived.
+  const notDone = await tool(c.access!, "update_task", { task_id: "tsk-1", archived: true });
+  assert.equal(notDone.isError, true);
+  assert.match(notDone.content[0].text, /seule une tâche terminée/i);
+  const arch = await tool(c.access!, "update_task", { task_id: id, archived: true });
+  assert.equal(arch.isError, false, arch.content[0].text);
+  assert.equal(arch.structuredContent.task.archived, true);
+  assert.ok(!(await tool(c.access!, "list_tasks", { status: "all" })).structuredContent.tasks.some((t: any) => t.id === id), "archivée masquée");
+  const withArch = await tool(c.access!, "list_tasks", { status: "all", include_archived: true });
+  assert.ok(withArch.structuredContent.tasks.some((t: any) => t.id === id && t.archived));
+  assert.ok((await tool(c.access!, "get_task", { task_id: id })).structuredContent.history.some((h: any) => h.label === "Archivée"));
+  const back = await tool(c.access!, "update_task", { task_id: id, archived: false });
+  assert.deepEqual(back.structuredContent.changed, ["archived"]);
+  // Aucun montant dans la fiche.
+  assert.ok(!/5432100|25000|budget/.test(JSON.stringify(fiche)));
+});
+
+test("lot 5 : l'employé commente, mais ne reclasse pas une tâche d'un projet qu'il ne dirige pas", async () => {
+  const c = await connect("paul@ido.ga");
+  const com = await tool(c.access!, "add_comment", { task_id: "tsk-1", body: "Logo reçu, je reprends." });
+  assert.equal(com.isError, false, com.content[0].text);
+  assert.equal(com.structuredContent.comment.author, "Paul Employé");
+  const fiche = await tool(c.access!, "get_task", { task_id: "tsk-1" });
+  assert.ok(fiche.structuredContent.comments.some((x: any) => x.body === "Logo reçu, je reprends." && x.author === "Paul Employé"));
+  assert.ok(fiche.structuredContent.history.some((h: any) => h.label.startsWith("Bloquée")), "blocage du test précédent dans l'historique");
+  // Règle des projets : l'employé ne modifie que l'avancement et la description.
+  const cat = await tool(c.access!, "update_task", { task_id: "tsk-1", category: "Client" });
+  assert.equal(cat.isError, true);
+  assert.match(cat.content[0].text, /seulement l'avancement et la description/);
+  const arch = await tool(c.access!, "update_task", { task_id: "tsk-1", archived: true });
+  assert.equal(arch.isError, true);
+  // Sa nouvelle tâche peut porter une catégorie.
+  const mine = await tool(c.access!, "create_task", { project: "prj-1", title: "Photos du local", category: "Interne", assignee: "moi" });
+  assert.equal(mine.isError, false, mine.content[0].text);
+  assert.equal(mine.structuredContent.task.category, "Interne");
+  const cats = await tool(c.access!, "list_categories");
+  assert.equal(cats.isError, false);
+  assert.equal((await tool(c.access!, "list_tasks", { category: "inconnue" })).isError, true);
 });
