@@ -1274,7 +1274,7 @@ label.people-filter { flex-direction: row; align-items: center; gap: 8px; font-w
   .two-factor-setup { grid-template-columns: 1fr; }
   .two-factor-setup .qr { grid-row: auto; justify-self: center; }
   .two-factor-setup .form-actions { grid-column: 1; }
-
+}
 
 /* ── Projets, lot 2 : étapes, modèles, lancement depuis un devis ─────── */
 /* Bleu réservé aux actions : les barres d'avancement sont en bleu nuit, le « prévu » en orange (comme « aujourd'hui » sur le planning). */
