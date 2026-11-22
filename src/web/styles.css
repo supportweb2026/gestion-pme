@@ -1130,3 +1130,32 @@ button.reason.selected .radio-dot { border: 5px solid var(--accent); }
 }
 .task-card .task-move { margin-top: -4px; gap: 2px; }
 .task-card .task-move button.small { min-height: 28px; height: 28px; padding: 0 8px; }
+
+/* ---------- Menu latéral : sections rétractables, jamais de barre de défilement ---------- */
+.sidebar { scrollbar-width: none; padding-top: 16px; }
+.sidebar::-webkit-scrollbar { display: none; }
+.side-brand { gap: 12px; padding-bottom: 12px; }
+.side-brand-row { display: flex; align-items: center; justify-content: space-between; width: 100%; gap: 8px; }
+.side-brand-row .collapse-btn { margin-right: -6px; color: var(--ink-4); }
+.side-brand-row .collapse-btn:hover { color: var(--ink); }
+.nav-group + .nav-group { margin-top: 8px; }
+.nav-group-toggle { width: 100%; min-height: 28px; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 0 10px; border: none; border-radius: 6px; background: none; color: var(--ink-3); font-size: 0.6875rem; font-weight: 700; letter-spacing: 0.02em; text-align: left; }
+.nav-group-toggle:hover { background: var(--hover); color: var(--ink); border: none; }
+.nav-group-toggle .chev { color: var(--ink-4); transition: transform 0.18s ease; flex: none; }
+.nav-group-toggle[aria-expanded="false"] .chev { transform: rotate(-90deg); }
+.nav-group ul[hidden] { display: none; }
+.nav-item { min-height: 34px; }
+.side-foot { padding-top: 10px; }
+@media (min-width: 861px) {
+  .side-collapsed .side-brand-row { flex-direction: column; gap: 10px; }
+  .side-collapsed .side-brand-row .collapse-btn { margin: 0; }
+  .side-collapsed .nav-group-toggle { display: none; }
+}
+@media (min-width: 861px) {
+  .side-collapsed .side-mark { width: 28px; height: 28px; }
+  .side-collapsed .side-brand-row { gap: 6px; }
+  .side-collapsed .nav-item { min-height: 36px; }
+  .side-collapsed .nav-group + .nav-group { margin-top: 6px; padding-top: 6px; }
+  .side-collapsed .user-id .avatar { display: none; }
+  .side-collapsed .user-id { padding-top: 6px; }
+}

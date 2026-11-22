@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { preloadPdf } from "./pdfActions.ts";
 import { LocalDb } from "./local/db.ts";
 import { SyncEngine } from "./local/sync.ts";
@@ -327,6 +327,52 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
     if (moreOpen) sheet.current?.querySelector<HTMLElement>(".nav-item")?.focus();
   }, [moreOpen]);
   const groups = navGroups(ready, soon);
+
+  // Sections du menu rétractables : choix mémorisé ; la section de la page active est ouverte.
+  // Si le menu ne tient pas dans la hauteur de l'écran, les sections les moins utiles se
+  // replient d'elles-mêmes (jamais celle de la page active ni celle qu'on vient d'ouvrir) :
+  // le menu ne défile jamais.
+  const [sectionPref, setSectionPref] = useState<Record<string, boolean>>(() => {
+    try { return JSON.parse(localStorage.getItem("gestia:menu-sections") ?? "{}") as Record<string, boolean>; } catch { return {}; }
+  });
+  const [autoClosed, setAutoClosed] = useState<string[]>([]);
+  const lastToggled = useRef<string | null>(null);
+  const side = useRef<HTMLElement>(null);
+  const sectionOpen = (g: NavGroup) => {
+    if (!g.label) return true;
+    if (g.key in sectionPref && !sectionPref[g.key]) return false;
+    if (g.tabs.includes(tab)) return true;
+    if (autoClosed.includes(g.key)) return false;
+    return sectionPref[g.key] ?? true;
+  };
+  const toggleSection = (g: NavGroup) => {
+    const next = !sectionOpen(g);
+    lastToggled.current = g.key;
+    setAutoClosed((a) => a.filter((k) => k !== g.key));
+    setSectionPref((p) => {
+      const n = { ...p, [g.key]: next };
+      try { localStorage.setItem("gestia:menu-sections", JSON.stringify(n)); } catch { /* stockage indisponible */ }
+      return n;
+    });
+  };
+  useLayoutEffect(() => {
+    const el = side.current;
+    if (!el || collapsed || getComputedStyle(el).display === "none") return;
+    if (el.scrollHeight <= el.clientHeight + 1) return;
+    const order = ["soon", "admin", "other", "files", "sales"];
+    const victim = order.find((k) => {
+      const g = groups.find((x) => x.key === k);
+      return g && k !== lastToggled.current && !g.tabs.includes(tab) && sectionOpen(g);
+    });
+    if (victim) setAutoClosed((a) => [...a, victim]);
+  });
+  // Nouvelle hauteur d'écran : on recalcule les replis automatiques.
+  useEffect(() => {
+    let h = window.innerHeight;
+    const onResize = () => { if (window.innerHeight > h) setAutoClosed([]); h = window.innerHeight; };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
   // Téléphone : quatre raccourcis en bas d'écran, le reste dans « Plus ».
   // « Ma journée » d'abord quand c'est le premier écran du rôle (employé).
   const mobileOrder: Tab[] = ready[0] === "my_day" ? ["my_day", ...MOBILE_MAIN] : MOBILE_MAIN;
@@ -382,29 +428,38 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
   return (
     <Ctx.Provider value={{ db, sync, session, logout, go }}>
       <div className={`app${collapsed ? " side-collapsed" : ""}`}>
-        <aside className="sidebar">
+        <aside className="sidebar" ref={side}>
           <div className="side-brand">
-            <GestiaLogo />
-            <img src="/brand/gestia-icone.png" alt="Gestia" className="gestia-mark side-mark" width={298} height={309} />
+            <div className="side-brand-row">
+              <GestiaLogo />
+              <img src="/brand/gestia-icone.png" alt="Gestia" className="gestia-mark side-mark" width={298} height={309} />
+              <button className="icon collapse-btn" onClick={toggleMenu} aria-expanded={!collapsed} aria-label={collapsed ? "Agrandir le menu" : "Réduire le menu"} title={collapsed ? "Agrandir le menu" : "Réduire le menu"}>
+                <Icon name={collapsed ? "expand" : "collapse"} />
+              </button>
+            </div>
             <CompanyName fallback={session.company.name} />
           </div>
           <nav className="side-nav" aria-label="Sections">
-            {groups.map((g) => (
-              <div className="nav-group" key={g.label}>
-                {g.label && <div className="nav-group-label" id={`grp-${g.key}`}>{g.label}</div>}
-                <ul aria-labelledby={g.label ? `grp-${g.key}` : undefined}>
-                  {g.tabs.map((t) => (
-                    <li key={t}><NavItem tab={t} active={tab === t} onClick={() => go(t)} tip={collapsed} /></li>
-                  ))}
-                </ul>
-              </div>
-            ))}
+            {groups.map((g) => {
+              const isOpen = collapsed || sectionOpen(g);
+              return (
+                <div className={`nav-group${isOpen ? "" : " closed"}`} key={g.key}>
+                  {g.label && (
+                    <button className="nav-group-toggle" id={`grp-${g.key}`} aria-expanded={isOpen} aria-controls={`grp-list-${g.key}`} onClick={() => toggleSection(g)}>
+                      <span>{g.label}</span>
+                      <svg className="chev" viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M6 9l6 6 6-6" /></svg>
+                    </button>
+                  )}
+                  <ul id={`grp-list-${g.key}`} aria-labelledby={g.label ? `grp-${g.key}` : undefined} hidden={!isOpen}>
+                    {g.tabs.map((t) => (
+                      <li key={t}><NavItem tab={t} active={tab === t} onClick={() => go(t)} tip={collapsed} /></li>
+                    ))}
+                  </ul>
+                </div>
+              );
+            })}
           </nav>
           <div className="side-foot">
-            <button className="nav-item collapse-btn" onClick={toggleMenu} aria-expanded={!collapsed} title={collapsed ? "Agrandir le menu" : undefined}>
-              <Icon name={collapsed ? "expand" : "collapse"} />
-              <span className="nav-label">{collapsed ? "Agrandir le menu" : "Réduire le menu"}</span>
-            </button>
             <InstallButton />
             <SyncPill onAuthLost={(revoked) => { sync.stop(); onLogout(revoked); }} />
             <div className="user-id">
