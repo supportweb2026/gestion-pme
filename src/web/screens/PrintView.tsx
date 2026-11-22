@@ -12,6 +12,7 @@ import type { DocTable, SyncRecord } from "../../shared/sync.ts";
 import type { Situation } from "../ledger.ts";
 import { docArrete, docTitle, isSection, quoteTypeOf } from "../../shared/documents.ts";
 import { fiscalMentions, pct } from "../../shared/taxes.ts";
+import { docColor, softOf, stampFor, termsFor } from "../../shared/branding.ts";
 
 function Lines({ children }: { children: (string | false | undefined)[] }) {
   return <>{children.filter(Boolean).map((l, i) => <div key={i}>{l}</div>)}</>;
@@ -69,7 +70,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
         <button onClick={() => window.print()}>Imprimer</button>
         <button onClick={onClose}>Fermer</button>
       </div>
-      <article className="print-sheet">
+      <article className="print-sheet" style={{ "--doc": docColor(s), "--doc-soft": softOf(docColor(s)) } as React.CSSProperties}>
         <header className="ps-head">
           <div className="ps-company">
             {typeof s.logo === "string" && s.logo && <img src={s.logo} alt="" className="ps-logo" />}
@@ -171,10 +172,27 @@ export function PrintView({ kind, record, client, situation, onClose }: {
           </section>
         )}
 
-        {kind === "quotes" && !delivery && (
-          <section className="ps-sign">
-            <div className="ps-label">Bon pour accord</div>
-            <div className="muted">Date, signature et cachet du client</div>
+        {(stampFor(s, kind, delivery) || (kind === "quotes" && !delivery)) && (
+          <div className="ps-signs">
+            {stampFor(s, kind, delivery) ? (
+              <section className="ps-stamp">
+                <div className="ps-label">{text(s.name) ? `Pour ${text(s.name)}` : "Cachet et signature"}</div>
+                <img src={stampFor(s, kind, delivery)} alt="Cachet et signature" />
+              </section>
+            ) : <span />}
+            {kind === "quotes" && !delivery && (
+              <section className="ps-sign">
+                <div className="ps-label">Bon pour accord</div>
+                <div className="muted">Date, signature et cachet du client</div>
+              </section>
+            )}
+          </div>
+        )}
+
+        {termsFor(s, kind, delivery) && (
+          <section className="ps-terms">
+            <div className="ps-label">Conditions générales</div>
+            <p>{termsFor(s, kind, delivery)}</p>
           </section>
         )}
 

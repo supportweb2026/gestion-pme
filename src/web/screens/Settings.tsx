@@ -8,6 +8,7 @@ import { DEFAULT_PAYMENT_DAYS } from "../../shared/invoice.ts";
 import { CURRENCIES, rateFor } from "../../shared/currency.ts";
 import { DEFAULT_REMINDER_STEPS, reminderSettings, stepLabel } from "../../shared/reminders.ts";
 import { DEFAULT_VAT_RATES, fiscalSettings, type WithholdingPreset } from "../../shared/taxes.ts";
+import { DOC_COLORS, docColor, softOf, tooLight } from "../../shared/branding.ts";
 
 const COMPANY_FIELDS: { name: string; label: string; placeholder?: string; wide?: boolean }[] = [
   { name: "name", label: "Raison sociale" },
@@ -25,7 +26,7 @@ const COMPANY_FIELDS: { name: string; label: string; placeholder?: string; wide?
 ];
 
 /** Réduit le logo à 320 px de large pour qu'il reste léger à synchroniser. */
-async function resizeLogo(file: File): Promise<string> {
+async function resizeLogo(file: File, maxW = 320, maxH = 160): Promise<string> {
   const url = URL.createObjectURL(file);
   try {
     const img = await new Promise<HTMLImageElement>((resolve, reject) => {
@@ -34,7 +35,7 @@ async function resizeLogo(file: File): Promise<string> {
       i.onerror = () => reject(new Error("image illisible"));
       i.src = url;
     });
-    const scale = Math.min(1, 320 / img.width, 160 / img.height);
+    const scale = Math.min(1, maxW / img.width, maxH / img.height);
     const canvas = document.createElement("canvas");
     canvas.width = Math.round(img.width * scale);
     canvas.height = Math.round(img.height * scale);
@@ -54,6 +55,7 @@ export function Settings() {
       <DeviceSecurity />
       {can.manageCompany(session.user.role) && <SubscriptionCard />}
       {can.manageCompany(session.user.role) && <CompanySettings />}
+      {can.manageCompany(session.user.role) && <DocumentLookCard />}
       {can.manageCompany(session.user.role) && <FiscalSettingsCard />}
       {can.manageCompany(session.user.role) && <RemindersCard />}
       {can.manageCompany(session.user.role) && <CurrencySettings />}
@@ -655,6 +657,101 @@ function RemindersCard() {
       <div className="form-actions">
         {message && <span className={message === "Enregistré" ? "ok-text" : "error"}>{message}</span>}
         <button className="primary">Enregistrer les relances</button>
+      </div>
+    </form>
+  );
+}
+
+/**
+ * Apparence des documents : couleur, cachet et signature, notes par défaut, conditions
+ * générales. S'applique à l'aperçu et au PDF de tous les documents, y compris anciens
+ * (la mise en page n'est pas une donnée figée du document, contrairement aux montants).
+ */
+function DocumentLookCard() {
+  const { db } = useApp();
+  const s = useSettings();
+  const [color, setColor] = useState(docColor(s));
+  const [stampError, setStampError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+  useEffect(() => setColor(docColor(s)), [s.doc_color]);
+  const stamp = typeof s.stamp === "string" ? s.stamp : "";
+
+  async function save(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    const f = new FormData(e.currentTarget);
+    const values: Record<string, unknown> = {
+      doc_color: color,
+      stamp_on: f.get("stamp_on") === "on",
+      default_note_invoices: String(f.get("default_note_invoices") ?? "").trim(),
+      default_note_quotes: String(f.get("default_note_quotes") ?? "").trim(),
+      terms: String(f.get("terms") ?? "").trim(),
+    };
+    const patch = Object.fromEntries(Object.entries(values).filter(([k, v]) => (s[k] ?? (k === "stamp_on" ? true : "")) !== v));
+    if (Object.keys(patch).length) await db.write("settings", "company", patch);
+    setSaved(true);
+    setTimeout(() => setSaved(false), 2500);
+  }
+
+  async function onStamp(file: File | undefined) {
+    setStampError(null);
+    if (!file) return;
+    try {
+      await db.write("settings", "company", { stamp: await resizeLogo(file, 480, 220), stamp_on: true });
+    } catch {
+      setStampError("Image illisible : utilisez un PNG (idéalement sur fond transparent) ou un JPEG.");
+    }
+  }
+
+  return (
+    <form className="card section-card doc-look-card" onSubmit={save}>
+      <h3>Apparence des documents</h3>
+      <p className="muted small">Couleur, cachet et mentions de vos devis, factures et avoirs, à l'écran comme en PDF.</p>
+
+      <div className="aside-label">Couleur</div>
+      <div className="doc-colors" role="group" aria-label="Couleur des documents">
+        {DOC_COLORS.map((c) => (
+          <button key={c.hex} type="button" className="doc-color" style={{ background: c.hex }} aria-pressed={color === c.hex} aria-label={c.label} title={c.label} onClick={() => setColor(c.hex)} />
+        ))}
+        <label className="doc-color-custom">Autre<input type="color" value={color} onChange={(e) => setColor(e.target.value.toUpperCase())} aria-label="Couleur personnalisée" /></label>
+      </div>
+      <div className="doc-preview-strip" aria-hidden="true">
+        <span className="t" style={{ color }}>Facture</span>
+        <span className="bar" style={{ background: softOf(color) }} />
+      </div>
+      {tooLight(color) && <p className="error">Couleur trop claire : le titre sera peu lisible à l'impression.</p>}
+
+      <div className="aside-label">Cachet et signature</div>
+      <div className="logo-row">
+        {stamp ? <img src={stamp} alt="Cachet actuel" className="stamp-preview" /> : <div className="logo-preview empty-logo">Cachet</div>}
+        <label className="button">
+          {stamp ? "Remplacer le cachet" : "Ajouter le cachet"}
+          <input type="file" accept="image/png,image/jpeg,image/webp" hidden onChange={(e) => onStamp(e.target.files?.[0])} />
+        </label>
+        {stamp && <button type="button" className="ghost" onClick={() => db.write("settings", "company", { stamp: "" })}>Retirer</button>}
+        {stampError && <span className="error">{stampError}</span>}
+      </div>
+      {stamp && (
+        <label className="check-inline">
+          <input type="checkbox" name="stamp_on" defaultChecked={s.stamp_on !== false} />
+          Imprimer le cachet sur les devis, factures et avoirs
+        </label>
+      )}
+      <p className="hint">Photo ou scan du cachet signé, idéalement détouré (PNG transparent). Jamais imprimé sur un bon de livraison, que signe le client.</p>
+
+      <div className="form-grid">
+        <label className="wide">Note par défaut des nouvelles factures
+          <textarea name="default_note_invoices" rows={2} defaultValue={text(s.default_note_invoices)} placeholder="Ex. Merci de rappeler le numéro de facture lors du paiement." />
+        </label>
+        <label className="wide">Note par défaut des nouveaux devis
+          <textarea name="default_note_quotes" rows={2} defaultValue={text(s.default_note_quotes)} placeholder="Ex. Délai de réalisation : 15 jours à réception de l'acompte." />
+        </label>
+        <label className="wide">Conditions générales de vente
+          <textarea name="terms" rows={4} defaultValue={text(s.terms)} placeholder="Imprimées en petit en bas des devis et des factures." />
+        </label>
+      </div>
+      <div className="form-actions">
+        {saved && <span className="ok-text">Enregistré</span>}
+        <button className="primary">Enregistrer l'apparence</button>
       </div>
     </form>
   );

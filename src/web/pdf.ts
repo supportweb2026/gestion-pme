@@ -13,6 +13,7 @@ import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../shared/cu
 import type { DocTable } from "../shared/sync.ts";
 import { docArrete, docTitle, isSection, quoteTypeOf, sectionSubtotals } from "../shared/documents.ts";
 import { fiscalMentions, pct } from "../shared/taxes.ts";
+import { docColor, rgb01, softOf, stampFor, termsFor } from "../shared/branding.ts";
 
 export interface PdfInput {
   kind: DocTable;
@@ -28,8 +29,6 @@ export interface PdfInput {
 
 const A4 = { w: 595.28, h: 841.89 };
 const M = 42; // marge, en points (≈ 15 mm)
-const BLUE = rgb(0x02 / 255, 0x55 / 255, 0xc6 / 255);
-const SOFT = rgb(0xea / 255, 0xf1 / 255, 0xfc / 255);
 const INK = rgb(0x10 / 255, 0x1d / 255, 0x36 / 255);
 const GREY = rgb(0x6b / 255, 0x70 / 255, 0x68 / 255);
 const LINE = rgb(0xe1 / 255, 0xe6 / 255, 0xef / 255);
@@ -58,6 +57,10 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   const title = docTitle(kind, doc);
   // Bon de livraison : quantités seulement, sans prix ni totaux.
   const delivery = kind === "quotes" && quoteTypeOf(doc) === "delivery";
+  // Couleur d'accent choisie dans Réglages (titre, en-tête du tableau, total).
+  const accent = docColor(s);
+  const BLUE = rgb(...rgb01(accent));
+  const SOFT = rgb(...rgb01(softOf(accent)));
   pdf.setTitle(`${title} ${number}`);
   pdf.setAuthor(str(s.name));
   pdf.setCreator("Gestia");
@@ -124,6 +127,17 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
       logo = /^data:image\/jpe?g/.test(logoData) ? await pdf.embedJpg(bytes) : await pdf.embedPng(bytes);
     } catch {
       logo = null; // logo illisible : le document sort quand même
+    }
+  }
+
+  let stamp: PDFImage | null = null;
+  const stampData = stampFor(s, kind, delivery);
+  if (stampData) {
+    try {
+      const bytes = Uint8Array.from(atob(stampData.split(",")[1] ?? ""), (c) => c.charCodeAt(0));
+      stamp = /^data:image\/jpe?g/.test(stampData) ? await pdf.embedJpg(bytes) : await pdf.embedPng(bytes);
+    } catch {
+      stamp = null;
     }
   }
 
@@ -359,11 +373,32 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     }
     y -= 10;
   }
-  if (kind === "quotes") {
+  // Cachet et signature de l'entreprise (à gauche), bon pour accord du client (à droite, devis).
+  if (stamp || kind === "quotes") {
     if (y - 90 < M + FOOT) newPage();
-    page.drawRectangle({ x: boxX, y: y - 85, width: boxW, height: 85, borderColor: GREY, borderWidth: 0.8, borderDashArray: [3, 3] });
-    text("BON POUR ACCORD", boxX + 10, y - 14, 7.5, regular, GREY);
-    text("Date, signature et cachet du client", boxX + 10, y - 27, 9, regular, GREY);
+    if (stamp) {
+      text((str(s.name) ? `Pour ${str(s.name)}` : "Cachet et signature").toUpperCase().slice(0, 60), M, y - 14, 7.5, regular, GREY);
+      const sc = Math.min(170 / stamp.width, 66 / stamp.height, 1);
+      page.drawImage(stamp, { x: M, y: y - 20 - stamp.height * sc, width: stamp.width * sc, height: stamp.height * sc });
+    }
+    if (kind === "quotes") {
+      page.drawRectangle({ x: boxX, y: y - 85, width: boxW, height: 85, borderColor: GREY, borderWidth: 0.8, borderDashArray: [3, 3] });
+      text("BON POUR ACCORD", boxX + 10, y - 14, 7.5, regular, GREY);
+      text("Date, signature et cachet du client", boxX + 10, y - 27, 9, regular, GREY);
+    }
+    y -= 95;
+  }
+  // Conditions générales : petit texte après le document.
+  const terms = termsFor(s, kind, delivery);
+  if (terms) {
+    const tl = wrap(terms, 7.5, xr - M);
+    if (y - (16 + tl.length * 9.5) < M + FOOT) newPage();
+    text("CONDITIONS GÉNÉRALES", M, y - 8, 7, regular, GREY);
+    y -= 20;
+    for (const l of tl) {
+      text(l, M, y, 7.5, regular, GREY);
+      y -= 9.5;
+    }
   }
 
   }
