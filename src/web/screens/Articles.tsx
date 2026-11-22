@@ -28,6 +28,8 @@ export function Articles() {
       kind: f.kind,
       unit: f.unit,
       price: Math.round(Number(f.price) || 0),
+      // Prix d'achat facultatif : vide = inconnu (la marge n'est pas calculée).
+      cost: String(f.cost ?? "").trim() === "" ? null : Math.round(Number(f.cost) || 0),
       vat_rate: Number(f.vat_rate) || 0,
     };
     const isNew = editing === "new";
@@ -65,6 +67,7 @@ export function Articles() {
             </select>
           </label>
           <label>Prix unitaire HT (FCFA)<input name="price" type="number" min="0" step="1" required defaultValue={v("price", "0")} /></label>
+          <label>Prix d'achat HT (FCFA)<input name="cost" type="number" min="0" step="1" placeholder="Facultatif, pour la marge" defaultValue={v("cost")} /></label>
           <label>TVA %<input name="vat_rate" type="number" min="0" step="any" defaultValue={v("vat_rate", String(DEFAULT_VAT_RATE))} /></label>
           <div className="form-actions">
             {editing !== "new" && (
@@ -90,7 +93,7 @@ export function Articles() {
       ) : (
         <div className="card table-wrap">
           <table>
-            <thead><tr><th>Référence</th><th>Désignation</th><th>Type</th><th className="right">Prix HT</th><th className="right">TVA</th><th /></tr></thead>
+            <thead><tr><th>Référence</th><th>Désignation</th><th>Type</th><th className="right">Prix HT</th><th className="right">Marge</th><th className="right">TVA</th><th /></tr></thead>
             <tbody>
               {rows.map((a) => (
                 <tr key={a.id}>
@@ -98,6 +101,7 @@ export function Articles() {
                   <td>{text(a.data.label)}{a.data.unit ? <span className="muted"> / {text(a.data.unit)}</span> : null}</td>
                   <td>{a.data.kind === "product" ? "Produit" : "Service"}</td>
                   <td className="right mono">{formatXaf(Number(a.data.price ?? 0))}</td>
+                  <td className="right mono">{marginLabel(a)}</td>
                   <td className="right">{text(a.data.vat_rate)} %</td>
                   <td className="right"><button className="ghost small" onClick={() => setEditing(a)}>Modifier</button></td>
                 </tr>
@@ -108,4 +112,12 @@ export function Articles() {
       )}
     </section>
   );
+}
+
+/** Marge unitaire en pourcentage du prix de vente, si le prix d'achat est connu. */
+function marginLabel(a: SyncRecord): string {
+  const c = a.data.cost;
+  const p = Number(a.data.price ?? 0);
+  if (c === undefined || c === null || c === "" || p <= 0) return "—";
+  return `${Math.round(((p - Number(c)) / p) * 100)} %`;
 }

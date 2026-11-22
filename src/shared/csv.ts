@@ -46,6 +46,8 @@ export const CLIENT_COLUMNS: Record<string, string[]> = {
 };
 
 export const ARTICLE_COLUMNS: Record<string, string[]> = {
+  // Avant « price » : une colonne « Prix d'achat » ne doit pas être prise pour le prix de vente.
+  cost: ["prix d'achat", "prix achat", "prix d'achat ht", "cout", "cout unitaire", "cout d'achat", "cost"],
   label: ["designation", "libelle", "article", "produit", "service", "description", "nom"],
   ref: ["reference", "ref", "code", "sku"],
   price: ["prix", "prix unitaire", "prix ht", "pu", "tarif", "price"],
@@ -102,6 +104,7 @@ export function rowsToArticles(rows: string[][]) {
         label: get("label"),
         ref: get("ref"),
         price: Math.round(parseNumber(get("price"))),
+        ...(get("cost") !== "" ? { cost: Math.round(parseNumber(get("cost"))) } : {}),
         vat_rate: vat === "" ? 18 : parseNumber(vat) <= 1 && parseNumber(vat) > 0 ? parseNumber(vat) * 100 : parseNumber(vat),
         unit: get("unit"),
         kind: kind.startsWith("prod") || kind.startsWith("march") ? "product" : "service",
@@ -112,4 +115,4 @@ export function rowsToArticles(rows: string[][]) {
 }
 
 export const CLIENT_TEMPLATE = "Raison sociale;Téléphone;E-mail;Adresse;Ville;NIF;RCCM\r\nExemple SARL;+241 01 00 00 00;contact@exemple.ga;Boulevard Triomphal;Libreville;;\r\n";
-export const ARTICLE_TEMPLATE = "Désignation;Référence;Prix HT;TVA;Unité;Type\r\nAudit informatique;AUD-01;150000;18;jour;Service\r\nRouteur Wi-Fi;RTR-02;45000;18;u;Produit\r\n";
+export const ARTICLE_TEMPLATE = "Désignation;Référence;Prix HT;Prix d'achat HT;TVA;Unité;Type\r\nAudit informatique;AUD-01;150000;;18;jour;Service\r\nRouteur Wi-Fi;RTR-02;45000;30000;18;u;Produit\r\n";

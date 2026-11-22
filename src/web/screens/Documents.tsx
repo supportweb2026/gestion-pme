@@ -253,6 +253,10 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       unitPrice: Number(a.data.price ?? 0),
       vatRate: Number(a.data.vat_rate ?? DEFAULT_VAT_RATE),
       unit: text(a.data.unit) || undefined,
+      // Prix d'achat du moment, figé sur la ligne pour la marge (converti dans la devise du document).
+      cost: a.data.cost === undefined || a.data.cost === null || a.data.cost === ""
+        ? undefined
+        : Math.round((Number(a.data.cost) / (currency === "XAF" ? 1 : rate || 1)) * 10 ** decimals) / 10 ** decimals,
     });
   };
   const cleanLines = () => lines.filter((l) => l.label.trim() !== "" || l.unitPrice !== 0);
@@ -263,7 +267,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     };
     if (kind === "invoices") p.due_date = dueDate;
     if (kind === "quotes") p.valid_until = dueDate;
-    if (!record) Object.assign(p, { status: "draft", created_by: session.user.id });
+    if (!record) Object.assign(p, { status: "draft", created_by: session.user.id, created_by_name: session.user.name });
     return p;
   }
 
@@ -321,6 +325,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       quote_id: id,
       quote_number: record!.data.number,
       created_by: session.user.id,
+      created_by_name: session.user.name,
     });
     await db.write("quotes", id, { status: "invoiced", invoice_id: invId, decided_at: new Date().toISOString() });
     go("invoices", invId);
@@ -340,6 +345,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       invoice_number: record!.data.number,
       notes: `Avoir sur la facture ${text(record!.data.number)}`,
       created_by: session.user.id,
+      created_by_name: session.user.name,
     });
     go("credit_notes", cnId);
   }
@@ -357,6 +363,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       rate: currency === "XAF" ? 1 : rate,
       project_id: projectId,
       created_by: session.user.id,
+      created_by_name: session.user.name,
     };
     if (kind === "invoices") patch.due_date = addDays(today(), paymentDays);
     if (kind === "quotes") patch.valid_until = addDays(today(), 30);
@@ -714,6 +721,7 @@ function PaymentForm({ invoice, situation }: { invoice: SyncRecord; situation: S
       method,
       reference: reference.trim(),
       created_by: session.user.id,
+      created_by_name: session.user.name,
     });
     setAmount("");
     setReference("");

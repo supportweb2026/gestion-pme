@@ -5,6 +5,7 @@ import { SyncEngine } from "./local/sync.ts";
 import { api, ApiError, setToken } from "./api.ts";
 import { COMING_SOON, Ctx, ROLE_LABELS, TAB_LABELS, TABS_BY_ROLE, text, useApp, useSettings, useSyncStatus, type Session, type Tab } from "./context.ts";
 import { Dashboard } from "./screens/Dashboard.tsx";
+import { Gains } from "./screens/Gains.tsx";
 import { Documents } from "./screens/Documents.tsx";
 import { Clients } from "./screens/Clients.tsx";
 import { Articles } from "./screens/Articles.tsx";
@@ -453,6 +454,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
         <SubscriptionBanner />
         <main className="content">
           {tab === "dashboard" && <Dashboard />}
+          {tab === "gains" && <Gains />}
           {(tab === "quotes" || tab === "invoices" || tab === "credit_notes") && (
             <Documents key={tab} kind={tab} open={open} setOpen={setOpen} />
           )}
@@ -521,9 +523,9 @@ type NavGroup = { key: string; label: string | null; tabs: Tab[] };
 /** Menu groupé par usage : accueil, ventes, fichiers, modules à venir, puis administration. */
 function navGroups(ready: Tab[], soon: Tab[]): NavGroup[] {
   const pick = (list: Tab[]) => list.filter((t) => ready.includes(t));
-  const used = new Set<Tab>(["dashboard", "quotes", "invoices", "credit_notes", "clients", "articles", "settings", "platform"]);
+  const used = new Set<Tab>(["dashboard", "gains", "quotes", "invoices", "credit_notes", "clients", "articles", "settings", "platform"]);
   const groups: NavGroup[] = [
-    { key: "home", label: null, tabs: pick(["dashboard"]) },
+    { key: "home", label: null, tabs: pick(["dashboard", "gains"]) },
     { key: "sales", label: "Ventes", tabs: pick(["quotes", "invoices", "credit_notes"]) },
     { key: "files", label: "Répertoire", tabs: pick(["clients", "articles"]) },
     { key: "other", label: "Gestion", tabs: ready.filter((t) => !used.has(t)) },
@@ -534,7 +536,7 @@ function navGroups(ready: Tab[], soon: Tab[]): NavGroup[] {
 }
 
 const TAB_ICONS: Record<Tab, IconName> = {
-  dashboard: "home", quotes: "quote", invoices: "invoice", credit_notes: "credit", expenses: "wallet",
+  dashboard: "home", gains: "chart", quotes: "quote", invoices: "invoice", credit_notes: "credit", expenses: "wallet",
   clients: "users", articles: "box", projects: "folder", accounting: "ledger", settings: "gear", platform: "shield",
 };
 
@@ -556,7 +558,7 @@ function NavItem({ tab, active, onClick, short = false }: { tab: Tab; active: bo
   );
 }
 
-type IconName = "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more" | "close" | "clock";
+type IconName = "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more" | "close" | "clock" | "chart";
 const ICON_PATHS: Record<IconName, string[]> = {
   home: ["M3 10.5 12 3l9 7.5", "M5 9.5V20h14V9.5", "M10 20v-6h4v6"],
   quote: ["M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z", "M14 3v5h5", "M8.5 13h7", "M8.5 17h4"],
@@ -573,6 +575,7 @@ const ICON_PATHS: Record<IconName, string[]> = {
   more: ["M4 6h16", "M4 12h16", "M4 18h16"],
   close: ["M6 6l12 12", "M18 6 6 18"],
   clock: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 7v5l3 2"],
+  chart: ["M4 20V10", "M10 20V4", "M16 20v-7", "M22 20H2"],
 };
 
 function Icon({ name }: { name: IconName }) {
