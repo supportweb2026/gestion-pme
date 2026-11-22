@@ -22,7 +22,7 @@ export const PROJECT_STATUS: Record<string, string> = {
 export const TASK_STATUS: [string, string][] = [
   ["todo", "À faire"],
   ["doing", "En cours"],
-  ["review", "À valider"],
+  ["review", "À vérifier"],
   ["done", "Terminé"],
 ];
 

@@ -5,9 +5,9 @@
  *  - projet avec chef de projet choisi dans l'annuaire, équipe, tâches attribuées ;
  *  - employé sur téléphone : Ma journée en premier écran (CA1.1), saisie en 2 gestes
  *    hors ligne (CA1.2), chronomètre qui survit au rechargement, plafond de 24 h (CA1.3),
- *    « Je suis bloqué » (CA1.7), « Terminée, à faire contrôler » ;
+ *    « Je suis bloqué » (CA1.7), « J'ai terminé cette tâche » ;
  *  - aucun montant reçu par l'employé, ni à l'écran (CA1.4) ;
- *  - À valider → Terminé : refusé à l'employé (écran et serveur), fait par la direction (CA1.5).
+ *  - À vérifier → Terminé : refusé à l'employé (écran et serveur), fait par la direction (CA1.5).
  *
  * Prérequis : `npm run build`, Playwright.
  *   node test/e2e/projets.mjs        (SHOTS_DIR=… pour des captures)
@@ -87,7 +87,7 @@ try {
     await a.getByRole("cell", { name: email }).waitFor();
   }
   await nav("Projets");
-  await a.getByRole("tab", { name: "Équipe" }).click();
+  await a.getByRole("tab", { name: "Personnes" }).click();
   for (const n of ["Jimmy Rerambyha", "Junior Mintsa", "Ornella Mba"]) await a.getByRole("row", { name: new RegExp(n) }).getByText("Compte Gestia").waitFor();
 
   step("Annuaire : personne sans compte, métiers et coûts horaires (coût moyen recalculé)");
@@ -108,18 +108,18 @@ try {
   await a.locator(".team-stats").getByText("4 333 FCFA").waitFor();
   await shot(a, "annuaire-ordinateur.png");
 
-  step("Projet : chef de projet choisi dans l'annuaire, site, montants protégés, équipe");
+  step("Projet : responsable choisi dans l'annuaire, site, montants protégés, équipe");
   await a.getByRole("tab", { name: "Projets" }).click();
   await a.getByRole("button", { name: "Nouveau projet" }).click();
   await a.getByLabel("Nom du projet").fill("Rénovation agence BGFI Owendo");
-  await a.getByLabel("Chef de projet").selectOption({ label: "Ornella Mba" });
+  await a.getByLabel("Responsable du projet").selectOption({ label: "Ornella Mba" });
   await a.getByLabel("Adresse ou site").fill("Agence BGFI, carrefour SNI, Owendo");
   await a.getByLabel("Budget HT (FCFA)").fill("5000000");
   await a.getByLabel("Taux de facturation (FCFA / h)").fill("25000");
   await a.getByLabel("Coût horaire interne (FCFA / h)").fill("9000");
-  await a.getByRole("button", { name: "Enregistrer le projet" }).click();
+  await a.getByRole("button", { name: "Créer le projet" }).click();
   await a.getByRole("heading", { name: "Rénovation agence BGFI Owendo" }).waitFor();
-  await a.getByText("Chef de projet : Ornella Mba").waitFor();
+  await a.getByText("Responsable : Ornella Mba").waitFor();
   await a.getByRole("tab", { name: "Équipe" }).click();
   for (const [n, job] of [["Junior Mintsa", "Technicien"], ["Steeve Obame", "Électricien"]]) {
     await a.getByLabel("Personne à ajouter").selectOption({ label: `${n} · ${job}` });
@@ -137,13 +137,13 @@ try {
   ];
   for (const [title, who, due] of tasks) {
     await a.getByLabel("Nouvelle tâche").fill(title);
-    await a.getByRole("button", { name: "Ajouter", exact: true }).click();
+    await a.getByRole("button", { name: "Ajouter la tâche", exact: true }).click();
     await a.locator(".task-card", { hasText: title }).getByRole("button", { name: title }).click();
     const form = a.locator(".task-card form");
-    await form.getByLabel("Responsable").selectOption({ label: who });
+    await form.getByLabel("Attribuée à").selectOption({ label: who });
     await form.getByLabel("Échéance").fill(due);
     await form.getByLabel("Estimation (h)").fill("6");
-    await form.getByRole("button", { name: "OK" }).click();
+    await form.getByRole("button", { name: "Enregistrer" }).click();
     await a.locator(".task-card", { hasText: title }).getByText(who).waitFor();
   }
   await waitSynced();
@@ -206,11 +206,12 @@ try {
   await j.getByLabel("Précision (facultatif)").fill("plâtre en rupture");
   await shot(j, "ma-journee-bloque.png");
   await j.getByRole("button", { name: "Signaler le blocage" }).click();
-  await list.locator(".day-task", { hasText: "Dépose" }).getByText("Bloqué : J'attends du matériel (plâtre en rupture)").waitFor();
+  await list.locator(".day-task", { hasText: "Dépose" }).getByText("Bloquée : J'attends du matériel (plâtre en rupture)").waitFor();
 
-  step("« Terminée, à faire contrôler » : la tâche passe À valider");
+  step("« J'ai terminé cette tâche » : la tâche passe À vérifier");
   await list.getByRole("button", { name: /Protection des sols du hall : saisir du temps/ }).click();
-  await j.getByRole("button", { name: "Terminée, à faire contrôler" }).click();
+  await j.getByRole("button", { name: "J'ai terminé cette tâche" }).click();
+  await j.getByRole("dialog").waitFor({ state: "detached" });
   await j.locator(".day-list.review").getByText("Protection des sols du hall").waitFor();
 
   step("Retour du réseau : tout est envoyé");
@@ -237,10 +238,10 @@ try {
   assert.ok(!(await j.locator("main").innerText()).includes("FCFA"), "aucun montant affiché");
   assert.equal(await j.getByRole("tab", { name: "Facturation" }).count(), 0);
 
-  step("CA1.5 : l'employé ne peut pas passer À valider → Terminé, ni à l'écran ni en forçant le serveur");
+  step("CA1.5 : l'employé ne peut pas passer À vérifier → Terminé, ni à l'écran ni en forçant le serveur");
   const review = j.getByTestId("col-review").locator(".task-card", { hasText: "Protection des sols du hall" });
-  await review.getByText("En attente du contrôle").waitFor();
-  assert.equal(await review.getByRole("button", { name: /Avancer vers Terminé/ }).count(), 0);
+  await review.getByText("En attente de vérification").waitFor();
+  assert.equal(await review.getByRole("button", { name: "Clore la tâche" }).count(), 0);
   const forced = await j.evaluate(async () => {
     const db = await new Promise((res) => { const r = indexedDB.open("gestion-pme"); r.onsuccess = () => res(r.result); });
     const get = (store, key) => new Promise((res) => { const r = db.transaction(store).objectStore(store).get(key); r.onsuccess = () => res(r.result); });
@@ -255,22 +256,22 @@ try {
     });
     return (await res.json()).rejected?.[0]?.reason ?? "accepté";
   });
-  assert.match(forced, /un employé ne passe pas une tâche à Terminé/);
+  assert.match(forced, /vous ne pouvez pas passer cette tâche à Terminé : elle sera close après vérification/);
   await shot(j, "fiche-projet-telephone-employe.png");
 
-  step("Direction : carte bloquée lisible, filtre par personne, contrôle À valider → Terminé");
+  step("Direction : carte bloquée lisible, filtre par personne, vérification À vérifier → Terminé");
   await waitSynced();
   await a.getByRole("button", { name: "← Projets" }).click();
-  await a.getByRole("button", { name: /Rénovation agence BGFI Owendo/ }).getByText("1 bloquée(s)").waitFor();
+  await a.getByRole("button", { name: /Rénovation agence BGFI Owendo/ }).getByText("1 tâche bloquée").waitFor();
   await a.getByRole("button", { name: /Rénovation agence BGFI Owendo/ }).click();
   const blocked = a.locator(".task-card.blocked", { hasText: "Dépose des anciennes cloisons, hall" });
-  await blocked.getByText("Bloqué : J'attends du matériel (plâtre en rupture)").waitFor();
+  await blocked.getByText("Bloquée : J'attends du matériel (plâtre en rupture)").waitFor();
   await a.getByTestId("col-review").getByText("Protection des sols du hall").waitFor();
   await shot(a, "fiche-projet-taches-ordinateur.png");
   await a.getByLabel("Filtrer par personne").selectOption({ label: "Steeve Obame" });
   assert.equal(await a.locator(".task-card").count(), 1);
-  await a.getByLabel("Filtrer par personne").selectOption({ label: "Tout le monde" });
-  await a.getByTestId("col-review").locator(".task-card", { hasText: "Protection des sols du hall" }).getByRole("button", { name: "Avancer vers Terminé" }).click();
+  await a.getByLabel("Filtrer par personne").selectOption({ label: "Toutes les tâches" });
+  await a.getByTestId("col-review").locator(".task-card", { hasText: "Protection des sols du hall" }).getByRole("button", { name: "Clore la tâche" }).click();
   await a.getByTestId("col-done").getByText("Protection des sols du hall").waitFor();
   step("Marge : le temps de Junior compte à son coût horaire (3 000 FCFA/h × 2,5 h)");
   await a.getByRole("tab", { name: "Facturation" }).click();

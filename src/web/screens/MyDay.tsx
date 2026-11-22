@@ -5,11 +5,14 @@
  *  - saisie du temps en deux gestes : toucher la tâche, toucher une durée ;
  *  - chronomètre : un seul à la fois, heure de début gardée sur l'appareil (survit
  *    à la fermeture de l'application et au mode hors ligne) ;
- *  - « Terminée, à faire contrôler » (À valider) et « Je suis bloqué » (motif).
+ *  - « J'ai terminé » (la tâche passe À vérifier, ou Terminé pour qui peut la clore)
+ *    et « Je suis bloqué » (motif).
  */
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { COMING_SOON, TABS_BY_ROLE, text, today, useApp, useSyncStatus, useTable } from "../context.ts";
 import { BLOCK_LABELS, checkDayHours, chronoRounding, hoursOn, hoursWeek, myDay, type DayItem } from "../../shared/projectControl.ts";
+import { canCloseTask } from "../../shared/projectRules.ts";
+import { localProjectContext } from "../local/guard.ts";
 import type { SyncRecord } from "../../shared/sync.ts";
 import { hoursFr, useGuardedWrite, useMyTeamId } from "./team.ts";
 import { PIcon } from "./ProjectIcons.tsx";
@@ -55,6 +58,7 @@ export function MyDay() {
   const tasks = useTable("tasks");
   const projects = useTable("projects");
   const entries = useTable("time_entries");
+  const members = useTable("project_members");
   const status = useSyncStatus();
   const write = useGuardedWrite();
   const tm = useMyTeamId();
@@ -93,13 +97,13 @@ export function MyDay() {
   async function addHours(task: SyncRecord, hours: number): Promise<AddResult> {
     const already = hoursOn(user.id, entries, day);
     const check = checkDayHours(already, hours);
-    if (!check.ok) return { ok: false, message: check.message };
+    if (!check.ok) return { ok: false, message: already > 0 ? `${check.message} : ${hoursFr(already)} déjà saisies aujourd'hui.` : check.message };
     if (check.confirm && !confirm(`Cela fera ${hoursFr(already + hours)} aujourd'hui. Confirmer ?`)) return { ok: false, message: "Saisie annulée." };
     const id = db.newId("tmp");
     try {
       await write("time_entries", id, timeEntry(task, projectOf(task), hours, user, tm));
     } catch (e) {
-      return { ok: false, message: e instanceof Error ? e.message : "Saisie impossible." };
+      return { ok: false, message: e instanceof Error ? e.message : "Le temps n'a pas pu être enregistré." };
     }
     return { ok: true, id };
   }
@@ -130,6 +134,10 @@ export function MyDay() {
       onOpen={() => setSheet({ task: i.task, mode: "time" })} onStart={() => startChrono(i.task)} />
   );
   const mineOpen = [...plan.today, ...plan.others];
+  const ctx = localProjectContext(projects, members);
+  const canClose = (t: SyncRecord) => canCloseTask({ userId: user.id, role: session.user.role }, text(t.data.project_id), ctx);
+  // Rien aujourd'hui mais d'autres tâches ouvertes : on les montre tout de suite.
+  const othersOpen = showOthers || plan.today.length === 0;
 
   return (
     <section className="myday">
@@ -161,37 +169,52 @@ export function MyDay() {
 
       {chrono && <ChronoCard chrono={chrono} now={now} project={projects.find((p) => p.id === chrono.projectId)} onStop={stopChrono} />}
 
-      <div className="myday-list-head">
-        <h3>Aujourd'hui</h3>
-        <span className="muted small">{plural(plan.today.length, "tâche", "tâches")}</span>
-      </div>
-      {plan.today.length === 0 ? (
-        <div className="myday-empty">
-          <p><strong>Rien de prévu pour vous aujourd'hui.</strong></p>
-          <p className="muted">Demandez à votre chef de projet de vous attribuer des tâches.</p>
+      {(mineOpen.length > 0 || plan.review.length > 0) && (
+        <div className="myday-list-head">
+          <h3>Aujourd'hui</h3>
+          <span className="muted small">{plural(plan.today.length, "tâche", "tâches")}</span>
         </div>
+      )}
+      {plan.today.length === 0 ? (
+        mineOpen.length === 0 && plan.review.length === 0 ? (
+          <div className="myday-empty">
+            <span className="empty-ico" aria-hidden="true"><PIcon name="list" /></span>
+            <p><strong>Aucune tâche ne vous est attribuée.</strong></p>
+            <p className="muted">Les tâches qui vous sont attribuées sur un projet apparaîtront ici, avec leur échéance et l'adresse du site.</p>
+            <button onClick={() => go("projects")}>Voir les projets</button>
+          </div>
+        ) : (
+          <div className="myday-empty compact">
+            <p><strong>Aucune tâche prévue aujourd'hui.</strong></p>
+            {plan.others.length > 0 && <p className="muted">Vos autres tâches en cours sont ci-dessous.</p>}
+          </div>
+        )
       ) : (
         <ul className="day-list" data-testid="day-list">{plan.today.map(render)}</ul>
       )}
 
       {plan.others.length > 0 && (
         <>
-          <button className="link myday-more" aria-expanded={showOthers} onClick={() => setShowOthers((s) => !s)}>
-            {showOthers ? "Masquer mes autres tâches" : `Voir mes autres tâches (${plan.others.length})`}
-          </button>
-          {showOthers && <ul className="day-list">{plan.others.map(render)}</ul>}
+          {plan.today.length > 0 ? (
+            <button className="link myday-more" aria-expanded={showOthers} onClick={() => setShowOthers((s) => !s)}>
+              {showOthers ? "Masquer mes autres tâches" : `Voir mes autres tâches (${plan.others.length})`}
+            </button>
+          ) : (
+            <div className="myday-list-head"><h3>Mes autres tâches</h3><span className="muted small">{plural(plan.others.length, "tâche", "tâches")}</span></div>
+          )}
+          {othersOpen && <ul className="day-list" data-testid={plan.today.length === 0 ? "day-list" : undefined}>{plan.others.map(render)}</ul>}
         </>
       )}
 
       {plan.review.length > 0 && (
         <>
-          <div className="myday-list-head"><h3>À faire contrôler</h3><span className="muted small">{plural(plan.review.length, "tâche", "tâches")}</span></div>
+          <div className="myday-list-head"><h3>En attente de vérification</h3><span className="muted small">{plural(plan.review.length, "tâche", "tâches")}</span></div>
           <ul className="day-list review">
             {plan.review.map((t) => (
               <li key={t.id} className="day-task">
                 <div className="day-task-main static">
                   <span className="day-title">{text(t.data.title)}</span>
-                  <span className="day-meta"><span className="tag info"><PIcon name="check" />En attente du contrôle du chef de projet</span></span>
+                  <span className="day-meta"><span className="tag info"><PIcon name="check" />Terminée, sera close après vérification</span></span>
                   <span className="day-sub muted">{text(projectOf(t)?.data.name)}</span>
                 </div>
               </li>
@@ -200,10 +223,12 @@ export function MyDay() {
         </>
       )}
 
-      <div className="myday-actions">
-        {canExpense && <button onClick={() => go("expenses")}><PIcon name="receipt" />Ajouter une dépense</button>}
-        <button onClick={() => setBlockPicker(true)} disabled={mineOpen.length === 0}><PIcon name="hand" />Je suis bloqué</button>
-      </div>
+      {(canExpense || mineOpen.length > 0) && (
+        <div className="myday-actions">
+          {canExpense && <button onClick={() => go("expenses")}><PIcon name="receipt" />Ajouter une dépense</button>}
+          {mineOpen.length > 0 && <button onClick={() => setBlockPicker(true)}><PIcon name="hand" />Je suis bloqué</button>}
+        </div>
+      )}
 
       {blockPicker && (
         <Sheet title="Sur quelle tâche êtes-vous bloqué ?" onClose={() => setBlockPicker(false)}>
@@ -226,6 +251,7 @@ export function MyDay() {
           project={projectOf(sheet.task)}
           initialMode={sheet.mode}
           chronoBusy={!!chrono}
+          canClose={canClose(sheet.task)}
           addHours={addHours}
           onStart={() => { startChrono(sheet.task); setSheet(null); }}
           onClose={() => setSheet(null)}
@@ -255,13 +281,13 @@ function DayTask({ item, project, running, chronoBusy, onOpen, onStart }: {
         </span>
         <span className="day-sub muted">{text(project?.data.name)}</span>
         {t.data.blocked ? (
-          <span className="day-blocked"><PIcon name="alert" />Bloqué : {BLOCK_LABELS[text(t.data.blocked_reason)] ?? "motif non précisé"}{t.data.blocked_note ? ` (${text(t.data.blocked_note)})` : ""}</span>
+          <span className="day-blocked"><PIcon name="alert" />Bloquée : {BLOCK_LABELS[text(t.data.blocked_reason)] ?? "motif non précisé"}{t.data.blocked_note ? ` (${text(t.data.blocked_note)})` : ""}</span>
         ) : null}
         {site && <span className="day-site muted"><PIcon name="pin" />{site}</span>}
       </button>
       {!running && (
         <button className="day-play" onClick={onStart} disabled={chronoBusy} aria-label={`Démarrer le chronomètre : ${text(t.data.title)}`}
-          title={chronoBusy ? "Un chronomètre tourne déjà : arrêtez-le d'abord" : "Démarrer le chronomètre"}>
+          title={chronoBusy ? "Un chronomètre tourne déjà : arrêtez-le pour en démarrer un autre" : "Démarrer le chronomètre"}>
           <PIcon name="play" />
         </button>
       )}
@@ -290,7 +316,7 @@ function ChronoCard({ chrono, now, project, onStop }: { chrono: Chrono; now: num
             {r.up !== r.down && <button onClick={() => onStop(r.up)}>{hoursFr(r.up)}</button>}
           </div>
           <div className="chrono-options secondary">
-            <button className="ghost small" onClick={() => setStopping(false)}>Continuer</button>
+            <button className="ghost small" onClick={() => setStopping(false)}>Laisser tourner</button>
             <button className="ghost small" onClick={() => confirm("Arrêter sans enregistrer ce temps ?") && onStop(null)}>Ne pas enregistrer</button>
           </div>
         </div>
@@ -323,8 +349,8 @@ export function Sheet({ title, onClose, children, labelledBy }: { title?: string
 
 const DURATIONS: [number, string][] = [[1, "1 h"], [2, "2 h"], [4, "4 h"], [8, "8 h"]];
 
-function TaskSheet({ task, project, initialMode, chronoBusy, addHours, onStart, onClose }: {
-  task: SyncRecord; project?: SyncRecord; initialMode: "time" | "block"; chronoBusy: boolean;
+function TaskSheet({ task, project, initialMode, chronoBusy, canClose, addHours, onStart, onClose }: {
+  task: SyncRecord; project?: SyncRecord; initialMode: "time" | "block"; chronoBusy: boolean; canClose: boolean;
   addHours: (task: SyncRecord, hours: number) => Promise<AddResult>; onStart: () => void; onClose: () => void;
 }) {
   const { db, session } = useApp();
@@ -353,7 +379,7 @@ function TaskSheet({ task, project, initialMode, chronoBusy, addHours, onStart, 
       await write("tasks", task.id, patch);
       after?.();
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Action impossible.");
+      setError(e instanceof Error ? e.message : "La tâche n'a pas pu être modifiée.");
     }
   }
   function onOther(e: FormEvent<HTMLFormElement>) {
@@ -372,12 +398,9 @@ function TaskSheet({ task, project, initialMode, chronoBusy, addHours, onStart, 
     <Sheet onClose={onClose} labelledBy="task-sheet-title">
       {mode === "time" ? (
         <>
-          <ol className="steps" aria-label="Saisie en deux gestes">
-            <li className="done"><span>1</span>Toucher la tâche</li>
-            <li className={saved ? "done" : "current"}><span>2</span>Toucher une durée</li>
-          </ol>
           <h3 id="task-sheet-title" className="sheet-task">{text(task.data.title)}</h3>
-          <p className="muted small">{text(project?.data.name)} · aujourd'hui</p>
+          <p className="muted small">{text(project?.data.name)}</p>
+          <p className="durations-label">Temps passé aujourd'hui</p>
           <div className="durations" role="group" aria-label="Durée travaillée aujourd'hui">
             {DURATIONS.map(([h, l]) => (
               <button key={h} className={saved?.hours === h ? "selected" : ""} onClick={() => record(h)} disabled={!!saved}>{l}</button>
@@ -390,7 +413,7 @@ function TaskSheet({ task, project, initialMode, chronoBusy, addHours, onStart, 
               <button className="primary">Enregistrer</button>
             </form>
           )}
-          <p className="muted small hint">4 h = demi-journée, 8 h = journée. Le temps est enregistré dès que vous touchez une durée.</p>
+          <p className="muted small hint">Le temps est enregistré dès que vous choisissez une durée. 4 h = demi-journée, 8 h = journée.</p>
           {saved && (
             <p className="saved-bar" role="status" data-testid="saved-bar">
               <PIcon name="check" /><span>{hoursFr(saved.hours)} enregistrées</span>
@@ -400,13 +423,16 @@ function TaskSheet({ task, project, initialMode, chronoBusy, addHours, onStart, 
           {error && <p className="error" role="alert">{error}</p>}
           <div className="sheet-actions">
             {status !== "review" && status !== "done" && (
-              <button onClick={() => act({ status: "review" }, onClose)}><PIcon name="check" />Terminée, à faire contrôler</button>
+              <>
+                <button onClick={() => act(canClose ? { status: "done", done_at: new Date().toISOString(), blocked: false } : { status: "review" }, onClose)}><PIcon name="check" />J'ai terminé cette tâche</button>
+                {!canClose && <p className="muted small sheet-note">Elle sera close après vérification.</p>}
+              </>
             )}
-            {status === "review" && <p className="muted small">Tâche en attente du contrôle du chef de projet.</p>}
+            {status === "review" && <p className="muted small">Tâche terminée : elle sera close après vérification.</p>}
             <div className="sheet-actions-row">
               {!chronoBusy && <button className="ghost" onClick={onStart}><PIcon name="play" />Démarrer le chronomètre</button>}
               {task.data.blocked
-                ? <button className="ghost" onClick={() => act({ blocked: false, blocked_reason: "", blocked_note: "" })}>Lever le blocage</button>
+                ? <button className="ghost" onClick={() => act({ blocked: false, blocked_reason: "", blocked_note: "" })}>Je ne suis plus bloqué</button>
                 : <button className="ghost" onClick={() => setMode("block")}><PIcon name="hand" />Je suis bloqué</button>}
             </div>
           </div>
@@ -423,7 +449,7 @@ function TaskSheet({ task, project, initialMode, chronoBusy, addHours, onStart, 
             ))}
           </div>
           <label>Précision (facultatif)<input name="note" maxLength={140} placeholder="Ex. : plâtre en rupture chez le fournisseur" /></label>
-          <p className="muted small hint">La tâche reste dans sa colonne, marquée « Bloqué » : votre chef de projet la voit sur le tableau.</p>
+          <p className="muted small hint">La tâche reste dans sa colonne, marquée « Bloquée » avec ce motif, sur la fiche du projet.</p>
           {error && <p className="error" role="alert">{error}</p>}
           <div className="sheet-actions">
             <button className="primary">Signaler le blocage</button>
