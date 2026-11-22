@@ -121,6 +121,17 @@ export class SyncEngine {
           }
           await this.db.setMeta("role", res.role);
         }
+        if (res.dataEpoch !== undefined) {
+          const knownEpoch = await this.db.getMeta<number>("dataEpoch");
+          if (knownEpoch !== res.dataEpoch) {
+            // Règles de lecture durcies (lot 1 Projets) : l'employé efface les montants
+            // reçus avant le filtrage en rechargeant sa copie locale.
+            const reload = res.role === "employee" && (knownEpoch !== undefined || since > 0);
+            if (reload) await this.db.resetForRole(res.role);
+            await this.db.setMeta("dataEpoch", res.dataEpoch);
+            if (reload) continue;
+          }
+        }
         await this.db.applySyncResult({
           acknowledged: [...res.accepted, ...res.rejected.map((r) => r.id)],
           serverRecords: res.rejected.map((r) => {

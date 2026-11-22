@@ -58,7 +58,7 @@ export function useSyncStatus(): SyncStatus {
 
 export type Tab =
   | "dashboard" | "gains" | "quotes" | "invoices" | "credit_notes" | "expenses"
-  | "clients" | "articles" | "projects" | "accounting" | "settings" | "platform";
+  | "clients" | "articles" | "my_day" | "projects" | "accounting" | "settings" | "platform";
 
 export const TAB_LABELS: Record<Tab, string> = {
   dashboard: "Tableau de bord",
@@ -69,6 +69,7 @@ export const TAB_LABELS: Record<Tab, string> = {
   expenses: "Dépenses",
   clients: "Clients",
   articles: "Articles",
+  my_day: "Ma journée",
   projects: "Projets",
   accounting: "Comptabilité",
   settings: "Réglages",
@@ -81,10 +82,6 @@ export const TAB_LABELS: Record<Tab, string> = {
  * Retirer une ligne ici suffit pour ouvrir le module.
  */
 const COMING_SOON_MODULES: Partial<Record<Tab, { title: string; points: string[] }>> = {
-  projects: {
-    title: "Projets et suivi du temps",
-    points: ["Projets liés aux clients, budget et rentabilité", "Tâches en Kanban et planning", "Temps passés et facturation du temps"],
-  },
   expenses: {
     title: "Dépenses",
     points: ["Saisie des dépenses par catégorie", "Justificatifs photographiés, même hors ligne", "Validation par la direction"],
@@ -106,14 +103,15 @@ const previewAll = (() => {
 export const COMING_SOON: Partial<Record<Tab, { title: string; points: string[] }>> = previewAll ? {} : COMING_SOON_MODULES;
 
 /** Écrans visibles selon le rôle (les droits sont aussi vérifiés côté serveur au fil des lots). */
-const ALL: Tab[] = ["dashboard", "gains", "quotes", "invoices", "credit_notes", "projects", "expenses", "clients", "articles", "accounting", "settings"];
+const ALL: Tab[] = ["dashboard", "gains", "quotes", "invoices", "credit_notes", "my_day", "projects", "expenses", "clients", "articles", "accounting", "settings"];
 export const TABS_BY_ROLE: Record<string, Tab[]> = {
   admin: ALL,
   director: ALL,
-  accountant: ["dashboard", "gains", "accounting", "invoices", "credit_notes", "quotes", "projects", "expenses", "clients", "articles", "settings"],
-  sales: ["dashboard", "gains", "quotes", "invoices", "projects", "clients", "articles", "expenses", "settings"],
-  project_manager: ["dashboard", "projects", "quotes", "invoices", "expenses", "clients", "settings"],
-  employee: ["projects", "expenses", "settings"],
+  accountant: ["dashboard", "gains", "accounting", "invoices", "credit_notes", "quotes", "my_day", "projects", "expenses", "clients", "articles", "settings"],
+  sales: ["dashboard", "gains", "quotes", "invoices", "my_day", "projects", "clients", "articles", "expenses", "settings"],
+  project_manager: ["dashboard", "my_day", "projects", "quotes", "invoices", "expenses", "clients", "settings"],
+  // « Ma journée » est le premier écran de l'employé (CA1.1).
+  employee: ["my_day", "projects", "expenses", "settings"],
 };
 
 export const can = {
@@ -122,6 +120,12 @@ export const can = {
   manageUsers: (role: string) => role === "admin",
   keepBooks: (role: string) => ["admin", "accountant"].includes(role),
   manageProjects: (role: string) => ["admin", "director", "accountant", "sales", "project_manager"].includes(role),
+  /** Annuaire d'équipe et coûts horaires par personne. */
+  manageTeam: (role: string) => ["admin", "director"].includes(role),
+  /** Coût horaire de chaque personne (révèle les salaires, arbitrage 2). */
+  seePersonCosts: (role: string) => ["admin", "director", "accountant"].includes(role),
+  /** Aucun montant pour l'employé (Q3). */
+  seeAmounts: (role: string) => role !== "employee",
 };
 
 export const ROLE_LABELS: Record<string, string> = {

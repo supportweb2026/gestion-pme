@@ -1,6 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { can, COMING_SOON, ROLE_LABELS, TAB_LABELS, text, useApp, useSettings, useSyncStatus, type Tab } from "../context.ts";
 import { api, ApiError, getToken } from "../api.ts";
+import { reconcileTeam } from "./team.ts";
 import { formatDate, SubscriptionBadge } from "../subscription.tsx";
 import { PLANS } from "../../shared/plans.ts";
 import { DEFAULT_PAYMENT_DAYS } from "../../shared/invoice.ts";
@@ -383,7 +384,7 @@ function temporaryPassword(): string {
 }
 
 function Users() {
-  const { session } = useApp();
+  const { db, session } = useApp();
   const sync = useSyncStatus();
   const [users, setUsers] = useState<User[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -392,7 +393,12 @@ function Users() {
 
   const load = () =>
     api<{ users: User[] }>("/api/users")
-      .then((r) => { setUsers(r.users); setError(null); })
+      .then((r) => {
+        setUsers(r.users);
+        setError(null);
+        // Annuaire d'équipe (Projets) : une fiche par compte, créée ici dès l'ajout d'un utilisateur.
+        reconcileTeam(db, session).catch(() => {});
+      })
       .catch((e) => setError(e instanceof ApiError ? e.message : "Connexion internet nécessaire pour gérer les utilisateurs."));
 
   useEffect(() => { load(); }, [sync.state === "offline"]);
