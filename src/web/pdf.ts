@@ -11,6 +11,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFP
 import { computeTotals, lineDiscount, lineNet, lineVat, type InvoiceLine } from "../shared/invoice.ts";
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../shared/currency.ts";
 import type { DocTable } from "../shared/sync.ts";
+import { docArrete, docTitle, isSection, quoteTypeOf, sectionSubtotals } from "../shared/documents.ts";
 
 export interface PdfInput {
   kind: DocTable;
@@ -23,12 +24,6 @@ export interface PdfInput {
   situation?: { paid: number; credited: number; due: number; status: string };
 }
 
-const TITLES: Record<DocTable, string> = { invoices: "Facture", quotes: "Devis", credit_notes: "Avoir" };
-const ARRETE: Record<DocTable, string> = {
-  invoices: "Arrêtée la présente facture",
-  quotes: "Arrêté le présent devis",
-  credit_notes: "Arrêté le présent avoir",
-};
 
 const A4 = { w: 595.28, h: 841.89 };
 const M = 42; // marge, en points (≈ 15 mm)
@@ -50,7 +45,7 @@ function frDate(v: unknown): string {
 /** Nom de fichier proposé : « Facture FA-2026-00012 - Client.pdf ». */
 export function pdfFileName(kind: DocTable, doc: Record<string, unknown>, client: Record<string, unknown> | null): string {
   const name = str(client?.name).replace(/[\\/:*?"<>|]+/g, " ").trim();
-  return `${TITLES[kind]} ${str(doc.number) || "brouillon"}${name ? ` - ${name}` : ""}.pdf`;
+  return `${docTitle(kind, doc)} ${str(doc.number) || "brouillon"}${name ? ` - ${name}` : ""}.pdf`;
 }
 
 export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
@@ -59,7 +54,10 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
   const number = str(doc.number);
-  pdf.setTitle(`${TITLES[kind]} ${number}`);
+  const title = docTitle(kind, doc);
+  // Bon de livraison : quantités seulement, sans prix ni totaux.
+  const delivery = kind === "quotes" && quoteTypeOf(doc) === "delivery";
+  pdf.setTitle(`${title} ${number}`);
   pdf.setAuthor(str(s.name));
   pdf.setCreator("Gestia");
   pdf.setProducer("Gestia");
@@ -163,7 +161,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
 
   const xr = A4.w - M;
   let rightY = y;
-  right(TITLES[kind].toUpperCase(), xr, rightY - 20, 20, bold, BLUE);
+  right(title.toUpperCase(), xr, rightY - 20, title.length > 14 ? 16 : 20, bold, BLUE);
   rightY -= 30;
   right(`N° ${number || "brouillon"}`, xr, rightY - 11, 11.5, bold);
   rightY -= 17;
@@ -172,7 +170,8 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     kind === "invoices" && doc.due_date ? `Échéance : ${frDate(doc.due_date)}` : "",
     kind === "quotes" && doc.valid_until ? `Valable jusqu'au ${frDate(doc.valid_until)}` : "",
     kind === "credit_notes" && doc.invoice_number ? `Sur facture ${str(doc.invoice_number)}` : "",
-    kind === "invoices" && doc.quote_number ? `Réf. devis ${str(doc.quote_number)}` : "",
+    kind === "invoices" && doc.quote_number ? `Réf. ${str(doc.quote_number)}` : "",
+    kind === "quotes" && doc.source_number ? `Réf. ${str(doc.source_number)}` : "",
   ].filter(Boolean);
   for (const l of meta) {
     right(l, xr, rightY - 10, 9.5);
@@ -191,7 +190,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   const nameLines = wrap(str(c.name), 11, boxW - 24, bold);
   const boxH = 22 + nameLines.length * 14 + clientLines.length * 12 + 8;
   page.drawRectangle({ x: boxX, y: y - boxH, width: boxW, height: boxH, borderColor: LINE, borderWidth: 1 });
-  text((kind === "quotes" ? "Destinataire" : "Facturé à").toUpperCase(), boxX + 12, y - 14, 7.5, regular, GREY);
+  text((delivery ? "Livré à" : kind === "quotes" ? "Destinataire" : "Facturé à").toUpperCase(), boxX + 12, y - 14, 7.5, regular, GREY);
   let cy = y - 28;
   for (const l of nameLines) {
     text(l, boxX + 12, cy, 11, bold);
@@ -209,9 +208,15 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     ? { qty: 300, pu: 378, disc: 418, vat: 452, net: xr - 6 }
     : { qty: 318, pu: 410, disc: 0, vat: 452, net: xr - 6 };
   const labelW = (hasDiscount ? 236 : 256) - 6;
+  const subtotals = sectionSubtotals(lines, decimals);
   const header = () => {
     page.drawRectangle({ x: M, y: y - 20, width: xr - M, height: 20, color: SOFT });
     text("Désignation", M + 6, y - 13.5, 9, bold);
+    if (delivery) {
+      right("Quantité", xr - 6, y - 13.5, 9, bold);
+      y -= 20;
+      return;
+    }
     right("Qté", cols.qty, y - 13.5, 9, bold);
     right("P.U. HT", cols.pu, y - 13.5, 9, bold);
     if (hasDiscount) right("Remise", cols.disc, y - 13.5, 9, bold);
@@ -220,8 +225,19 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     y -= 20;
   };
   header();
-  for (const l of lines) {
-    const label = wrap(l.label || "", 9.5, labelW);
+  lines.forEach((l, idx) => {
+    if (isSection(l)) {
+      if (y - 26 < M + FOOT) {
+        newPage();
+        header();
+      }
+      text(l.label, M + 6, y - 15, 9.5, bold);
+      if (!delivery) right(`Sous-total ${money(subtotals.get(idx) ?? 0)}`, xr - 6, y - 15, 9, regular, GREY);
+      y -= 22;
+      page.drawLine({ start: { x: M, y }, end: { x: xr, y }, thickness: 0.6, color: LINE });
+      return;
+    }
+    const label = wrap(l.label || "", 9.5, delivery ? xr - M - 100 : labelW);
     const h = Math.max(1, label.length) * 12 + 8;
     if (y - h < M + FOOT) {
       newPage();
@@ -232,6 +248,12 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
       text(w, M + 6, ly, 9.5);
       ly -= 12;
     }
+    if (delivery) {
+      right(`${l.qty}${l.unit ? ` ${l.unit}` : ""}`, xr - 6, y - 13, 9.5);
+      y -= h;
+      page.drawLine({ start: { x: M, y }, end: { x: xr, y }, thickness: 0.6, color: LINE });
+      return;
+    }
     right(`${l.qty}${l.unit ? ` ${l.unit}` : ""}`, cols.qty, y - 13, 9.5);
     right(money(l.unitPrice), cols.pu, y - 13, 9.5);
     if (hasDiscount) right(lineDiscount(l) ? `${lineDiscount(l)} %` : "", cols.disc, y - 13, 9.5);
@@ -239,12 +261,31 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     right(money(lineNet(l, decimals)), cols.net, y - 13, 9.5);
     y -= h;
     page.drawLine({ start: { x: M, y }, end: { x: xr, y }, thickness: 0.6, color: LINE });
-  }
+  });
   y -= 14;
 
+  if (delivery) {
+    // ── Bon de livraison : notes puis signatures ───────────────────────────
+    const notes = str(doc.notes) ? wrap(str(doc.notes), 9, xr - M) : [];
+    if (y - (notes.length * 11 + 110) < M + FOOT) newPage();
+    for (const n of notes) {
+      text(n, M, y, 9, regular, GREY);
+      y -= 11;
+    }
+    y -= 14;
+    const w = (xr - M - 20) / 2;
+    for (const [i, label] of ["LIVRÉ PAR", "REÇU PAR LE CLIENT"].entries()) {
+      const x = M + i * (w + 20);
+      page.drawRectangle({ x, y: y - 85, width: w, height: 85, borderColor: GREY, borderWidth: 0.8, borderDashArray: [3, 3] });
+      text(label, x + 10, y - 14, 7.5, regular, GREY);
+      text(i === 0 ? "Nom et signature" : "Nom, date, signature et cachet", x + 10, y - 27, 9, regular, GREY);
+    }
+    y -= 100;
+  } else {
   // ── Totaux et montant en lettres ─────────────────────────────────────────
   const vatByRate = new Map<number, { base: number; vat: number }>();
   for (const l of lines) {
+    if (isSection(l)) continue;
     const cur = vatByRate.get(l.vatRate) ?? { base: 0, vat: 0 };
     vatByRate.set(l.vatRate, { base: cur.base + lineNet(l, decimals), vat: cur.vat + lineVat(l, decimals) });
   }
@@ -265,7 +306,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
 
   const totW = 250;
   const totX = xr - totW;
-  const words = wrap(`${ARRETE[kind]} à la somme de ${amountInWordsWithCurrency(totals.gross, currency)} toutes taxes comprises.`, 9.5, totX - M - 20);
+  const words = wrap(`${docArrete(kind, doc)} à la somme de ${amountInWordsWithCurrency(totals.gross, currency)} toutes taxes comprises.`, 9.5, totX - M - 20);
   const notes = str(doc.notes) ? wrap(str(doc.notes), 9, totX - M - 20) : [];
   const blockH = Math.max(rows.length * 18, words.length * 12 + (notes.length ? notes.length * 11 + 10 : 0));
   if (y - blockH < M + FOOT) newPage();
@@ -312,6 +353,8 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     page.drawRectangle({ x: boxX, y: y - 85, width: boxW, height: 85, borderColor: GREY, borderWidth: 0.8, borderDashArray: [3, 3] });
     text("BON POUR ACCORD", boxX + 10, y - 14, 7.5, regular, GREY);
     text("Date, signature et cachet du client", boxX + 10, y - 27, 9, regular, GREY);
+  }
+
   }
 
   // ── Pied de page sur chaque page ─────────────────────────────────────────

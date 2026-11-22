@@ -157,7 +157,8 @@ function salesSplit(r: Rec, productIds: Set<string>) {
   const inCurrency = new Map<string, number>();
   let vatCurrency = 0;
   for (const l of lines) {
-    const account = l.articleId && productIds.has(l.articleId) ? "701" : "706";
+    // Acomptes : avances reçues (4191), déduites sur la facture de solde.
+    const account = l.deposit || l.depositInvoiceId ? "4191" : l.articleId && productIds.has(l.articleId) ? "701" : "706";
     inCurrency.set(account, (inCurrency.get(account) ?? 0) + lineNet(l, decimals));
     vatCurrency += lineVat(l, decimals);
   }
@@ -196,7 +197,8 @@ export function generateEntries(input: LedgerInput): Entry[] {
     const dc = (amount: number, debitSide: boolean) =>
       (debitSide === (sign === 1)) ? { debit: amount, credit: 0 } : { debit: 0, credit: amount };
     const out: EntryLine[] = [{ account: "411", aux: client, label, ...dc(gross, true) }];
-    for (const [account, amount] of byAccount) if (amount) out.push({ account, label, ...dc(amount, false) });
+    // Un montant négatif (déduction d'acompte) passe de l'autre côté de l'écriture.
+    for (const [account, amount] of byAccount) if (amount) out.push({ account, label, ...(amount > 0 ? dc(amount, false) : dc(-amount, true)) });
     if (vat) out.push({ account: "4431", label, ...dc(vat, false) });
     entries.push({ id: `${tbl}/${r.id}`, journal: "VE", date: str(r.data.date), ref: str(r.data.number), label, source: { tbl, id: r.id }, lines: out });
   };

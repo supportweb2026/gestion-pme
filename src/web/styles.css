@@ -579,6 +579,19 @@ tr.clickable:has(.row-link:focus-visible) td:first-child { box-shadow: inset 3px
   .filter-bar select, .filter-bar input[type=date] { min-width: 0; width: 100%; }
 }
 
+/* Lot 2 : types de documents, titres de section, acomptes */
+.doc-type { display: block; font-size: 0.6875rem; font-weight: 600; color: var(--ink-3); font-family: var(--font); }
+.section-row td { background: var(--subtle); }
+.section-row .line-label { font-weight: 700; }
+.section-input { font-weight: 700; }
+.line-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; }
+.global-discount { display: inline-flex; align-items: center; gap: 8px; margin-left: auto; font-size: 0.8125rem; }
+.global-discount label { color: var(--ink-3); font-weight: 600; }
+.global-discount input { width: 80px; }
+.deposit-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 0.8125rem; }
+.deposit-list li { display: flex; justify-content: space-between; gap: 12px; }
+.ps-section td { background: #F4F6F9; }
+
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; scroll-behavior: auto !important; }
 }

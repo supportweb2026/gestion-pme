@@ -14,6 +14,12 @@ export interface InvoiceLine {
   discount?: number;
   /** Prix d'achat unitaire HT (devise du document), noté pour le calcul de la marge ; jamais imprimé. */
   cost?: number;
+  /** Ligne de titre (section) : sans quantité ni prix, regroupe les lignes qui suivent. */
+  section?: boolean;
+  /** Ligne d'une facture d'acompte (comptée en avances reçues, pas en chiffre d'affaires). */
+  deposit?: boolean;
+  /** Déduction, sur la facture de solde, de la facture d'acompte indiquée (montant négatif). */
+  depositInvoiceId?: string;
 }
 
 export interface InvoiceTotals {

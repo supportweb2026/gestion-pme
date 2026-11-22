@@ -1,5 +1,6 @@
 import { isValidHlc, type Hlc } from "./hlc.ts";
 import type { SubscriptionInfo } from "./plans.ts";
+import { QUOTE_SERIES } from "./documents.ts";
 
 /** Tables synchronisées entre appareils. */
 export const SYNC_TABLES = [
@@ -102,7 +103,9 @@ export function checkChange(existing: SyncRecord | null, change: Change): string
       }
     } else if (change.patch.status === rule.numberedStatus) {
       const n = change.patch.number;
-      if (typeof n !== "string" || !n.startsWith(`${rule.series}-`)) {
+      // Les documents d'avant-vente ont chacun leur série (DV, PF, BC, BL).
+      const series = change.tbl === "quotes" ? QUOTE_SERIES : [rule.series];
+      if (typeof n !== "string" || !series.some((s) => n.startsWith(`${s}-`))) {
         return "un document validé doit recevoir un numéro de sa série";
       }
     }

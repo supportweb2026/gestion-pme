@@ -162,6 +162,8 @@ export function lineFacts(input: ReportInput): LineFact[] {
     const rate = rateOf(doc);
     const d = decimalsOf(currency);
     for (const l of linesOf(doc)) {
+      // Titres, acomptes et déductions d'acompte ne sont pas des ventes.
+      if (l.section || l.deposit || l.depositInvoiceId) continue;
       const net = lineNet(l, d);
       const unitCost = unitCostOf(l, articles, rate);
       out.push({
@@ -385,7 +387,7 @@ export function buildReport(input: ReportInput, f: ReportFilters): Report {
     due,
     overdue,
     invoiceCount: docs.length,
-    averageBasket: docs.length ? Math.round(positive / docs.length) : 0,
+    averageBasket: withMatchingLine.size ? Math.round(positive / docs.filter((d) => withMatchingLine.has(d.id)).length || 0) : 0,
     activeClients: active.size,
     newClients,
     paymentDelay: delayN ? Math.round(delaySum / delayN) : null,
