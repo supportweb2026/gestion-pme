@@ -211,7 +211,7 @@ test("MCP : initialize, tools/list avec annotations, notification", async () => 
   assert.equal(init.data.result.serverInfo.name, "gestia");
   const list = await rpc(c.access!, "tools/list");
   const names = list.data.result.tools.map((t: any) => t.name);
-  assert.deepEqual(names.sort(), ["add_comment", "create_task", "get_project", "get_task", "list_categories", "list_people", "list_projects", "list_tasks", "log_time", "my_day", "update_task"]);
+  assert.deepEqual(names.sort(), ["add_comment", "create_project", "create_task", "get_project", "get_task", "list_categories", "list_people", "list_projects", "list_tasks", "log_time", "my_day", "update_task"]);
   for (const t of list.data.result.tools) {
     assert.equal(typeof t.annotations.readOnlyHint, "boolean");
     assert.equal(t.annotations.destructiveHint, false);
@@ -373,4 +373,22 @@ test("lot 5 : l'employé commente, mais ne reclasse pas une tâche d'un projet q
   const cats = await tool(c.access!, "list_categories");
   assert.equal(cats.isError, false);
   assert.equal((await tool(c.access!, "list_tasks", { category: "inconnue" })).isError, true);
+});
+
+test("create_project : projet interne sans montant ; refusé à un employé ; doublon refusé", async () => {
+  const c = await connect("dnt@ido.ga");
+  const r = await tool(c.access!, "create_project", { name: "IDO – Pilotage", description: "Remplace Trello", end_date: "2026-12-31" });
+  assert.equal(r.isError, false, JSON.stringify(r));
+  const id = r.structuredContent.project.id;
+  const list = await tool(c.access!, "list_projects");
+  assert.ok(JSON.stringify(list).includes("IDO – Pilotage"));
+  const t = await tool(c.access!, "create_task", { project: id, title: "Première carte", category: "Infra" });
+  assert.equal(t.isError, false, JSON.stringify(t));
+  const dup = await tool(c.access!, "create_project", { name: "ido – pilotage" });
+  assert.equal(dup.isError, true);
+  const bad = await tool(c.access!, "create_project", { name: "Chantier", template: "forfait" });
+  assert.equal(bad.isError, true);
+  const e = await connect("paul@ido.ga");
+  const emp = await tool(e.access!, "create_project", { name: "Projet perso" });
+  assert.equal(emp.isError, true, "un employé ne crée pas de projet");
 });

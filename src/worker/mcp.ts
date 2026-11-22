@@ -22,6 +22,8 @@ import {
   pct100, stagesOf, type DayReason,
 } from "../shared/projectControl.ts";
 import { decisionsToMake } from "../shared/projectDecisions.ts";
+import { projectSeed } from "../shared/projectControl.ts";
+import { templateOf } from "../shared/projectTemplates.ts";
 import { subscriptionInfo } from "../shared/plans.ts";
 import { LIGHT_LABELS, reservesLight, scheduleLight, type Light } from "../shared/projectBudget.ts";
 import {
@@ -39,7 +41,7 @@ const SERVER_INFO = { name: "gestia", title: "Gestia", version: "1.0.0" };
  * (applyIncoming) quand le connecteur modifie une tâche. Les tables protégées restent fermées.
  */
 export const MCP_SCOPES: ApiScopes = {
-  projects: "r", project_stages: "r", project_members: "r", project_decisions: "r", team_members: "r", clients: "r",
+  projects: "rw", project_stages: "rw", project_members: "rw", project_decisions: "r", team_members: "r", clients: "r",
   tasks: "rw", time_entries: "rw",
   task_categories: "r", task_comments: "rw", attachments: "r", task_events: "r",
 };
@@ -532,6 +534,55 @@ export const TOOLS: Tool[] = [
             };
         }),
       };
+    },
+  },
+  {
+    name: "create_project",
+    title: "Créer un projet",
+    description: "Crée un projet sans aucun montant : interne (par défaut, sans facturation) ou vide. Les étapes du modèle choisi sont créées. Le budget, les taux et le lancement depuis un devis se font dans Gestia. Les droits du rôle s'appliquent (un employé ne crée pas de projet).",
+    inputSchema: obj({
+      name: s_("Nom du projet.", { maxLength: 120 }),
+      template: s_("Modèle : interne (par défaut) ou blank (projet vide)."),
+      client: s_("Client : identifiant ou nom (facultatif)."),
+      description: s_("Objectif du projet en une phrase."),
+      manager: s_("Responsable du projet : « moi », identifiant (tm-…) ou nom de l'annuaire."),
+      start_date: s_("Début (AAAA-MM-JJ), aujourd'hui par défaut."),
+      end_date: s_("Fin prévue (AAAA-MM-JJ), facultative."),
+    }, ["name"]),
+    annotations: { title: "Créer un projet", ...WRITE, idempotentHint: false },
+    async run(ctx, a) {
+      const name = str(a.name).trim();
+      if (!name || name.length > 120) throw new ToolError("Indiquez un nom de projet (120 caractères au plus).");
+      const tplId = str(a.template) || "interne";
+      if (tplId !== "interne" && tplId !== "blank") throw new ToolError("Modèle : interne ou blank. Les autres modèles (avec facturation) se créent dans Gestia.");
+      const d = await loadTables(ctx, ["projects", "team_members", "clients"]);
+      if ((d.projects ?? []).some((p) => !p.data._deleted && fold(str(p.data.name)) === fold(name))) throw new ToolError(`Un projet « ${name} » existe déjà.`);
+      let clientId = "";
+      if (str(a.client)) {
+        const c = (d.clients ?? []).find((x) => x.id === a.client) ?? (d.clients ?? []).find((x) => fold(str(x.data.name)) === fold(str(a.client)));
+        if (!c) throw new ToolError(`Client « ${str(a.client)} » introuvable.`);
+        clientId = c.id;
+      }
+      const { s } = ctx.caller;
+      const team = d.team_members ?? [];
+      const managerId = resolvePerson(team, str(a.manager) || "moi", s.sub);
+      const m = team.find((x) => x.id === managerId);
+      const tpl = templateOf(tplId);
+      const start = str(a.start_date) ? parseDate(a.start_date, "Début") : ctx.today;
+      const end = str(a.end_date) ? parseDate(a.end_date, "Fin prévue") : "";
+      if (end && end < start) throw new ToolError("La fin prévue précède le début.");
+      const id = `prj-${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      const seed = projectSeed({
+        id, name, client_id: clientId, template: tpl.id, billing: tpl.billing, stages: tpl.stages,
+        start_date: start, end_date: end, description: str(a.description).trim() || undefined,
+        manager: m ? { id: m.id, name: str(m.data.name), user_id: str(m.data.user_id) } : null, sponsor: null,
+        money: null, userId: s.sub, now: new Date().toISOString(),
+      });
+      await writeRow(ctx, "projects", seed.project.id, { ...seed.project.patch, _deleted: false });
+      for (const r of seed.members) await writeRow(ctx, "project_members", r.id, r.patch);
+      for (const r of seed.stages) await writeRow(ctx, "project_stages", r.id, r.patch);
+      for (const r of seed.tasks) await writeRow(ctx, "tasks", r.id, r.patch);
+      return { created: true, project: { id, name, template: tpl.label, manager: m ? str(m.data.name) : null, start_date: start, end_date: end || null } };
     },
   },
   {
