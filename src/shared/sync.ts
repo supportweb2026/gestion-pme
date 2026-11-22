@@ -11,6 +11,8 @@ export const SYNC_TABLES = [
   "team_members", "cost_rates", "project_finance", "project_members",
   // Stock (lot 7 facturation) : entrées, inventaires, retours ; les sorties se déduisent des ventes.
   "stock_moves", "purchase_orders",
+  // Projets, lot 2 : étapes.
+  "project_stages",
 ] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
@@ -72,7 +74,9 @@ export function isDeleted(record: SyncRecord | null | undefined): boolean {
 export const NUMBERED_DOCS = {
   invoices: { numberedStatus: "validated", series: "FA", afterNumbering: ["sent_at", "paid_amount", "payment_status", "reminded_at", "reminders", "efact_number", "efact_status", "recurrence", "recurrence_next"] },
   credit_notes: { numberedStatus: "validated", series: "AV", afterNumbering: ["sent_at"] },
-  quotes: { numberedStatus: "sent", series: "DV", afterNumbering: ["status", "invoice_id", "sent_at", "decided_at"] },
+  // `project_id` : rattachement analytique d'un devis envoyé au projet qu'il lance (RG3.2) ;
+  // ni imprimé ni comptable, il ne passe que de vide à une valeur (voir projectRules.ts).
+  quotes: { numberedStatus: "sent", series: "DV", afterNumbering: ["status", "invoice_id", "sent_at", "decided_at", "project_id"] },
 } as const;
 
 export type DocTable = keyof typeof NUMBERED_DOCS;
@@ -130,9 +134,9 @@ const WRITABLE: Record<string, readonly string[] | "all"> = {
   director: "all",
   accountant: "all",
   sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses", "projects", "tasks", "time_entries",
-    "project_finance", "project_members", "stock_moves", "purchase_orders"],
+    "project_finance", "project_members", "stock_moves", "purchase_orders", "project_stages"],
   project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks", "time_entries",
-    "project_finance", "project_members"],
+    "project_finance", "project_members", "project_stages"],
   employee: ["expenses", "tasks", "time_entries"],
 };
 
@@ -201,7 +205,7 @@ const READABLE: Record<string, readonly string[] | "all"> = {
   sales: SYNC_TABLES.filter((t) => t !== "journal_entries"),
   // Aucune table de montants (project_finance, cost_rates) ; les anciens champs
   // de montant de `projects` sont retirés à l'envoi (redactPatch).
-  employee: ["settings", "projects", "tasks", "time_entries", "expenses", "team_members", "project_members"],
+  employee: ["settings", "projects", "tasks", "time_entries", "expenses", "team_members", "project_members", "project_stages"],
 };
 const OWN_ONLY: Record<string, readonly string[]> = {
   sales: ["expenses"],
