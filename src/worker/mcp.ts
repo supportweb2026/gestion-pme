@@ -24,17 +24,24 @@ import {
 import { decisionsToMake } from "../shared/projectDecisions.ts";
 import { subscriptionInfo } from "../shared/plans.ts";
 import { LIGHT_LABELS, reservesLight, scheduleLight, type Light } from "../shared/projectBudget.ts";
+import {
+  attachmentsOf, canEditComment, categoryName, commentEditableUntil, commentsOf, COMMENT_EDIT_MINUTES, COMMENT_MAX, isArchived, linkLabel,
+  taskCategories, taskHistory, type TaskCategory,
+} from "../shared/projectBoard.ts";
 
 export const PROTOCOL_VERSIONS = ["2025-11-25", "2025-06-18", "2025-03-26"];
 const SERVER_INFO = { name: "gestia", title: "Gestia", version: "1.0.0" };
 
 /**
  * Portée du connecteur, au format des jetons d'API (src/shared/apiKeys.ts) : projets et
- * annuaire en lecture, tâches et temps en écriture. Les tables protégées restent fermées.
+ * annuaire en lecture, tâches, temps et commentaires en écriture ; catégories, pièces jointes
+ * et historique des tâches (lot 5) en lecture. L'historique est écrit par le serveur lui-même
+ * (applyIncoming) quand le connecteur modifie une tâche. Les tables protégées restent fermées.
  */
 export const MCP_SCOPES: ApiScopes = {
   projects: "r", project_stages: "r", project_members: "r", project_decisions: "r", team_members: "r", clients: "r",
   tasks: "rw", time_entries: "rw",
+  task_categories: "r", task_comments: "rw", attachments: "r", task_events: "r",
 };
 
 const PRIORITIES: Record<string, string> = { high: "Haute", normal: "Normale", low: "Basse" };
@@ -63,6 +70,8 @@ export interface ToolContext {
   env: Env;
   caller: McpCaller;
   today: string;
+  /** Adresse de Gestia (https://gestia.ido.ga en production), pour les liens renvoyés. */
+  origin?: string;
 }
 
 type Data = Partial<Record<SyncTable, SyncRecord[]>>;
@@ -182,6 +191,31 @@ function parsePriority(input: unknown): string {
   return map[q];
 }
 
+/**
+ * Catégorie de tâche : identifiant (cat-…) ou nom (exact, ou partiel s'il est unique).
+ * "" ou « aucune » : sans catégorie. Une catégorie retirée ne s'attribue plus.
+ */
+function resolveCategory(categories: TaskCategory[], input: unknown): string {
+  const q = str(input).trim();
+  if (!q || ["aucune", "aucun", "none", "sans"].includes(fold(q))) return "";
+  const active = categories.filter((c) => c.active);
+  const list = () => active.map((c) => c.name).join(", ") || "aucune";
+  const byId = categories.find((c) => c.id === q);
+  const exact = byId ? [byId] : categories.filter((c) => fold(c.name) === fold(q));
+  const found = exact.length ? exact : active.filter((c) => fold(c.name).includes(fold(q)));
+  if (found.length > 1) throw new ToolError(`Plusieurs catégories correspondent à « ${q} » : ${found.map((c) => c.name).join(", ")}.`);
+  if (!found.length) throw new ToolError(`Catégorie « ${q} » introuvable. Catégories : ${list()}. Utilisez list_categories.`);
+  if (!found[0].active) throw new ToolError(`La catégorie « ${found[0].name} » a été retirée. Catégories : ${list()}.`);
+  return found[0].id;
+}
+
+/** Catégorie pour un filtre : comme resolveCategory, mais une catégorie retirée reste cherchable. */
+function resolveCategoryFilter(categories: TaskCategory[], input: unknown): string {
+  const q = str(input).trim();
+  const old = categories.find((c) => !c.active && (c.id === q || fold(c.name) === fold(q)));
+  return old ? old.id : resolveCategory(categories, input);
+}
+
 // ---------------------------------------------------------------------------
 // Présentation (jamais de montant)
 // ---------------------------------------------------------------------------
@@ -191,7 +225,9 @@ const personName = (team: Rec[], id: unknown) => {
   return m ? str(m.data.name) : "";
 };
 
-function taskView(t: Rec, d: { projects: Rec[]; team: Rec[]; stages: Rec[] }, today: string) {
+interface TaskViewData { projects: Rec[]; team: Rec[]; stages: Rec[]; categories?: TaskCategory[]; comments?: Rec[] }
+
+function taskView(t: Rec, d: TaskViewData, today: string) {
   const status = str(t.data.status) || "todo";
   const due = str(t.data.due_date);
   const project = d.projects.find((p) => p.id === t.data.project_id);
@@ -215,8 +251,18 @@ function taskView(t: Rec, d: { projects: Rec[]; team: Rec[]; stages: Rec[] }, to
     ...(t.data.blocked ? { blocked_reason: BLOCK_LABELS[str(t.data.blocked_reason)] ?? "motif non précisé", blocked_note: str(t.data.blocked_note) } : {}),
     ...(str(t.data.description) ? { description: str(t.data.description) } : {}),
     ...(t.data.estimate_hours ? { estimate_hours: Number(t.data.estimate_hours) } : {}),
+    ...(d.categories ? { category_id: str(t.data.category_id), category: categoryName(t.data.category_id, d.categories) } : {}),
+    ...(d.comments ? { comments: commentsOf(t.id, d.comments).length } : {}),
+    archived: isArchived(t),
   };
 }
+
+/** Tables lues pour présenter une tâche complète (catégorie, nombre de commentaires). */
+const TASK_VIEW_TABLES: SyncTable[] = ["projects", "tasks", "project_stages", "team_members", "task_categories", "task_comments"];
+const viewOf = (d: Data): TaskViewData => ({
+  projects: d.projects ?? [], team: d.team_members ?? [], stages: d.project_stages ?? [],
+  categories: taskCategories(d.task_categories ?? []), comments: d.task_comments ?? [],
+});
 
 const LIGHT_RANK: Record<Light, number> = { grey: 0, green: 1, orange: 2, red: 3 };
 
@@ -387,7 +433,7 @@ export const TOOLS: Tool[] = [
   {
     name: "list_tasks",
     title: "Lister les tâches",
-    description: "Liste les tâches de tous les projets visibles, avec filtres. Par défaut : tâches non terminées. Les dates sont au format AAAA-MM-JJ.",
+    description: "Liste les tâches de tous les projets visibles, avec filtres. Chaque tâche donne sa catégorie et son nombre de commentaires. Par défaut : tâches non terminées, et jamais les tâches archivées sauf avec include_archived. Les dates sont au format AAAA-MM-JJ.",
     inputSchema: obj({
       person: s_("Personne chargée : « moi », identifiant (tm-…) ou nom. « personne » pour les tâches non attribuées."),
       project: s_("Projet : identifiant ou nom."),
@@ -395,15 +441,22 @@ export const TOOLS: Tool[] = [
       blocked: { type: "boolean", description: "true : seulement les tâches bloquées ; false : seulement les non bloquées." },
       overdue: { type: "boolean", description: "true : seulement les tâches en retard (échéance passée, non terminées)." },
       due_before: s_("Échéance au plus tard ce jour (AAAA-MM-JJ), inclus."),
+      category: s_("Catégorie : identifiant (cat-…) ou nom (voir list_categories) ; « aucune » pour les tâches sans catégorie."),
+      include_archived: { type: "boolean", description: "true : inclure les tâches archivées (terminées et rangées ; à combiner avec status done ou all). Non par défaut." },
       limit: { type: "integer", minimum: 1, maximum: 200, description: "Nombre maximal de tâches (100 par défaut)." },
     }),
     annotations: { title: "Lister les tâches", ...READ },
     async run(ctx, a) {
-      const d = await loadTables(ctx, ["projects", "tasks", "project_stages", "team_members"]);
+      const d = await loadTables(ctx, TASK_VIEW_TABLES);
       const projects = d.projects ?? [];
       const team = d.team_members ?? [];
       const known = new Set(projects.map((p) => p.id));
       let tasks = (d.tasks ?? []).filter((t) => known.has(str(t.data.project_id)));
+      if (a.include_archived !== true) tasks = tasks.filter((t) => !isArchived(t));
+      if (a.category !== undefined && str(a.category)) {
+        const cat = resolveCategoryFilter(taskCategories(d.task_categories ?? []), a.category);
+        tasks = tasks.filter((t) => str(t.data.category_id) === cat);
+      }
       if (a.project !== undefined && str(a.project)) {
         const p = findProject(projects, a.project);
         tasks = tasks.filter((t) => t.data.project_id === p.id);
@@ -428,14 +481,63 @@ export const TOOLS: Tool[] = [
       }
       tasks.sort((x, y) => (str(x.data.due_date) || "9999").localeCompare(str(y.data.due_date) || "9999") || str(x.data.title).localeCompare(str(y.data.title), "fr"));
       const limit = Math.min(200, Math.max(1, Number(a.limit) || 100));
-      const view = { projects, team, stages: d.project_stages ?? [] };
+      const view = viewOf(d);
       return { count: tasks.length, truncated: tasks.length > limit, tasks: tasks.slice(0, limit).map((t) => taskView(t, view, ctx.today)) };
+    },
+  },
+  {
+    name: "get_task",
+    title: "Fiche d'une tâche",
+    description: "Fiche complète d'une tâche, comme dans Gestia : projet, étape, statut, personne chargée, échéance, catégorie, blocage, description ; la discussion (commentaires du plus ancien au plus récent, avec leur auteur et s'ils sont encore modifiables) ; l'historique (création, déplacements, échéances, blocages, attributions, archivage, du plus récent au plus ancien) ; les pièces jointes et liens (nom et lien). Fonctionne aussi pour une tâche archivée.",
+    inputSchema: obj({ task_id: s_("Identifiant de la tâche (voir list_tasks).") }, ["task_id"]),
+    annotations: { title: "Fiche d'une tâche", ...READ },
+    async run(ctx, a) {
+      const d = await loadTables(ctx, [...TASK_VIEW_TABLES, "task_events", "attachments"]);
+      const task = findTask(d.tasks ?? [], a.task_id);
+      const team = d.team_members ?? [];
+      const view = viewOf(d);
+      const nowMs = Date.now();
+      const userName = (uid: string) => str(team.find((m) => m.data.user_id === uid)?.data.name) || (uid === ctx.caller.s.sub ? ctx.caller.userName : "");
+      const nameOf = (id: string) => personName(team, id) || id;
+      const origin = ctx.origin ?? "https://gestia.ido.ga";
+      return {
+        task: {
+          ...taskView(task, view, ctx.today),
+          ...(str(task.data.created_at) ? { created_at: str(task.data.created_at) } : {}),
+          created_by: str(task.data.created_by_name) || userName(str(task.data.created_by)),
+          ...(str(task.data.done_at) ? { done_at: str(task.data.done_at) } : {}),
+          ...(str(task.data.archived_at) && isArchived(task) ? { archived_at: str(task.data.archived_at) } : {}),
+        },
+        comments: commentsOf(task.id, d.task_comments ?? []).map((c) => {
+          const editable = canEditComment(c, ctx.caller.s.sub, nowMs);
+          return {
+            id: c.id,
+            author: str(c.data.author_name) || userName(str(c.data.author_id)),
+            at: str(c.data.created_at),
+            ...(str(c.data.edited_at) ? { edited_at: str(c.data.edited_at) } : {}),
+            body: str(c.data.body),
+            editable,
+            ...(editable ? { editable_until: new Date(commentEditableUntil(c)).toISOString() } : {}),
+          };
+        }),
+        history: taskHistory(task, d.task_events ?? [], nameOf, userName).map((h) => ({ at: h.at, by: h.byName, kind: h.kind, label: h.label })),
+        attachments: attachmentsOf(task.id, d.attachments ?? []).map((x) => {
+          const isLink = str(x.data.kind) === "link";
+          return isLink
+            ? { id: x.id, kind: "link", name: linkLabel(str(x.data.url), str(x.data.label)), url: str(x.data.url), added_at: str(x.data.created_at) }
+            : {
+              id: x.id, kind: "file", name: str(x.data.label) || "Pièce jointe", ...(str(x.data.mime) ? { mime: str(x.data.mime) } : {}),
+              url: origin, open_in: "Fichier stocké dans Gestia : ouvrez la fiche de la tâche (Projets › Toutes les tâches) pour le consulter.",
+              added_at: str(x.data.created_at),
+            };
+        }),
+      };
     },
   },
   {
     name: "create_task",
     title: "Créer une tâche",
-    description: "Crée une tâche dans un projet (statut À faire). Elle apparaît dans Gestia sur tous les appareils à la synchronisation suivante, au nom de l'utilisateur connecté. Les droits de son rôle s'appliquent (un employé ne peut attribuer une tâche qu'à lui-même).",
+    description: "Crée une tâche dans un projet (statut À faire), avec sa catégorie si besoin. Elle apparaît dans Gestia sur tous les appareils à la synchronisation suivante, au nom de l'utilisateur connecté. Les droits de son rôle s'appliquent (un employé ne peut attribuer une tâche qu'à lui-même).",
     inputSchema: obj({
       project: s_("Projet : identifiant ou nom."),
       title: s_("Titre de la tâche.", { maxLength: 200 }),
@@ -445,11 +547,12 @@ export const TOOLS: Tool[] = [
       start_date: s_("Date de début (AAAA-MM-JJ)."),
       priority: s_("Priorité : high, normal (par défaut) ou low."),
       stage: s_("Étape du projet : identifiant ou nom."),
+      category: s_("Catégorie : identifiant (cat-…) ou nom, par exemple Client, Infra, Sécurité, Coûts, Interne (voir list_categories)."),
       estimate_hours: { type: "number", minimum: 0, maximum: 1000, description: "Estimation en heures." },
     }, ["project", "title"]),
     annotations: { title: "Créer une tâche", ...WRITE, idempotentHint: false },
     async run(ctx, a) {
-      const d = await loadTables(ctx, ["projects", "project_stages", "team_members"]);
+      const d = await loadTables(ctx, ["projects", "project_stages", "team_members", "task_categories"]);
       const p = findProject(d.projects ?? [], a.project);
       const title = str(a.title).trim();
       if (!title || title.length > 200) throw new ToolError("Indiquez un titre (200 caractères au plus).");
@@ -463,6 +566,7 @@ export const TOOLS: Tool[] = [
       if (str(a.due_date)) patch.due_date = parseDate(a.due_date, "Échéance");
       if (str(a.start_date)) patch.start_date = parseDate(a.start_date, "Début");
       if (typeof a.estimate_hours === "number" && a.estimate_hours > 0) patch.estimate_hours = a.estimate_hours;
+      if (str(a.category)) patch.category_id = resolveCategory(taskCategories(d.task_categories ?? []), a.category);
       if (str(a.stage)) {
         const st = stagesOf(p.id, d.project_stages ?? []);
         const found = st.find((x) => x.id === a.stage) ?? st.find((x) => fold(str(x.data.name)) === fold(str(a.stage)));
@@ -471,15 +575,15 @@ export const TOOLS: Tool[] = [
       }
       const id = `tsk-${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
       await writeRow(ctx, "tasks", id, patch);
-      const after = await loadTables(ctx, ["projects", "tasks", "project_stages", "team_members"]);
+      const after = await loadTables(ctx, TASK_VIEW_TABLES);
       const task = (after.tasks ?? []).find((t) => t.id === id)!;
-      return { created: true, task: taskView(task, { projects: after.projects ?? [], team: after.team_members ?? [], stages: after.project_stages ?? [] }, ctx.today) };
+      return { created: true, task: taskView(task, viewOf(after), ctx.today) };
     },
   },
   {
     name: "update_task",
     title: "Modifier une tâche",
-    description: "Modifie une tâche : titre, description, statut, échéance, personne chargée, priorité, blocage (avec motif) ou déblocage. Seuls les champs indiqués changent. Les règles de Gestia s'appliquent (par exemple, un employé ne passe pas une tâche à Terminé : elle est close après vérification). Pas de suppression.",
+    description: "Modifie une tâche : titre, description, statut, échéance, personne chargée, priorité, catégorie, blocage (avec motif) ou déblocage, archivage d'une tâche terminée ou sortie des archives. Seuls les champs indiqués changent ; chaque changement de statut, d'échéance, de personne, de blocage ou d'archivage entre dans l'historique de la tâche. Les règles de Gestia s'appliquent (par exemple, un employé ne passe pas une tâche à Terminé : elle est close après vérification). Pas de suppression.",
     inputSchema: obj({
       task_id: s_("Identifiant de la tâche (voir list_tasks)."),
       title: s_("Nouveau titre.", { maxLength: 200 }),
@@ -491,10 +595,12 @@ export const TOOLS: Tool[] = [
       blocked: { type: "boolean", description: "true pour bloquer la tâche (motif obligatoire), false pour la débloquer." },
       block_reason: s_("Motif du blocage : material (matériel attendu), client (attente du client), info (information manquante), other."),
       block_note: s_("Précision sur le blocage."),
+      category: s_("Catégorie : identifiant (cat-…) ou nom (voir list_categories) ; chaîne vide pour la retirer."),
+      archived: { type: "boolean", description: "true pour archiver la tâche (seulement si elle est terminée), false pour la sortir des archives." },
     }, ["task_id"]),
     annotations: { title: "Modifier une tâche", ...WRITE, idempotentHint: true },
     async run(ctx, a) {
-      const d = await loadTables(ctx, ["projects", "tasks", "project_stages", "team_members"]);
+      const d = await loadTables(ctx, TASK_VIEW_TABLES);
       const task = findTask(d.tasks ?? [], a.task_id);
       const { s } = ctx.caller;
       const values: Record<string, unknown> = {};
@@ -520,14 +626,62 @@ export const TOOLS: Tool[] = [
       } else if (a.block_reason !== undefined || a.block_note !== undefined) {
         throw new ToolError("Pour bloquer la tâche, passez aussi blocked: true.");
       }
+      if (a.category !== undefined) values.category_id = resolveCategory(taskCategories(d.task_categories ?? []), a.category);
+      if (typeof a.archived === "boolean" && a.archived !== isArchived(task)) {
+        Object.assign(values, a.archived ? { archived: true, archived_at: new Date().toISOString() } : { archived: false });
+      }
       // Seuls les champs qui changent partent : un employé garde ainsi les droits qu'il a sur l'écran.
       const patch: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(values)) if ((task.data[k] ?? "") !== v) patch[k] = v;
-      const view = (rows: typeof d) => ({ projects: rows.projects ?? [], team: rows.team_members ?? [], stages: rows.project_stages ?? [] });
-      if (Object.keys(patch).length === 0) return { updated: false, message: "Rien à modifier.", task: taskView(task, view(d), ctx.today) };
+      if (Object.keys(patch).length === 0) return { updated: false, message: "Rien à modifier.", task: taskView(task, viewOf(d), ctx.today) };
       await writeRow(ctx, "tasks", task.id, patch);
-      const after = await loadTables(ctx, ["projects", "tasks", "project_stages", "team_members"]);
-      return { updated: true, changed: Object.keys(patch), task: taskView((after.tasks ?? []).find((t) => t.id === task.id)!, view(after), ctx.today) };
+      const after = await loadTables(ctx, TASK_VIEW_TABLES);
+      return { updated: true, changed: Object.keys(patch), task: taskView((after.tasks ?? []).find((t) => t.id === task.id)!, viewOf(after), ctx.today) };
+    },
+  },
+  {
+    name: "add_comment",
+    title: "Commenter une tâche",
+    description: `Ajoute un commentaire dans la discussion d'une tâche, au nom de l'utilisateur connecté (comme un commentaire de carte Trello). Toute personne qui voit la tâche peut commenter. Le commentaire est modifiable ${COMMENT_EDIT_MINUTES} minutes dans Gestia, puis figé ; le connecteur ne modifie ni ne supprime de commentaire. ${COMMENT_MAX} caractères au plus.`,
+    inputSchema: obj({
+      task_id: s_("Identifiant de la tâche (voir list_tasks)."),
+      body: s_("Texte du commentaire.", { maxLength: COMMENT_MAX }),
+    }, ["task_id", "body"]),
+    annotations: { title: "Commenter une tâche", ...WRITE, idempotentHint: false },
+    async run(ctx, a) {
+      const d = await loadTables(ctx, ["tasks"]);
+      const task = findTask(d.tasks ?? [], a.task_id);
+      const body = str(a.body).trim();
+      if (!body) throw new ToolError("Écrivez le commentaire.");
+      if (body.length > COMMENT_MAX) throw new ToolError(`Un commentaire ne doit pas dépasser ${COMMENT_MAX} caractères.`);
+      const { s } = ctx.caller;
+      const id = `cmt-${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      const at = new Date().toISOString();
+      await writeRow(ctx, "task_comments", id, {
+        task_id: task.id, project_id: str(task.data.project_id), body,
+        author_id: s.sub, author_name: ctx.caller.userName, created_at: at,
+        created_by: s.sub, created_by_name: `${ctx.caller.userName} (via ${ctx.caller.clientName})`,
+      });
+      return {
+        added: true,
+        comment: { id, task_id: task.id, task: str(task.data.title), author: ctx.caller.userName, at, body, editable_until: new Date(Date.parse(at) + COMMENT_EDIT_MINUTES * 60_000).toISOString() },
+      };
+    },
+  },
+  {
+    name: "list_categories",
+    title: "Catégories de tâche",
+    description: "Catégories de tâche de l'entreprise (par défaut Client, Infra, Sécurité, Coûts, Interne ; modifiables dans Gestia, Réglages du module Projets), avec leur identifiant et le nombre de tâches ouvertes de chacune. Elles servent à classer les tâches (create_task, update_task) et à filtrer (list_tasks).",
+    inputSchema: obj({ include_inactive: { type: "boolean", description: "Inclure les catégories retirées (non par défaut)." } }),
+    annotations: { title: "Catégories de tâche", ...READ },
+    async run(ctx, a) {
+      const d = await loadTables(ctx, ["task_categories", "tasks"]);
+      const open = (d.tasks ?? []).filter((t) => !isArchived(t) && t.data.status !== "done");
+      const categories = taskCategories(d.task_categories ?? []).filter((c) => a.include_inactive === true || c.active);
+      return {
+        categories: categories.map((c) => ({ id: c.id, name: c.name, active: c.active, open_tasks: open.filter((t) => t.data.category_id === c.id).length })),
+        without_category_open_tasks: open.filter((t) => !str(t.data.category_id)).length,
+      };
     },
   },
   {
@@ -621,6 +775,7 @@ const rpcResult = (id: RpcMessage["id"], result: unknown) => ({ jsonrpc: "2.0", 
 const rpcError = (id: RpcMessage["id"], code: number, message: string) => ({ jsonrpc: "2.0", id: id ?? null, error: { code, message } });
 
 const INSTRUCTIONS = "Gestia est le logiciel de gestion de l'entreprise : projets, étapes, tâches, temps passés. "
+  + "Il remplace Trello : une tâche se commente (add_comment), se classe par catégorie (list_categories) et garde son historique (get_task). "
   + "Ces outils agissent au nom de l'utilisateur connecté, avec ses droits. Utilisez list_people pour trouver l'identifiant d'une personne, "
   + "list_projects ou list_tasks pour les identifiants de projets et de tâches. Les dates sont au format AAAA-MM-JJ (fuseau de Libreville). "
   + "Aucun montant n'est accessible par ce connecteur et rien ne peut y être supprimé.";
@@ -679,7 +834,7 @@ export async function handleMcp(req: Request, env: Env): Promise<Response> {
   if (caller.company.status === "suspended") return jsonResponse(rpcError(null, -32000, "compte de l'entreprise suspendu : contactez l'équipe Gestia"), 403);
   let body: unknown;
   try { body = await req.json(); } catch { return jsonResponse(rpcError(null, -32700, "JSON invalide"), 400); }
-  const ctx: ToolContext = { env, caller, today: todayLibreville() };
+  const ctx: ToolContext = { env, caller, today: todayLibreville(), origin };
   if (Array.isArray(body)) {
     const out = (await Promise.all(body.map((m) => dispatch(ctx, m as RpcMessage)))).filter((x) => x !== null);
     return out.length ? jsonResponse(out) : new Response(null, { status: 202 });
