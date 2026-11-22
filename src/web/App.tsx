@@ -3,7 +3,7 @@ import { preloadPdf } from "./pdfActions.ts";
 import { LocalDb } from "./local/db.ts";
 import { SyncEngine } from "./local/sync.ts";
 import { api, ApiError, setToken } from "./api.ts";
-import { Ctx, ROLE_LABELS, TAB_LABELS, TABS_BY_ROLE, text, useApp, useSettings, useSyncStatus, type Session, type Tab } from "./context.ts";
+import { COMING_SOON, Ctx, ROLE_LABELS, TAB_LABELS, TABS_BY_ROLE, text, useApp, useSettings, useSyncStatus, type Session, type Tab } from "./context.ts";
 import { Dashboard } from "./screens/Dashboard.tsx";
 import { Documents } from "./screens/Documents.tsx";
 import { Clients } from "./screens/Clients.tsx";
@@ -294,10 +294,14 @@ function ForcePasswordScreen({ session, onDone, onLogout }: { session: Session; 
 
 function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLogout: (wipe: boolean) => Promise<void> }) {
   const sync = useMemo(() => new SyncEngine(db), [db]);
-  const tabs: Tab[] = [...(TABS_BY_ROLE[session.user.role] ?? ["expenses"]), ...(session.user.platformAdmin ? (["platform"] as Tab[]) : [])];
+  const allowed: Tab[] = [...(TABS_BY_ROLE[session.user.role] ?? ["expenses"]), ...(session.user.platformAdmin ? (["platform"] as Tab[]) : [])];
+  // Modules finalisés d'abord, puis ceux qui arrivent (pastille « Bientôt »).
+  const ready = allowed.filter((t) => !COMING_SOON[t]);
+  const soon = allowed.filter((t) => COMING_SOON[t]);
+  const tabs: Tab[] = [...ready, ...soon];
   const [tab, setTab] = useState<Tab>(() => {
     const saved = (() => { try { return localStorage.getItem("tab") as Tab | null; } catch { return null; } })();
-    return saved && tabs.includes(saved) ? saved : tabs[0];
+    return saved && ready.includes(saved) ? saved : (ready[0] ?? tabs[0]);
   });
   const [open, setOpen] = useState<string | null>(null);
 
@@ -347,40 +351,78 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
   return (
     <Ctx.Provider value={{ db, sync, session, logout, go }}>
       <div className="app">
-        <header className="topbar">
-          <CompanyBrand fallback={session.company.name} />
-          <SyncPill onAuthLost={(revoked) => { sync.stop(); onLogout(revoked); }} />
-          <div className="user">
-            <span className="user-name">{session.user.name}</span>
-            <span className="muted small">{ROLE_LABELS[session.user.role] ?? session.user.role}</span>
-            <InstallButton />
-            <button className="ghost small" onClick={logout}>Déconnexion</button>
-          </div>
-        </header>
-        <nav className="tabs" aria-label="Sections">
-          {tabs.map((t) => (
-            <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => go(t)} aria-current={tab === t}>
-              {TAB_LABELS[t]}
-            </button>
-          ))}
-        </nav>
+        <div className="app-head">
+          <header className="topbar">
+            <CompanyBrand fallback={session.company.name} />
+            <SyncPill onAuthLost={(revoked) => { sync.stop(); onLogout(revoked); }} />
+            <div className="user">
+              <InstallButton />
+              <div className="user-id">
+                <span className="avatar" aria-hidden="true">{initials(session.user.name)}</span>
+                <span className="user-text">
+                  <span className="user-name">{session.user.name}</span>
+                  <span className="user-role">{ROLE_LABELS[session.user.role] ?? session.user.role}</span>
+                </span>
+                <button className="icon" onClick={logout} title="Déconnexion" aria-label="Déconnexion">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><path d="M16 17l5-5-5-5" /><path d="M21 12H9" />
+                  </svg>
+                </button>
+              </div>
+            </div>
+          </header>
+          <nav className="tabs" aria-label="Sections">
+            {ready.map((t) => (
+              <button key={t} className={tab === t ? "tab active" : "tab"} onClick={() => go(t)} aria-current={tab === t}>
+                {TAB_LABELS[t]}
+              </button>
+            ))}
+            {soon.length > 0 && <span className="tab-sep" aria-hidden="true" />}
+            {soon.map((t) => (
+              <button key={t} className={tab === t ? "tab soon active" : "tab soon"} onClick={() => go(t)} aria-current={tab === t} title="Bientôt disponible">
+                {TAB_LABELS[t]} <span className="soon-badge">Bientôt</span>
+              </button>
+            ))}
+          </nav>
+        </div>
         <SubscriptionBanner />
         <main className="content">
           {tab === "dashboard" && <Dashboard />}
           {(tab === "quotes" || tab === "invoices" || tab === "credit_notes") && (
             <Documents key={tab} kind={tab} open={open} setOpen={setOpen} />
           )}
-          {tab === "expenses" && <Expenses />}
+          {COMING_SOON[tab] && <ComingSoon tab={tab} onBack={() => go(ready[0] ?? "settings")} />}
+          {tab === "expenses" && !COMING_SOON.expenses && <Expenses />}
           {tab === "clients" && <Clients />}
           {tab === "articles" && <Articles />}
-          {tab === "projects" && <Projects />}
-          {tab === "accounting" && <Accounting />}
+          {tab === "projects" && !COMING_SOON.projects && <Projects />}
+          {tab === "accounting" && !COMING_SOON.accounting && <Accounting />}
           {tab === "settings" && <Settings />}
           {tab === "platform" && session.user.platformAdmin && <Platform />}
         </main>
         <RejectedNotice />
       </div>
     </Ctx.Provider>
+  );
+}
+
+/** Initiales pour l'avatar : « Jimmy Rerambyha » → « JR ». */
+function initials(name: string): string {
+  const parts = name.trim().split(/\s+/).filter(Boolean);
+  return ((parts[0]?.[0] ?? "") + (parts.length > 1 ? parts[parts.length - 1][0] : "")).toUpperCase() || "?";
+}
+
+/** Page d'attente d'un module pas encore ouvert. */
+function ComingSoon({ tab, onBack }: { tab: Tab; onBack: () => void }) {
+  const info = COMING_SOON[tab]!;
+  return (
+    <section className="card coming-soon" data-testid="coming-soon">
+      <span className="soon-badge">Bientôt disponible</span>
+      <h2>{info.title}</h2>
+      <p>Ce module est en cours de finalisation. Il arrive dans une prochaine version de Gestia.</p>
+      <ul>{info.points.map((p) => <li key={p}>{p}</li>)}</ul>
+      <div><button className="primary" onClick={onBack}>Retour au tableau de bord</button></div>
+    </section>
   );
 }
 

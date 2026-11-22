@@ -33,6 +33,8 @@ const errors = [];
 
 async function device(name) {
   const context = await browser.newContext({ viewport: { width: 1200, height: 860 }, locale: "fr-FR" });
+  // Modules « Bientôt » (projets, dépenses, comptabilité) ouverts pour la recette complète.
+  await context.addInitScript(() => localStorage.setItem("gestia:apercu-modules", "1"));
   const page = await context.newPage();
   page.on("dialog", (d) => d.accept());
   page.on("pageerror", (e) => errors.push(`[${name}] ${e.message}`));
