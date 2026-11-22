@@ -211,7 +211,7 @@ test("MCP : initialize, tools/list avec annotations, notification", async () => 
   assert.equal(init.data.result.serverInfo.name, "gestia");
   const list = await rpc(c.access!, "tools/list");
   const names = list.data.result.tools.map((t: any) => t.name);
-  assert.deepEqual(names.sort(), ["add_comment", "create_project", "create_task", "get_project", "get_task", "list_categories", "list_people", "list_projects", "list_tasks", "log_time", "my_day", "update_task"]);
+  assert.deepEqual(names.sort(), ["add_comment", "add_watch_point", "create_project", "create_task", "get_project", "get_task", "list_categories", "list_people", "list_projects", "list_tasks", "log_time", "my_day", "update_task"]);
   for (const t of list.data.result.tools) {
     assert.equal(typeof t.annotations.readOnlyHint, "boolean");
     assert.equal(t.annotations.destructiveHint, false);
@@ -391,4 +391,57 @@ test("create_project : projet interne sans montant ; refusé à un employé ; do
   const e = await connect("paul@ido.ga");
   const emp = await tool(e.access!, "create_project", { name: "Projet perso" });
   assert.equal(emp.isError, true, "un employé ne crée pas de projet");
+});
+
+test("lot 6 : points de vigilance par le connecteur (sans montant) ; projet clôturé en lecture seule", async () => {
+  const c = await connect("paul@ido.ga");
+  const added = await tool(c.access!, "add_watch_point", { project: "Portail", title: "Accès client non fournis", probability: "forte", impact: "moyen", owner: "moi" });
+  assert.equal(added.isError, false, added.content[0].text);
+  assert.equal(added.structuredContent.watch_point.score, 6);
+  assert.equal(added.structuredContent.watch_point.level, "Fort");
+  assert.equal(added.structuredContent.watch_point.owner, "Paul Employé");
+  assert.match(added.structuredContent.note, /À redresser/);
+  assert.equal((await tool(c.access!, "add_watch_point", { project: "Portail", title: "X", probability: "énorme" })).isError, true);
+  const pr = await tool(c.access!, "get_project", { project: "prj-1" });
+  const wp = pr.structuredContent.watch_points.find((x: any) => x.title === "Accès client non fournis");
+  assert.equal(wp.status_label, "Ouvert");
+  assert.equal(wp.response, "");
+  assert.equal(pr.structuredContent.weather.reserves.light, "red");
+  assert.match(pr.structuredContent.weather.reserves.reason, /sans parade.*score 6/);
+  assert.ok(!/5432100|25000/.test(JSON.stringify(pr)));
+  // Lisible par l'appareil de l'employé (sync), sans aucun montant.
+  const l = await call("/api/login", { email: "paul@ido.ga", password: "motdepasse1", deviceId: "device-paul-0002" });
+  const pulled = await call("/api/sync", { since: 0, changes: [] }, l.data.token);
+  assert.ok(pulled.data.changes.some((x: Change) => x.tbl === "watch_points" && x.patch.title === "Accès client non fournis"));
+
+  // Clôture refusée par le serveur tant que l'étape Cadrage n'est pas validée (CA6.3) ; Terminé direct refusé (RG1.3).
+  const now = "2026-11-24T10:00:00.000Z";
+  const closing = ch("project_decisions", "dec-close-1", { project_id: "prj-1", kind: "project_closed", decided_by: admin.id, decided_by_name: "Jimmy Dnt", decided_at: now });
+  let r = await call("/api/sync", { since: 0, changes: [closing, ch("projects", "prj-1", { status: "done" })] }, admin.token);
+  assert.equal(r.data.rejected.length, 2);
+  assert.match(r.data.rejected[0].reason, /l'étape Cadrage n'est pas validée/);
+  assert.match(r.data.rejected[1].reason, /seulement par sa clôture/);
+  // Étape validée, clôture et passage à Terminé dans le même envoi : acceptés.
+  const approve = ch("project_decisions", "dec-ok-1", { project_id: "prj-1", stage_id: "stg-1", kind: "stage_approved", decided_by: admin.id, decided_by_name: "Jimmy Dnt", decided_at: "2026-11-24T09:00:00.000Z" });
+  r = await call("/api/sync", { since: 0, changes: [approve, { ...closing, id: crypto.randomUUID(), hlc: clock.tick() }, ch("projects", "prj-1", { status: "done", closed_at: now })] }, admin.token);
+  assert.equal(r.data.rejected.length, 0, JSON.stringify(r.data.rejected));
+  // Projet clôturé : le connecteur ne peut plus rien y écrire (CA6.4), même la direction.
+  const boss = await connect("dnt@ido.ga");
+  for (const [name, args] of [
+    ["log_time", { task_id: "tsk-1", hours: 1, date: "2026-11-24" }],
+    ["create_task", { project: "prj-1", title: "Après la clôture" }],
+    ["update_task", { task_id: "tsk-1", status: "todo" }],
+    ["add_comment", { task_id: "tsk-1", body: "Encore un mot" }],
+    ["add_watch_point", { project: "prj-1", title: "Trop tard" }],
+  ] as const) {
+    const res = await tool(boss.access!, name, args);
+    assert.equal(res.isError, true, `${name} refusé : ${JSON.stringify(res).slice(0, 300)}`);
+    assert.match(res.content[0].text, /clôturé/, name);
+  }
+  assert.equal((await tool(boss.access!, "get_project", { project: "prj-1" })).structuredContent.closed, true);
+  // Seule la réouverture (direction, avec motif) rend le projet modifiable.
+  const reopen = ch("project_decisions", "dec-reopen-1", { project_id: "prj-1", kind: "project_reopened", comment: "Défaut signalé", decided_by: admin.id, decided_by_name: "Jimmy Dnt", decided_at: "2026-11-24T11:00:00.000Z" });
+  r = await call("/api/sync", { since: 0, changes: [reopen, ch("projects", "prj-1", { status: "active" })] }, admin.token);
+  assert.equal(r.data.rejected.length, 0, JSON.stringify(r.data.rejected));
+  assert.equal((await tool(boss.access!, "add_comment", { task_id: "tsk-1", body: "Repris" })).isError, false);
 });

@@ -78,7 +78,7 @@ export function StageStrip({ stages, showPct, onPick }: { stages: StageInfo<Sync
 }
 
 /** Onglet Étapes : cartes, livrables de l'étape choisie, réglages de l'étape. */
-export function StagesTab({ project, stages, tasks, entries, sold, amounts, canEdit, selected, onSelect, managerId, billing, ctx, review, onReviewDone, budget, reviewChoice }: {
+export function StagesTab({ project, stages, tasks, entries, sold, amounts, canEdit, selected, onSelect, managerId, billing, ctx, review, onReviewDone, budget, reviewChoice, readOnly = false, onWatch }: {
   project: SyncRecord; stages: StageInfo<SyncRecord>[]; tasks: SyncRecord[]; entries: SyncRecord[];
   sold: { V: number; currency: string; source: string }; amounts: boolean; canEdit: boolean;
   selected: string | null; onSelect: (id: string | null) => void; managerId: string;
@@ -87,6 +87,10 @@ export function StagesTab({ project, stages, tasks, entries, sold, amounts, canE
   budget?: Forecast;
   /** Ouverture depuis la carte de décision : « pause » pré-choisit Arrêter ou mettre en pause. */
   reviewChoice?: Choice;
+  /** Lot 6 : projet clôturé, consultation seule (ni validation, ni modification). */
+  readOnly?: boolean;
+  /** Lot 6 : « Ajouter un point de vigilance », tant que le projet n'en a aucun (RG14.3). */
+  onWatch?: () => void;
 }) {
   const { db, session } = useApp();
   const write = useGuardedWrite();
@@ -149,7 +153,10 @@ export function StagesTab({ project, stages, tasks, entries, sold, amounts, canE
     <div className="stages-tab">
       <div className="stages-head">
         <h3>{stages.length} étape{stages.length > 1 ? "s" : ""}{amounts && anyPct ? `, ${pctLabel(share)} du montant vendu` : ""}</h3>
-        {canEdit && <button onClick={addStage}><PIcon name="plus" />Ajouter une étape</button>}
+        <span className="stages-head-actions">
+          {onWatch && <button className="ghost" onClick={onWatch} data-testid="add-watch-from-stages"><PIcon name="alert" />Ajouter un point de vigilance</button>}
+          {canEdit && <button onClick={addStage}><PIcon name="plus" />Ajouter une étape</button>}
+        </span>
       </div>
       <p className="stages-note small">Une étape avance avec ses tâches terminées, pondérées par leurs estimations. Elle plafonne à 95 % tant qu'elle n'est pas validée.</p>
       {amounts && anyPct && Math.abs(share - 100) > 1e-9 && (
@@ -191,7 +198,7 @@ export function StagesTab({ project, stages, tasks, entries, sold, amounts, canE
         })}
       </div>
 
-      {current && (
+      {current && !readOnly && (
         <div className="stage-decision" key={current.stage.id}>
           <StageDecisionPanel c={c} info={current} flash={flash} setFlash={setFlash} onReview={() => setDeciding(current.stage.id)} />
         </div>

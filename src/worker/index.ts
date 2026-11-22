@@ -372,21 +372,31 @@ function parseRecord(row: { tbl: string; id: string; data: string; clocks: strin
 
 /**
  * Contexte projet des règles (équipe, statut du projet, étapes et décisions), lu en une
- * seule requête et seulement si l'envoi touche des tâches, des temps, des étapes, des
- * décisions, la délégation d'un projet ou une facture d'étape.
+ * seule requête et seulement si l'envoi touche une ligne rattachée à un projet (tâches, temps,
+ * étapes, décisions, vigilance…), le statut ou la délégation d'un projet, ou une facture ou
+ * une dépense de projet (lot 6 : un projet clôturé est en lecture seule).
  * Les lignes acceptées plus tôt dans le même envoi (map `records`) priment : une décision
  * acceptée compte pour la suite de l'envoi (R2, R11).
  */
+/** Tables dont les lignes portent `project_id` et suivent les règles du projet (droits, clôture). */
+const PROJECT_ROW_TABLES: string[] = [
+  "tasks", "time_entries", "project_stages", "project_decisions", "budget_lines", "attachments",
+  "project_members", "project_finance", "task_comments", "task_events", "watch_points",
+];
+
 async function loadProjectContext(env: Env, companyId: string, incoming: Change[], records: Map<string, SyncRecord | null>): Promise<ProjectContext | undefined> {
   const ids = new Set<string>();
   for (const c of incoming) {
     let pid: unknown;
-    if (["tasks", "time_entries", "project_stages", "project_decisions", "budget_lines", "attachments"].includes(c.tbl)) {
-      pid = c.patch.project_id ?? records.get(`${c.tbl}/${c.row}`)?.data.project_id;
-    } else if (c.tbl === "projects" && "manager_can_validate" in c.patch) {
+    const existing = records.get(`${c.tbl}/${c.row}`);
+    if (PROJECT_ROW_TABLES.includes(c.tbl)) {
+      pid = c.patch.project_id ?? existing?.data.project_id;
+    } else if (c.tbl === "projects" && ("manager_can_validate" in c.patch || "status" in c.patch || existing?.data.status === "done")) {
+      // Lot 6 : passage à Terminé par la clôture seulement, et projet clôturé en lecture seule.
       pid = c.row;
-    } else if (c.tbl === "invoices" && typeof c.patch.decision_id === "string" && c.patch.decision_id) {
-      pid = c.patch.project_id ?? records.get(`${c.tbl}/${c.row}`)?.data.project_id;
+    } else if (["invoices", "expenses", "credit_notes"].includes(c.tbl)) {
+      // Facture d'étape (R11) ; dépense ou facture d'un projet clôturé (RG17.1).
+      pid = c.patch.project_id ?? existing?.data.project_id;
     }
     if (typeof pid === "string" && pid) ids.add(pid);
   }

@@ -19,6 +19,8 @@ export const SYNC_TABLES = [
   "budget_lines",
   // Projets, lot 5 : catégories de tâche, discussion, pièces jointes et liens, historique (en ajout seul).
   "task_categories", "task_comments", "attachments", "task_events",
+  // Projets, lot 6 : points de vigilance (sans montant, lus par tous, signalés par tous).
+  "watch_points",
 ] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
@@ -141,13 +143,14 @@ const WRITABLE: Record<string, readonly string[] | "all"> = {
   accountant: "all",
   sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses", "projects", "tasks", "time_entries",
     "project_finance", "project_members", "stock_moves", "purchase_orders", "project_stages",
-    "project_decisions", "budget_lines", "task_comments", "attachments", "task_events"],
+    "project_decisions", "budget_lines", "task_comments", "attachments", "task_events", "watch_points"],
   project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks", "time_entries",
     "project_finance", "project_members", "project_stages",
-    "project_decisions", "budget_lines", "task_comments", "attachments", "task_events"],
+    "project_decisions", "budget_lines", "task_comments", "attachments", "task_events", "watch_points"],
   // `project_stages` : seulement « Demander la validation » d'une étape dont il est responsable (projectRules.ts).
   // Lot 5 : il commente, joint des fichiers et laisse l'historique de ses gestes sur les tâches.
-  employee: ["expenses", "tasks", "time_entries", "project_stages", "task_comments", "attachments", "task_events"],
+  // Lot 6 : il signale un point de vigilance et suit ceux dont il est responsable (projectRules.ts).
+  employee: ["expenses", "tasks", "time_entries", "project_stages", "task_comments", "attachments", "task_events", "watch_points"],
 };
 
 export interface Actor {
@@ -216,7 +219,7 @@ const READABLE: Record<string, readonly string[] | "all"> = {
   // Aucune table de montants (project_finance, cost_rates, budget_lines) ; les anciens champs
   // de montant de `projects` sont retirés à l'envoi (redactPatch).
   employee: ["settings", "projects", "tasks", "time_entries", "expenses", "team_members", "project_members", "project_stages", "project_decisions",
-    "task_categories", "task_comments", "attachments", "task_events"],
+    "task_categories", "task_comments", "attachments", "task_events", "watch_points"],
 };
 const OWN_ONLY: Record<string, readonly string[]> = {
   sales: ["expenses"],

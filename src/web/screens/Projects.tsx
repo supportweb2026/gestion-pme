@@ -18,6 +18,9 @@
  * phrase, alertes de tolérance dans « À décider » (décision) ou sur la fiche (information du
  * responsable du projet), carte de décision (avenant, révision, plan, pause) et révision tracée.
  *
+ * Lot 6 : points de vigilance (onglet Vigilance, critère de la météo), « Clôturer le projet »
+ * (liste de contrôle, décision tracée), projet clôturé en lecture seule, onglet Bilan, réouverture.
+ *
  * Rédaction : dire ce qui se passe et son effet, sans renvoyer vers une hiérarchie.
  */
 import { useEffect, useMemo, useState, type DragEvent, type FormEvent } from "react";
@@ -51,6 +54,10 @@ import { AllTasks } from "./projects/AllTasks.tsx";
 import { Portfolio } from "./projects/Portfolio.tsx";
 import { TaskSettings } from "./projects/TaskSettings.tsx";
 import { categoryName, deadlineReminders } from "../../shared/projectBoard.ts";
+import { VigilanceTab } from "./projects/Vigilance.tsx";
+import { ClosureDialog, ReopenDialog, ReviewTab } from "./projects/Closure.tsx";
+import { needsResponse, watchPointsOf } from "../../shared/projectWatch.ts";
+import { readyToClose } from "../../shared/projectClosure.ts";
 
 const hoursLabel = (h: number) => `${(Math.round(h * 100) / 100).toLocaleString("fr-FR")} h`;
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
@@ -71,7 +78,10 @@ function useProjectData() {
   const payments = useTable("payments");
   const articles = useTable("articles");
   const project_members = useTable("project_members");
-  return { tasks, time_entries, expenses, invoices, credit_notes, project_finance, cost_rates, project_stages, quotes, project_decisions, budget_lines, payments, articles, project_members };
+  // Lot 6 : points de vigilance (météo, onglet Vigilance) et annuaire (bilan par personne).
+  const watch_points = useTable("watch_points");
+  const team_members = useTable("team_members");
+  return { tasks, time_entries, expenses, invoices, credit_notes, project_finance, cost_rates, project_stages, quotes, project_decisions, budget_lines, payments, articles, project_members, watch_points, team_members };
 }
 
 /** Qui voit quoi d'une alerte : décide (commanditaire, direction, délégué) ou responsable du projet. */
@@ -381,7 +391,8 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
       <label>
         Statut
         <select name="status" defaultValue={v("status", "active")}>
-          {Object.entries(PROJECT_STATUS).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+          {/* Lot 6 : Terminé ne se choisit pas ici, il vient de « Clôturer le projet » (RG1.3). */}
+          {Object.entries(PROJECT_STATUS).filter(([k]) => k !== "done" || v("status") === "done").map(([k, l]) => <option key={k} value={k}>{l}</option>)}
         </select>
       </label>
       <label>
@@ -424,7 +435,7 @@ function ProjectForm({ record, clients, onClose }: { record: SyncRecord | null; 
   );
 }
 
-type DetailView = "tasks" | "stages" | "gantt" | "time" | "team" | "finance" | "budget";
+type DetailView = "tasks" | "stages" | "gantt" | "time" | "team" | "finance" | "budget" | "vigilance" | "review";
 
 const dayMonth = (iso: string) => new Date(`${iso}T12:00:00`).toLocaleDateString("fr-FR", { weekday: "short", day: "2-digit", month: "2-digit" });
 
@@ -437,7 +448,11 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
   const clients = useTable("clients");
   const members = useMembers(project.id);
   const ctx = localProjectContext([project], members);
+  // Lot 6 : contexte complet (étapes, décisions) pour la clôture et la réouverture.
+  const fullCtx = localProjectContext([project], members, data.project_stages, data.project_decisions);
   const day = today();
+  const closed = project.data.status === "done";
+  const points = watchPointsOf(project.id, data.watch_points);
   const s = projectStats(project, data, day);
   const prog = projectProgress(project, data, day);
   const sold = soldOf(project, data);
@@ -449,7 +464,10 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
   const viewer = viewerOf(session.user.id, role, project.id, ctx);
   const alerts = amountsVisible ? projectAlerts(project, data, day, prog, fc, w) : [];
   const hasBudget = amountsVisible && fc.budgetSource !== "none";
-  const [view, setView] = useState<DetailView>(focus?.alert ? (hasBudget && focus.alert !== "delay" && !viewer.decides ? "budget" : "tasks") : focus ? "stages" : "tasks");
+  const [view, setView] = useState<DetailView>(focus?.alert ? (hasBudget && focus.alert !== "delay" && !viewer.decides ? "budget" : "tasks") : focus ? "stages" : closed ? "review" : "tasks");
+  const [addingWatch, setAddingWatch] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const [reopening, setReopening] = useState(false);
   const [stageFilter, setStageFilter] = useState<string>("all");
   const [pickedStage, setPickedStage] = useState<string | null>(focus?.stage || null);
   const [review, setReview] = useState<string | null>(focus?.review ? focus.stage : null);
@@ -470,7 +488,7 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
   const stageRecords = stagesOf(project.id, data.project_stages);
   const budgetView: BudgetView = {
     project, data, stages, fc, w, alerts, amounts: amountsVisible, perPerson: can.seePersonCosts(role),
-    decides: viewer.decides, leads: viewer.leads, locked: budgetLocked(stageRecords, data.project_decisions.filter((d) => d.data.project_id === project.id && live(d))),
+    decides: viewer.decides && !closed, leads: viewer.leads && !closed, locked: budgetLocked(stageRecords, data.project_decisions.filter((d) => d.data.project_id === project.id && live(d))),
   };
   const shown = alerts.map((a) => ({ a, mode: alertMode(a, viewer) })).filter((x) => x.mode !== null);
   const done = (m: string) => { setFlash(m); setBudgetEdit(null); setDeadlineEdit(null); };
@@ -498,7 +516,7 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
   const estimated = amounts && !can.seePersonCosts(role) && s.hours > 0;
   // Indicateurs à zéro : rien à apprendre ; chaque bloc n'apparaît que s'il dit quelque chose.
   const started = s.tasksDone > 0 || s.hours > 0 || s.costs > 0 || s.invoiced > 0;
-  const deadline = nextDeadline(project, stages, day);
+  const deadline = project.data.status === "done" ? null : nextDeadline(project, stages, day);
   const mineOpen = tasks.filter((t) => t.data.assignee_id === me && t.data.status !== "done").length;
   const tabs: [DetailView, string, string?][] = [
     ["tasks", "Tâches", tasks.length ? String(tasks.length) : undefined],
@@ -508,7 +526,15 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
     ["team", "Équipe", members.length ? String(members.length) : undefined],
     ...(hasBudget || view === "budget" ? [["budget", "Budget"]] as [DetailView, string][] : []),
     ...(amounts ? [["finance", "Facturation"]] as [DetailView, string][] : []),
+    // Lot 6 : l'onglet Vigilance apparaît avec le premier point (RG14.3) ; le Bilan, à la clôture.
+    ...(points.length || view === "vigilance" ? [["vigilance", "Vigilance", points.length ? String(points.length) : undefined]] as [DetailView, string, string?][] : []),
+    ...(closed ? [["review", "Bilan"]] as [DetailView, string][] : []),
   ];
+  const addWatch = () => { setView("vigilance"); setAddingWatch(true); };
+  const canClose = viewer.decides && !closed && project.data.status !== "draft";
+  const ready = canClose && readyToClose(project, data, day);
+  const closedBy = text(project.data.closed_by_name);
+  const watchAlert = viewer.leads && !closed ? points.filter((p) => needsResponse(p, day)) : [];
   const openStage = (id: string) => { setPickedStage(id); setView("stages"); };
   const A = pct100(prog.A);
   const P = prog.P === null ? null : pct100(prog.P);
@@ -537,11 +563,34 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
           </div>
         </div>
         <div className="head-actions">
-          {amountsVisible && viewer.leads && !hasBudget && view !== "budget" && <button className="ghost" onClick={() => setView("budget")} data-testid="define-budget"><PIcon name="coins" />Définir un budget</button>}
-          {manager && !editing && <button onClick={() => setEditing(true)}>Modifier le projet</button>}
+          {!closed && amountsVisible && viewer.leads && !hasBudget && view !== "budget" && <button className="ghost" onClick={() => setView("budget")} data-testid="define-budget"><PIcon name="coins" />Définir un budget</button>}
+          {!closed && points.length === 0 && stages.length === 0 && view !== "vigilance" && <button className="ghost" onClick={addWatch} data-testid="add-watch"><PIcon name="alert" />Ajouter un point de vigilance</button>}
+          {canClose && !ready && <button className="ghost" onClick={() => setClosing(true)} data-testid="close-project">Clôturer le projet</button>}
+          {manager && !editing && !closed && <button onClick={() => setEditing(true)}>Modifier le projet</button>}
+          {closed && ["admin", "director"].includes(role) && <button onClick={() => setReopening(true)} data-testid="reopen-project">Rouvrir le projet</button>}
         </div>
       </div>
       {editing && <ProjectForm record={project} clients={clients} onClose={() => setEditing(false)} />}
+      {closed && (
+        <p className="notice info-note closed-note" role="status" data-testid="project-closed">
+          <PIcon name="archive" />
+          <span>Projet clôturé{project.data.closed_at ? ` le ${formatDate(text(project.data.closed_at).slice(0, 10))}` : ""}{closedBy ? ` par ${closedBy}` : ""} : il est consultable, plus modifiable. {amounts ? "Dépenses et factures restent rattachables par la comptabilité." : ""}</span>
+        </p>
+      )}
+      {ready && (
+        <div className="notice ready-note" role="status" data-testid="ready-to-close">
+          <PIcon name="check" />
+          <span><strong>Prêt à clôturer.</strong> Toutes les étapes sont validées : vérifiez la liste de contrôle, puis notez le bilan.</span>
+          <button className="primary" onClick={() => setClosing(true)} data-testid="close-project">Clôturer le projet</button>
+        </div>
+      )}
+      {watchAlert.length > 0 && view !== "vigilance" && (
+        <p className="notice watch-head-note" role="status" data-testid="watch-head-alert">
+          <PIcon name="alert" />
+          <span>{watchAlert.length === 1 ? `Point de vigilance fort « ${text(watchAlert[0].data.title)} » : ${text(watchAlert[0].data.response).trim() ? "sa parade est en retard." : "aucune parade."}` : `${watchAlert.length} points de vigilance forts sans parade à jour.`}</span>
+          <button className="link small" onClick={() => setView("vigilance")}>Voir les points de vigilance</button>
+        </p>
+      )}
 
       {blocks > 0 && (
         <div className={`card head-blocks${showWeatherBlock ? " with-weather" : ""}`} style={{ ["--cols" as string]: blocks, ["--rest" as string]: Math.max(1, blocks - 1) }} data-testid="project-head">
@@ -637,17 +686,27 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
       </div>
 
       {view === "tasks" && (
-        <Kanban project={project} tasks={tasks} members={members} stages={stages} stageFilter={stageFilter} setStageFilter={setStageFilter}
-          onTeam={() => setView("team")} onStages={planner && stages.length === 0 ? () => setView("stages") : undefined} />
+        <Kanban project={project} tasks={tasks} members={members} stages={stages} stageFilter={stageFilter} setStageFilter={setStageFilter} readOnly={closed}
+          onTeam={() => setView("team")} onStages={planner && stages.length === 0 && !closed ? () => setView("stages") : undefined} />
       )}
       {view === "stages" && (
-        <StagesTab project={project} stages={stages} tasks={tasks} entries={entries} sold={sold} amounts={amounts} canEdit={planner}
+        <StagesTab project={project} stages={stages} tasks={tasks} entries={entries} sold={sold} amounts={amounts} canEdit={planner && !closed} readOnly={closed}
           selected={pickedStage} onSelect={setPickedStage} managerId={leadId} billing={data} ctx={ctx} review={review} onReviewDone={() => { setReview(null); setReviewChoice(undefined); }}
-          budget={hasBudget ? fc : undefined} reviewChoice={reviewChoice} />
+          budget={hasBudget ? fc : undefined} reviewChoice={reviewChoice} onWatch={!closed && points.length === 0 ? addWatch : undefined} />
       )}
       {view === "gantt" && <Gantt project={project} tasks={tasks} stages={stageRecords} />}
-      {view === "time" && <TimeEntries project={project} tasks={tasks} entries={entries} invoices={data.invoices} />}
-      {view === "team" && <ProjectTeam project={project} members={members} />}
+      {view === "time" && <TimeEntries project={project} tasks={tasks} entries={entries} invoices={data.invoices} readOnly={closed} />}
+      {view === "team" && <ProjectTeam project={project} members={members} readOnly={closed} />}
+      {view === "vigilance" && (
+        <VigilanceTab project={project} stages={stages} members={members} ctx={ctx} readOnly={closed} adding={addingWatch} onAdding={setAddingWatch}
+          onOpenTask={() => setView("tasks")} />
+      )}
+      {view === "review" && closed && <ReviewTab project={project} data={data} amounts={amounts} canEditLessons={viewer.leads} ctx={fullCtx} />}
+      {closing && (
+        <ClosureDialog project={project} data={data} ctx={fullCtx} weatherLight={w.overall} onClose={() => setClosing(false)}
+          onDone={(m) => { setClosing(false); setView("review"); setFlash(m); }} onStage={(id) => { setClosing(false); openStage(id); }} />
+      )}
+      {reopening && <ReopenDialog project={project} ctx={fullCtx} onClose={() => setReopening(false)} onDone={(m) => { setReopening(false); setView("tasks"); setFlash(m); }} />}
       {view === "finance" && amounts && <Finance project={project} data={data} onStages={stages.length ? () => setView("stages") : undefined} />}
       {view === "budget" && amountsVisible && <BudgetTab v={budgetView} onEdit={() => setBudgetEdit({ alert: null })} flash={flashNode} />}
       {budgetEdit && <BudgetEditor v={budgetView} alert={budgetEdit.alert} onClose={() => setBudgetEdit(null)} onDone={done} />}
@@ -657,13 +716,13 @@ function ProjectDetail({ project, clientName, onBack, focus }: { project: SyncRe
 }
 
 /** Équipe du projet : responsable, commanditaire et membres, choisis dans l'annuaire. */
-function ProjectTeam({ project, members }: { project: SyncRecord; members: SyncRecord[] }) {
+function ProjectTeam({ project, members, readOnly = false }: { project: SyncRecord; members: SyncRecord[]; readOnly?: boolean }) {
   const { db, session } = useApp();
   const team = useTeam();
   const write = useGuardedWrite();
   const [pick, setPick] = useState("");
   const [error, setError] = useState<string | null>(null);
-  const editable = ["admin", "director", "sales", "project_manager"].includes(session.user.role);
+  const editable = ["admin", "director", "sales", "project_manager"].includes(session.user.role) && !readOnly;
   const directory = can.manageTeam(session.user.role);
   const available = team.filter((m) => m.data.active !== false && !members.some((x) => x.data.team_member_id === m.id));
   const legacy = !members.some((m) => m.data.role === "manager") && project.data.manager ? text(project.data.manager) : "";
@@ -735,9 +794,11 @@ function ProjectTeam({ project, members }: { project: SyncRecord; members: SyncR
 
 const lateLabel = (days: number) => (days === 1 ? "En retard d'1 j" : `En retard de ${days} j`);
 
-function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, onTeam, onStages }: {
+function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, onTeam, onStages, readOnly = false }: {
   project: SyncRecord; tasks: SyncRecord[]; members: SyncRecord[]; stages: StageInfo<SyncRecord>[];
   stageFilter: string; setStageFilter: (v: string) => void; onTeam: () => void; onStages?: () => void;
+  /** Lot 6 : projet clôturé, tâches consultables seulement. */
+  readOnly?: boolean;
 }) {
   const { db, session } = useApp();
   const write = useGuardedWrite();
@@ -745,7 +806,7 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
   const projects = useTable("projects");
   const actor = { userId: session.user.id, role: session.user.role };
   const ctx = localProjectContext(projects, members);
-  const canClose = canCloseTask(actor, project.id, ctx);
+  const canClose = canCloseTask(actor, project.id, ctx) && !readOnly;
   const employee = session.user.role === "employee" && !canClose;
   const me = teamMemberIdOf(session.user.id);
   const [title, setTitle] = useState("");
@@ -838,7 +899,7 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
   return (
     <div>
       <div className="kanban-tools">
-        <form className="kanban-add" onSubmit={add}>
+        {readOnly ? <span /> : <form className="kanban-add" onSubmit={add}>
           <input placeholder="Titre de la nouvelle tâche" value={title} onChange={(e) => setTitle(e.target.value)} aria-label="Nouvelle tâche" />
           <select value={assignTo} onChange={(e) => setAssignTo(e.target.value)} aria-label="Attribuer à">
             {employee && <option value={me}>À moi</option>}
@@ -846,7 +907,7 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
             {assignable.map(([id, n]) => <option key={id} value={id}>{n}</option>)}
           </select>
           <button className="primary" disabled={!title.trim()}>Ajouter la tâche</button>
-        </form>
+        </form>}
         {tasks.length > 0 && (
           <label className="people-filter">
             <span className="muted small">Afficher</span>
@@ -906,14 +967,14 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
                 const late = status !== "done" && due && due < day ? daysBetween(due, day) : 0;
                 const person = assigneeOf(t, team);
                 const mine = t.data.assignee_id === me || (!t.data.assignee_id && !t.data.assignee);
-                const steps = stepsOf(status, canClose, mine);
+                const steps = readOnly ? [] : stepsOf(status, canClose, mine);
                 return (
-                  <div key={t.id} className={`task-card${t.data.blocked ? " blocked" : ""}`} draggable={editing !== t.id} onDragStart={(e) => e.dataTransfer.setData("text/plain", t.id)}>
+                  <div key={t.id} className={`task-card${t.data.blocked ? " blocked" : ""}`} draggable={editing !== t.id && !readOnly} onDragStart={(e) => e.dataTransfer.setData("text/plain", t.id)}>
                     {editing === t.id ? (employee
                       ? <EmployeeTaskForm task={t} onClose={() => setEditing(null)} onOpen={() => { setEditing(null); setPanel(t.id); }} />
                       : <TaskForm task={t} members={members} stages={stages} onClose={() => setEditing(null)} onOpen={() => { setEditing(null); setPanel(t.id); }} />) : (
                       <>
-                        <button className="task-title" onClick={() => setEditing(t.id)} title={employee ? "Voir la tâche" : "Modifier la tâche"}>{text(t.data.title)}</button>
+                        <button className="task-title" onClick={() => (readOnly ? setPanel(t.id) : setEditing(t.id))} title={employee || readOnly ? "Voir la tâche" : "Modifier la tâche"}>{text(t.data.title)}</button>
                         <TaskTags task={t} stage={stageFilter === "all" ? stageName(t.data.stage_id) : ""} pinned={t.data.priority_week === week} category={categoryName(t.data.category_id, categories)} />
                         {t.data.blocked ? (
                           <div className="task-blocked"><PIcon name="alert" />Bloquée : {BLOCK_LABELS[text(t.data.blocked_reason)] ?? "motif non précisé"}{t.data.blocked_note ? ` (${text(t.data.blocked_note)})` : ""}</div>
@@ -931,7 +992,7 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
                             {counts.get(`f:${t.id}`) ? <button className="fact-ico link" onClick={() => setPanel(t.id)} title="Voir les pièces jointes" aria-label={`${counts.get(`f:${t.id}`)} pièces jointes ou liens`}><PIcon name="clip" />{counts.get(`f:${t.id}`)}</button> : null}
                           </span>
                         </div>
-                        {(steps.length > 0 || (status === "review" && !canClose) || (t.data.blocked && (canClose || mine)) || (canClose && status !== "done")) && (
+                        {!readOnly && (steps.length > 0 || (status === "review" && !canClose) || (t.data.blocked && (canClose || mine)) || (canClose && status !== "done")) && (
                           <div className="task-move">
                             {canClose && status !== "done" && (
                               <button className={`ghost small icon pin-btn${t.data.priority_week === week ? " on" : ""}`} onClick={() => togglePin(t)} aria-pressed={t.data.priority_week === week}
@@ -1051,7 +1112,7 @@ function Gantt({ project, tasks, stages }: { project: SyncRecord; tasks: SyncRec
   );
 }
 
-function TimeEntries({ project, tasks, entries, invoices }: { project: SyncRecord; tasks: SyncRecord[]; entries: SyncRecord[]; invoices: SyncRecord[] }) {
+function TimeEntries({ project, tasks, entries, invoices, readOnly = false }: { project: SyncRecord; tasks: SyncRecord[]; entries: SyncRecord[]; invoices: SyncRecord[]; readOnly?: boolean }) {
   const { db, session } = useApp();
   const write = useGuardedWrite();
   const allEntries = useTable("time_entries");
@@ -1088,7 +1149,7 @@ function TimeEntries({ project, tasks, entries, invoices }: { project: SyncRecor
 
   return (
     <div>
-      <form className="card form-grid section-card time-form" onSubmit={add}>
+      {readOnly ? <p className="muted small">Projet clôturé : plus aucun temps ne peut y être saisi.</p> : <form className="card form-grid section-card time-form" onSubmit={add}>
         <h3 className="wide">Saisir mon temps</h3>
         <label>Date<input type="date" name="date" required defaultValue={today()} /></label>
         <label>
@@ -1103,7 +1164,7 @@ function TimeEntries({ project, tasks, entries, invoices }: { project: SyncRecor
         {can.seeAmounts(session.user.role) ? <label className="inline"><input type="checkbox" name="billable" defaultChecked={["time", ""].includes(text(project.data.billing))} /> Facturable</label> : <input type="hidden" name="billable" value={["time", ""].includes(text(project.data.billing)) ? "on" : ""} />}
         {error && <p className="error wide">{error}</p>}
         <div className="form-actions"><button className="primary">Enregistrer le temps</button></div>
-      </form>
+      </form>}
       {sorted.length === 0 ? <p className="muted small">Aucun temps saisi sur ce projet pour l'instant.</p> : (
         <p className="muted small time-total"><strong>{hoursLabel(total)}</strong> saisies sur ce projet, dont {hoursLabel(mine)} par vous.</p>
       )}
@@ -1114,7 +1175,7 @@ function TimeEntries({ project, tasks, entries, invoices }: { project: SyncRecor
             <tbody>
               {sorted.map((e) => {
                 const billed = !!e.data.invoice_id && invoiceIds.has(text(e.data.invoice_id));
-                const removable = !billed && (e.data.user_id === session.user.id || can.manageProjects(session.user.role)) && !(closedUntil && text(e.data.date) <= closedUntil);
+                const removable = !readOnly && !billed && (e.data.user_id === session.user.id || can.manageProjects(session.user.role)) && !(closedUntil && text(e.data.date) <= closedUntil);
                 return (
                   <tr key={e.id}>
                     <td>{formatDate(e.data.date)}</td>

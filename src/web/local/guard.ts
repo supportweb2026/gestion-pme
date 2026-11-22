@@ -39,7 +39,7 @@ export const sentence = (m: string) => {
 export async function guardedWrite(db: LocalDb, actor: Actor, tbl: SyncTable, id: string, patch: Fields, opts: { ctx?: ProjectContext; closedUntil?: string; actorName?: string } = {}): Promise<void> {
   const existing = await db.get(tbl, id);
   // Décisions lues au moment de l'écriture : une décision écrite juste avant dans le même geste compte (R11).
-  if (opts.ctx?.decisions && (tbl === "tasks" || tbl === "invoices" || tbl === "project_decisions" || tbl === "budget_lines")) {
+  if (opts.ctx?.decisions && (tbl === "tasks" || tbl === "invoices" || tbl === "project_decisions" || tbl === "budget_lines" || tbl === "projects")) {
     const all = await db.list("project_decisions");
     opts = { ...opts, ctx: { ...opts.ctx, decisions: (pid: string) => all.filter((d) => !d.data._deleted && d.data.project_id === pid) } };
   }

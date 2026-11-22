@@ -25,7 +25,11 @@ import { decisionsToMake } from "../shared/projectDecisions.ts";
 import { projectSeed } from "../shared/projectControl.ts";
 import { templateOf } from "../shared/projectTemplates.ts";
 import { subscriptionInfo } from "../shared/plans.ts";
-import { LIGHT_LABELS, reservesLight, scheduleLight, type Light } from "../shared/projectBudget.ts";
+import { LIGHT_LABELS, scheduleLight, vigilanceLight, type Light } from "../shared/projectBudget.ts";
+import {
+  IMPACT_LABELS, PROBABILITY_LABELS, responseLate, WATCH_LEVEL_LABELS, WATCH_RESPONSE_MAX, WATCH_STATUS_LABELS, WATCH_TITLE_MAX,
+  watchLevel, watchPointsOf, watchScore, watchStatus,
+} from "../shared/projectWatch.ts";
 import {
   attachmentsOf, canEditComment, categoryName, commentEditableUntil, commentsOf, COMMENT_EDIT_MINUTES, COMMENT_MAX, isArchived, linkLabel,
   taskCategories, taskHistory, type TaskCategory,
@@ -44,6 +48,8 @@ export const MCP_SCOPES: ApiScopes = {
   projects: "rw", project_stages: "rw", project_members: "rw", project_decisions: "r", team_members: "r", clients: "r",
   tasks: "rw", time_entries: "rw",
   task_categories: "r", task_comments: "rw", attachments: "r", task_events: "r",
+  // Lot 6 : points de vigilance (aucun montant), lus dans get_project, ajoutés par add_watch_point.
+  watch_points: "rw",
 };
 
 const PRIORITIES: Record<string, string> = { high: "Haute", normal: "Normale", low: "Basse" };
@@ -269,13 +275,13 @@ const viewOf = (d: Data): TaskViewData => ({
 const LIGHT_RANK: Record<Light, number> = { grey: 0, green: 1, orange: 2, red: 3 };
 
 /**
- * Météo du projet (lot 4) sur ses critères sans montant : délai, réserves et blocages.
- * Le critère budget porte des montants : il n'est pas transmis par le connecteur.
+ * Météo du projet (lot 4) sur ses critères sans montant : délai, et vigilance (réserves, blocages
+ * et points de vigilance du lot 6). Le critère budget porte des montants : il n'est pas transmis.
  */
 function weatherOf(project: Rec, tasks: Rec[], prog: ReturnType<typeof projectProgress>, today: string, d: Data) {
   const progressAt = (iso: string) => projectProgress(project, { tasks, project_stages: d.project_stages ?? [], project_decisions: d.project_decisions ?? [] }, iso).P;
   const schedule = scheduleLight(project, prog, today, progressAt);
-  const reserves = reservesLight(project, tasks, today);
+  const reserves = vigilanceLight(project, tasks, d.watch_points ?? [], today);
   const worst = LIGHT_RANK[schedule.light] >= LIGHT_RANK[reserves.light] ? schedule : reserves;
   return {
     overall: LIGHT_LABELS[worst.light],
@@ -309,13 +315,43 @@ const WRITE = { readOnlyHint: false, destructiveHint: false, openWorldHint: fals
 const obj = (properties: Record<string, unknown>, required: string[] = []) => ({ type: "object", properties, required, additionalProperties: false });
 const s_ = (description: string, extra: Record<string, unknown> = {}) => ({ type: "string", description, ...extra });
 
-const PROJECT_TABLES: SyncTable[] = ["projects", "tasks", "project_stages", "project_members", "project_decisions", "team_members", "clients"];
+const PROJECT_TABLES: SyncTable[] = ["projects", "tasks", "project_stages", "project_members", "project_decisions", "team_members", "clients", "watch_points"];
+
+/** Point de vigilance présenté au connecteur : description, niveaux, parade, responsable, état ; jamais de montant. */
+function watchView(p: Rec, team: Rec[], tasks: Rec[], today: string) {
+  const st = watchStatus(p);
+  const task = tasks.find((t) => t.id === str(p.data.issue_task_id));
+  return {
+    id: p.id,
+    title: str(p.data.title),
+    probability: PROBABILITY_LABELS[Number(p.data.probability)] ?? "Moyenne",
+    impact: IMPACT_LABELS[Number(p.data.impact)] ?? "Moyen",
+    score: watchScore(p),
+    level: WATCH_LEVEL_LABELS[watchLevel(p)],
+    status: st,
+    status_label: WATCH_STATUS_LABELS[st],
+    ...(str(p.data.response).trim() ? { response: str(p.data.response) } : { response: "" }),
+    ...(str(p.data.response_due) ? { response_due: str(p.data.response_due), response_late: responseLate(p, today) } : {}),
+    owner: personName(team, p.data.owner_id) || str(p.data.owner_name),
+    ...(str(p.data.stage_id) ? { stage_id: str(p.data.stage_id) } : {}),
+    ...(task ? { issue_task_id: task.id, issue_task_status: str(task.data.status) || "todo" } : {}),
+  };
+}
+
+/** Probabilité ou impact : 1, 2, 3, ou faible, moyen(ne), fort(e). */
+function parseLevel(input: unknown, label: string): number {
+  if (input === 1 || input === 2 || input === 3) return input;
+  const q = fold(str(input));
+  const map: Record<string, number> = { "1": 1, faible: 1, low: 1, "2": 2, moyen: 2, moyenne: 2, medium: 2, "3": 3, fort: 3, forte: 3, high: 3 };
+  if (map[q]) return map[q];
+  throw new ToolError(`${label} inconnue : faible, moyen ou fort (ou 1, 2, 3).`);
+}
 
 export const TOOLS: Tool[] = [
   {
     name: "list_projects",
     title: "Lister les projets",
-    description: "Liste les projets de l'entreprise visibles par l'utilisateur, avec leur état, leur avancement (réel et prévu à date), leur météo (délai, réserves et blocages), leur échéance, la prochaine étape à valider, leur responsable et le nombre de tâches ouvertes, en retard ou bloquées. Par défaut : projets planifiés, en cours ou en pause.",
+    description: "Liste les projets de l'entreprise visibles par l'utilisateur, avec leur état, leur avancement (réel et prévu à date), leur météo (délai, et vigilance : réserves, blocages et points de vigilance), leur échéance, la prochaine étape à valider, leur responsable et le nombre de tâches ouvertes, en retard ou bloquées. Par défaut : projets planifiés, en cours ou en pause.",
     inputSchema: obj({
       status: s_("État : planned (Planifié), active (En cours), on_hold (En pause), done (Terminé), cancelled (Annulé), open (planifié, en cours ou en pause, par défaut) ou all."),
       client: s_("Client : identifiant ou partie du nom."),
@@ -371,7 +407,7 @@ export const TOOLS: Tool[] = [
   {
     name: "get_project",
     title: "Détail d'un projet",
-    description: "Détail d'un projet : météo (délai, réserves et blocages), étapes (état, avancement, dates, responsable), équipe, tâches ouvertes, prochaine échéance et bloc « À décider » (validations d'étape demandées, si l'utilisateur peut décider sur ce projet).",
+    description: "Détail d'un projet : météo (délai, et vigilance : réserves, blocages et points de vigilance), points de vigilance (risque, probabilité, impact, parade, responsable, état), étapes (état, avancement, dates, responsable), équipe, tâches ouvertes, prochaine échéance et bloc « À décider » (validations d'étape demandées, si l'utilisateur peut décider sur ce projet). Un projet clôturé est en consultation seule.",
     inputSchema: obj({ project: s_("Identifiant du projet, ou son nom (exact ou partiel s'il est unique).") }, ["project"]),
     annotations: { title: "Détail d'un projet", ...READ },
     async run(ctx, a) {
@@ -403,6 +439,8 @@ export const TOOLS: Tool[] = [
         manager: managerOf(p, d.project_members ?? []),
         next_deadline: nextDeadline(p, prog.stages, ctx.today),
         weather: weatherOf(p, tasks, prog, ctx.today, d),
+        ...(str(p.data.status) === "done" ? { closed: true, closed_at: str(p.data.closed_at).slice(0, 10), read_only: "projet clôturé : consultation seule" } : {}),
+        watch_points: watchPointsOf(p.id, d.watch_points ?? []).map((w) => watchView(w, team, tasks, ctx.today)),
         stages: prog.stages.map((i) => ({
           id: i.stage.id,
           name: str(i.stage.data.name),
@@ -814,6 +852,60 @@ export const TOOLS: Tool[] = [
       return { logged: true, id, task: str(task.data.title), date, hours, total_that_day: Math.round((already + hours) * 100) / 100 };
     },
   },
+  {
+    name: "add_watch_point",
+    title: "Ajouter un point de vigilance",
+    description: "Ajoute un point de vigilance à un projet : ce qui peut mal tourner, sa probabilité et son impact (faible, moyen, fort), la parade (ce qu'on fait pour l'éviter), son échéance et la personne qui s'en occupe. Un point fort (probabilité × impact de 6 ou plus) sans parade fait passer la météo du projet à « À redresser ». Aucun montant. Tout le monde peut signaler un point ; un projet clôturé n'en reçoit plus.",
+    inputSchema: obj({
+      project: s_("Projet : identifiant ou nom."),
+      title: s_("Ce qui peut mal tourner.", { maxLength: WATCH_TITLE_MAX }),
+      probability: s_("Probabilité : faible, moyenne ou forte (ou 1, 2, 3). Par défaut moyenne."),
+      impact: s_("Impact : faible, moyen ou fort (ou 1, 2, 3). Par défaut moyen."),
+      response: s_("Parade : ce qu'on fait pour l'éviter.", { maxLength: WATCH_RESPONSE_MAX }),
+      response_due: s_("Échéance de la parade (AAAA-MM-JJ)."),
+      owner: s_("Personne qui s'en occupe : « moi », identifiant (tm-…) ou nom de l'annuaire."),
+      stage: s_("Étape concernée : identifiant ou nom (facultatif)."),
+    }, ["project", "title"]),
+    annotations: { title: "Ajouter un point de vigilance", ...WRITE, idempotentHint: false },
+    async run(ctx, a) {
+      const d = await loadTables(ctx, ["projects", "project_stages", "team_members", "tasks", "watch_points"]);
+      const p = findProject(d.projects ?? [], a.project);
+      const title = str(a.title).trim();
+      if (!title || title.length > WATCH_TITLE_MAX) throw new ToolError(`Décrivez ce qui peut mal tourner (${WATCH_TITLE_MAX} caractères au plus).`);
+      const response = str(a.response).trim();
+      if (response.length > WATCH_RESPONSE_MAX) throw new ToolError(`La parade ne doit pas dépasser ${WATCH_RESPONSE_MAX} caractères.`);
+      const { s } = ctx.caller;
+      const team = d.team_members ?? [];
+      const patch: Record<string, unknown> = {
+        project_id: p.id, title,
+        probability: a.probability === undefined || a.probability === "" ? 2 : parseLevel(a.probability, "Probabilité"),
+        impact: a.impact === undefined || a.impact === "" ? 2 : parseLevel(a.impact, "Impact"),
+        response, status: "open", rank: Date.now(),
+        created_by: s.sub, created_at: new Date().toISOString(), created_by_name: `${ctx.caller.userName} (via ${ctx.caller.clientName})`,
+      };
+      if (str(a.response_due)) patch.response_due = parseDate(a.response_due, "Échéance de la parade");
+      if (str(a.owner)) {
+        patch.owner_id = resolvePerson(team, a.owner, s.sub);
+        patch.owner_name = personName(team, patch.owner_id);
+      }
+      if (str(a.stage)) {
+        const st = stagesOf(p.id, d.project_stages ?? []);
+        const found = st.find((x) => x.id === a.stage) ?? st.find((x) => fold(str(x.data.name)) === fold(str(a.stage)));
+        if (!found) throw new ToolError(`Étape « ${str(a.stage)} » introuvable dans ce projet. Étapes : ${st.map((x) => str(x.data.name)).join(", ") || "aucune"}.`);
+        patch.stage_id = found.id;
+      }
+      const id = `wp-${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`;
+      await writeRow(ctx, "watch_points", id, patch);
+      const after = await loadTables(ctx, ["watch_points", "team_members", "tasks"]);
+      const point = (after.watch_points ?? []).find((x) => x.id === id)!;
+      const view = watchView(point, after.team_members ?? [], after.tasks ?? [], ctx.today);
+      return {
+        added: true,
+        watch_point: view,
+        ...(view.level === "Fort" && !response ? { note: "Point fort sans parade : la météo du projet passe à « À redresser » tant qu'aucune parade n'est indiquée." } : {}),
+      };
+    },
+  },
 ];
 
 // ---------------------------------------------------------------------------
@@ -829,6 +921,7 @@ const INSTRUCTIONS = "Gestia est le logiciel de gestion de l'entreprise : projet
   + "Il remplace Trello : une tâche se commente (add_comment), se classe par catégorie (list_categories) et garde son historique (get_task). "
   + "Ces outils agissent au nom de l'utilisateur connecté, avec ses droits. Utilisez list_people pour trouver l'identifiant d'une personne, "
   + "list_projects ou list_tasks pour les identifiants de projets et de tâches. Les dates sont au format AAAA-MM-JJ (fuseau de Libreville). "
+  + "Les risques d'un projet sont ses points de vigilance (get_project, add_watch_point). "
   + "Aucun montant n'est accessible par ce connecteur et rien ne peut y être supprimé.";
 
 export async function callTool(ctx: ToolContext, name: string, args: Record<string, unknown>) {

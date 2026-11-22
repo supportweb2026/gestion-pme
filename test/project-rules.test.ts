@@ -97,7 +97,7 @@ test("R12 : saisie de temps limitée à 7 jours pour l'employé, refusée sur un
   assert.match(checkPermission(emp, null, entry("2026-11-15"))!, /7 derniers jours/);
   assert.equal(checkPermission(director, null, entry("2026-10-01")), null, "le chef de projet saisit pour lui au-delà");
   const done = ctx([], [rec("projects", "prj-9", { status: "done" })]);
-  assert.match(checkPermission(director, null, entry("2026-11-23", "prj-9"), "", done)!, /ce projet est terminé/);
+  assert.match(checkPermission(director, null, entry("2026-11-23", "prj-9"), "", done)!, /ce projet est clôturé : vous ne pouvez plus y saisir de temps/);
 });
 
 test("Confidentialité (CA1.4) : montants retirés à l'envoi pour l'employé, historique compris", () => {

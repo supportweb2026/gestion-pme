@@ -35,6 +35,9 @@ export const DECISION_LABELS: Record<string, string> = {
   deadline_revised: "Date de fin révisée",
   amendment_proposed: "Avenant proposé au client",
   plan_requested: "Plan de redressement demandé",
+  // Lot 6 : clôture et réouverture (F17, RG17.2).
+  project_closed: "Projet clôturé",
+  project_reopened: "Projet rouvert",
 };
 
 /** Identifiants déterministes (§2.1) : deux appareils produisent la même ligne, jamais un doublon. */

@@ -200,7 +200,7 @@ try {
   assert.equal(init.body.result.protocolVersion, "2025-06-18");
   assert.equal((await call("POST", "/mcp", token, { jsonrpc: "2.0", method: "notifications/initialized" })).status, 202);
   const tools = (await mcp(token, "tools/list")).body.result.tools;
-  assert.equal(tools.length, 12);
+  assert.equal(tools.length, 13);
   assert.equal(tools.find((t) => t.name === "get_task").annotations.readOnlyHint, true);
   assert.equal(tools.find((t) => t.name === "add_comment").annotations.readOnlyHint, false);
   assert.equal(tools.find((t) => t.name === "add_comment").annotations.destructiveHint, false);
