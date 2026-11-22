@@ -1173,3 +1173,19 @@ button.reason.selected .radio-dot { border: 5px solid var(--accent); }
 .recur-form .form-actions { margin-top: 2px; }
 .recur-list { margin-top: 4px; }
 .recur-origin .link { font-weight: 600; }
+
+/* ── Lot 7 : stock ─────────────────────────────────────────────────── */
+.stock-fields { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px 16px; border: none; padding: 0; margin: 0; }
+.stock-fields .check-inline, .stock-fields .hint { grid-column: 1 / -1; margin: 0; }
+.stock-link { display: inline-flex; align-items: center; gap: 8px; justify-content: flex-end; }
+.stock-low { font-family: var(--font); }
+.stock-panel { margin-bottom: 16px; }
+.stock-head { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.stock-head .actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.stock-form { margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line, #E6E9EF); }
+.stock-history-title { margin: 20px 0 8px; font-size: 0.875rem; }
+.stock-history { list-style: none; margin: 0; padding: 0; }
+.stock-history li { display: grid; grid-template-columns: 96px 1fr auto; gap: 12px; align-items: center; padding: 8px 0; border-top: 1px solid var(--line, #E6E9EF); font-size: 0.875rem; }
+.stock-history li .link { text-align: left; }
+.stock-hint { display: block; margin-top: 4px; font-size: 0.75rem; color: var(--ink-3); }
+.stock-history li .link { justify-self: start; }

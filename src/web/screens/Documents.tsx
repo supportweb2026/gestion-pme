@@ -19,6 +19,8 @@ import {
   QUOTE_TYPES, quoteTypeOf, sectionSubtotals, type QuoteType,
 } from "../../shared/documents.ts";
 import { canShareFiles, downloadFile, makePdfFile, shareFile } from "../pdfActions.ts";
+import { useStock } from "../stock.ts";
+import { qtyFr } from "../../shared/stock.ts";
 import {
   describe, isFinished, nextAfter, RECURRENCE_FREQS, recurrenceOf, type RecurrenceFreq,
 } from "../../shared/recurrence.ts";
@@ -249,6 +251,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const cfg = DOCS[kind];
   const settings = useSettings();
   const articles = useTable("articles");
+  const { levels: stock } = useStock();
   const { invoices, payments, credits, situations } = useSalesData();
   const paymentDays = Number(settings.payment_days ?? DEFAULT_PAYMENT_DAYS);
 
@@ -847,7 +850,13 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                 </tr>
               ) : (
                 <tr key={i}>
-                  <td><input aria-label="Désignation" list="articles-list" placeholder="Article du catalogue ou désignation libre" value={l.label} onChange={(e) => pickArticle(i, e.target.value)} /></td>
+                  <td>
+                    <input aria-label="Désignation" list="articles-list" placeholder="Article du catalogue ou désignation libre" value={l.label} onChange={(e) => pickArticle(i, e.target.value)} />
+                    {kind !== "credit_notes" && l.articleId && stock.has(l.articleId) ? (() => {
+                      const left = stock.get(l.articleId)!.qty;
+                      return <span className={`stock-hint${l.qty > left ? " danger-text" : ""}`} data-testid="stock-hint">{l.qty > left ? `Stock insuffisant : ${qtyFr(left)} disponible${left > 1 ? "s" : ""}` : `${qtyFr(left)} en stock`}</span>;
+                    })() : null}
+                  </td>
                   <td className="num qty" data-label="Qté"><input aria-label="Quantité" type="number" min="0" step="any" value={l.qty} onChange={(e) => update(i, { qty: Number(e.target.value) })} /></td>
                   {!isDelivery && <><td className="num" data-label="Prix unitaire HT"><input aria-label="Prix unitaire" type="number" min="0" step={decimals ? "0.01" : "1"} value={l.unitPrice} onChange={(e) => update(i, { unitPrice: Number(e.target.value) })} /></td>
                   <td className="num pct" data-label="Remise %"><input aria-label="Remise" type="number" min="0" max="100" step="any" value={l.discount ?? 0} onChange={(e) => update(i, { discount: Number(e.target.value) || undefined })} /></td>

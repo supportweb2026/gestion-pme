@@ -9,6 +9,8 @@ export const SYNC_TABLES = [
   "expenses", "settings", "journal_entries", "projects", "tasks", "time_entries",
   // Module Projets, lot 1 : annuaire, coûts horaires (protégés), données financières (protégées), équipe du projet.
   "team_members", "cost_rates", "project_finance", "project_members",
+  // Stock (lot 7 facturation) : entrées, inventaires, retours ; les sorties se déduisent des ventes.
+  "stock_moves",
 ] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
@@ -120,7 +122,7 @@ export function checkChange(existing: SyncRecord | null, change: Change): string
 }
 
 /** Tables dont les lignes portent une date comptable, verrouillées après clôture. */
-const DATED_TABLES = new Set(["invoices", "credit_notes", "payments", "expenses", "journal_entries", "time_entries"]);
+const DATED_TABLES = new Set(["invoices", "credit_notes", "payments", "expenses", "journal_entries", "time_entries", "stock_moves"]);
 
 /** Tables que chaque rôle peut modifier. */
 const WRITABLE: Record<string, readonly string[] | "all"> = {
@@ -128,7 +130,7 @@ const WRITABLE: Record<string, readonly string[] | "all"> = {
   director: "all",
   accountant: "all",
   sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses", "projects", "tasks", "time_entries",
-    "project_finance", "project_members"],
+    "project_finance", "project_members", "stock_moves"],
   project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks", "time_entries",
     "project_finance", "project_members"],
   employee: ["expenses", "tasks", "time_entries"],
