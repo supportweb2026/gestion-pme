@@ -25,7 +25,7 @@ import { WeatherBadge } from "./Budget.tsx";
 
 const live = (r: SyncRecord) => !r.data._deleted;
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
-const CRITERIA: [keyof Pick<PortfolioRow["weather"], "schedule" | "budget" | "reserves">, string][] = [["schedule", "Délai"], ["budget", "Budget"], ["reserves", "Réserves"]];
+const CRITERIA: [keyof Pick<PortfolioRow["weather"], "schedule" | "budget" | "reserves">, string][] = [["schedule", "Délai"], ["budget", "Budget"], ["reserves", "Vigilance"]];
 const filterKey = (userId: string) => `gestia:portefeuille:${userId}`;
 
 /** Mini-pastilles des trois critères : chaque couleur porte aussi son mot. */

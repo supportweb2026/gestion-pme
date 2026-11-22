@@ -1,6 +1,6 @@
 /**
  * Module Projets, lot 4 : budget par poste, coûts réels, coût final estimé, marges,
- * météo (délai, budget, réserves et blocages) et alertes de dépassement.
+ * météo (délai, budget, vigilance : réserves, blocages et points de vigilance du lot 6) et alertes de dépassement.
  * Références : CDC §3.7, §3.9, §3.10 ; modèle de données §3.1 à §3.4, §3.6, §3.7, §5.3.
  *
  * Fonctions pures : la date du jour est passée en paramètre, rien n'est écrit ici.
@@ -11,6 +11,7 @@ import { computeTotals, docTaxes, formatXaf, type InvoiceLine } from "./invoice.
 import { decimalsOf } from "./currency.ts";
 import { entryCostRate, financeOf, netXaf, type Rec } from "./projects.ts";
 import { daysBetween, fold, projectProgress, soldOf, stagesOf, type ProgressInfo, type StageState } from "./projectControl.ts";
+import { watchLight } from "./projectWatch.ts";
 
 const num = (v: unknown) => Number(v ?? 0) || 0;
 const str = (v: unknown) => (typeof v === "string" ? v : "");
@@ -63,6 +64,8 @@ export interface BudgetData {
   invoices?: Rec[];
   credit_notes?: Rec[];
   payments?: Rec[];
+  /** Lot 6 : points de vigilance (sans montant, lus par tous). */
+  watch_points?: Rec[];
 }
 
 /** Coût horaire moyen de l'entreprise (ligne `cr-company`, lisible du responsable du projet), sinon 0. */
@@ -414,11 +417,27 @@ export function reservesLight(project: Rec, tasks: Rec[], today: string): Criter
   return { light: "grey", reason: "Aucune réserve ni tâche bloquée." };
 }
 
+/**
+ * Critère « vigilance » de la météo (lot 6) : le pire des réserves et blocages (lot 4) et des
+ * points de vigilance (projectWatch.ts). À couleur égale, les deux raisons sont données.
+ * Gris seulement si aucun des deux n'est suivi.
+ */
+export function vigilanceLight(project: Rec, tasks: Rec[], points: Rec[] = [], today: string): Criterion {
+  const r = reservesLight(project, tasks, today);
+  const w = watchLight(project.id, points, today);
+  if (RANK[w.light] > RANK[r.light]) return w;
+  if (RANK[r.light] > RANK[w.light]) return r;
+  if (r.light === "grey") return { light: "grey", reason: "Aucune réserve, aucune tâche bloquée, aucun point de vigilance." };
+  if (r.light === "green") return { light: "green", reason: `${w.reason} ${r.reason}` };
+  return { light: r.light, reason: `${w.reason} ${r.reason}` };
+}
+
 export interface Weather {
   /** Pire couleur non grise ; null si les trois critères sont gris. */
   overall: Exclude<Light, "grey"> | null;
   schedule: ScheduleCriterion;
   budget: Criterion;
+  /** Vigilance : réserves du client, tâches bloquées et points de vigilance (lot 6). */
   reserves: Criterion;
   /** Phrase d'explication : le critère le plus défavorable, avec son chiffre. */
   sentence: string;
@@ -428,7 +447,7 @@ export interface Weather {
 export function weather(project: Rec, d: BudgetData, today: string, prog: ProgressInfo = projectProgress(project, d, today), fc: Forecast = costForecast(project, d, today, prog)): Weather {
   const schedule = scheduleLight(project, prog, today, (iso) => projectProgress(project, d, iso).P);
   const budget = budgetLight(project, fc);
-  const reserves = reservesLight(project, d.tasks, today);
+  const reserves = vigilanceLight(project, d.tasks, d.watch_points, today);
   const order: Criterion[] = [budget, schedule, reserves];
   const worst = order.reduce((w, c) => (RANK[c.light] > RANK[w.light] ? c : w), order[0]);
   const overall = RANK[worst.light] === 0 ? null : (worst.light as Exclude<Light, "grey">);

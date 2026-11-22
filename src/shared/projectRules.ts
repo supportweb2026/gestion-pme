@@ -9,10 +9,13 @@
  * Références : 02-modele-de-donnees.md, §2.3 (tables), §4.3 (R1 à R6, R8, R9,
  * R11 à R14) et §4.4 (redactPatch). Lot 3 : journal des décisions immuable, « la
  * première validation fait foi », ordre des étapes, qui décide (délégation, Q2).
+ * Lot 6 : points de vigilance (sans montant), clôture tracée et projet clôturé en lecture
+ * seule (RG1.3, RG17.1, RG17.2, CA6.3, CA6.4), vérifiés aussi par le serveur.
  */
 import { decodeHlc } from "./hlc.ts";
 import type { Actor, Change, Fields, SyncRecord } from "./sync.ts";
 import { COMMENT_EDIT_MINUTES, COMMENT_EDIT_MS, COMMENT_MAX, FILE_ID_RE, LINK_RE, TASK_EVENT_KINDS } from "./projectBoard.ts";
+import { WATCH_FIELDS, WATCH_RESPONSE_MAX, WATCH_STATUSES, WATCH_TITLE_MAX } from "./projectWatch.ts";
 
 const DELETED = "_deleted";
 
@@ -106,6 +109,36 @@ export function budgetLocked(stages: { id: string; data: Fields }[], decisions: 
   return decisionsOfStage(lock.id, decisions).some((d) => isApproval(d.data.kind));
 }
 
+/** Dernière décision de clôture ou de réouverture du projet (RG17.2) : elle dit si le projet est clos. */
+export function lastClosureKind(decisions: { id: string; data: Fields }[]): "project_closed" | "project_reopened" | null {
+  const list = decisions.filter((d) => !d.data[DELETED] && (d.data.kind === "project_closed" || d.data.kind === "project_reopened"))
+    .sort((a, b) => str(a.data.decided_at).localeCompare(str(b.data.decided_at)) || a.id.localeCompare(b.id));
+  const kind = str(list.at(-1)?.data.kind);
+  return kind === "project_closed" || kind === "project_reopened" ? kind : null;
+}
+
+/** Projet arrêté (« Arrêter le projet », F5) : ses étapes non validées ne bloquent pas la clôture (RG17.4). */
+export const isStoppedProject = (decisions: { data: Fields }[]) => decisions.some((d) => !d.data[DELETED] && d.data.kind === "project_stopped");
+
+/**
+ * Condition bloquante de la clôture vérifiée aussi par le serveur (CA6.3) : toutes les étapes
+ * sont validées ou arrêtées, sauf si le projet a été arrêté. Renvoie la raison, avec l'étape en cause.
+ */
+export function closureStageBlocker(stages: { id: string; data: Fields }[], decisions: { id: string; data: Fields }[]): string | null {
+  if (isStoppedProject(decisions)) return null;
+  const list = stages.filter((s) => !s.data[DELETED]).sort((a, b) => (Number(a.data.rank) || 0) - (Number(b.data.rank) || 0) || a.id.localeCompare(b.id));
+  for (const s of list) {
+    const state = decidedState(s.id, decisions);
+    if (state === "approved" || state === "approved_reserves" || state === "stopped") continue;
+    return `l'étape ${str(s.data.name)} n'est pas validée : validez-la avant de clôturer le projet`;
+  }
+  return null;
+}
+
+/** Réponses du bilan (« Ce qui a bien marché », « Ce qu'on ferait autrement », « À retenir pour le prochain devis »). */
+export const LESSON_KEYS = ["good", "change", "next"] as const;
+export const LESSON_MAX = 1000;
+
 /** Champ non modifiable une fois posé (R5). */
 function frozen(existing: SyncRecord | null, patch: Fields, field: string): boolean {
   if (!existing || !has(patch, field)) return false;
@@ -160,6 +193,35 @@ export function checkProjectChange(existing: SyncRecord | null, change: Change):
       for (const k of ["tolerance_budget_pct", "tolerance_delay_pct"]) {
         if (has(p, k) && p[k] !== "" && (typeof p[k] !== "number" || !Number.isFinite(p[k] as number) || (p[k] as number) < 0 || (p[k] as number) > 100)) return "la tolérance doit être comprise entre 0 et 100 %";
       }
+      // Lot 6 : réponses du bilan, trois textes courts.
+      if (has(p, "closure_answers")) {
+        const a = p.closure_answers;
+        if (!a || typeof a !== "object" || Array.isArray(a)) return "contenu invalide";
+        for (const [k, v] of Object.entries(a as Fields)) {
+          if (!(LESSON_KEYS as readonly string[]).includes(k) || typeof v !== "string") return "contenu invalide";
+          if (v.length > LESSON_MAX) return `une réponse du bilan ne doit pas dépasser ${LESSON_MAX} caractères`;
+        }
+      }
+      return null;
+    }
+    case "watch_points": {
+      // Lot 6 : aucun montant (liste fermée de champs), projet figé, niveaux de 1 à 3.
+      if (Object.keys(p).some((k) => !WATCH_FIELDS.has(k))) return "contenu invalide : un point de vigilance ne porte que sa description, ses niveaux, sa parade, son responsable et son état";
+      if (frozen(existing, p, "project_id")) return "une ligne ne change pas de projet";
+      if (frozen(existing, p, "issue_task_id")) return "identifiant invalide";
+      if (!existing && !str(p.project_id)) return "ce point de vigilance n'est rattaché à aucun projet";
+      if ((!existing || has(p, "title")) && !p[DELETED] && !str(value("title")).trim()) return "décrivez le point de vigilance";
+      if (has(p, "title") && str(p.title).length > WATCH_TITLE_MAX) return `la description ne doit pas dépasser ${WATCH_TITLE_MAX} caractères`;
+      if (has(p, "response") && str(p.response).length > WATCH_RESPONSE_MAX) return `la parade ne doit pas dépasser ${WATCH_RESPONSE_MAX} caractères`;
+      for (const k of ["probability", "impact"]) {
+        if ((!existing && !p[DELETED]) || has(p, k)) {
+          if (![1, 2, 3].includes(value(k) as number)) return k === "probability" ? "choisissez la probabilité : faible, moyenne ou forte" : "choisissez l'impact : faible, moyen ou fort";
+        }
+      }
+      if (has(p, "status") && !(WATCH_STATUSES as readonly string[]).includes(str(p.status))) return "état du point de vigilance inconnu";
+      if (has(p, "owner_id") && p.owner_id !== "" && !str(p.owner_id).startsWith("tm-")) return "personne introuvable dans l'annuaire";
+      if (has(p, "response_due") && p.response_due !== "" && !/^\d{4}-\d{2}-\d{2}$/.test(str(p.response_due))) return "date invalide";
+      if (has(p, "rank") && (typeof p.rank !== "number" || !Number.isFinite(p.rank))) return "ordre invalide";
       return null;
     }
     case "project_members": {
@@ -339,6 +401,57 @@ export function canCloseTask(actor: Actor, projectId: string, ctx?: ProjectConte
   return leadsProject(actor, projectId, ctx);
 }
 
+/** Tables rattachées à un projet par `project_id`, figées quand le projet est clôturé (RG17.1). */
+const PROJECT_ROWS = new Set([
+  "tasks", "time_entries", "project_stages", "project_members", "project_finance", "budget_lines", "project_decisions",
+  "task_comments", "attachments", "task_events", "watch_points", "expenses", "invoices", "credit_notes",
+]);
+/** Après la clôture, dépenses et factures restent rattachables par la comptabilité et la direction (RG17.1). */
+const ACCOUNTING = ["admin", "director", "accountant"];
+export const CLOSED_PROJECT = "ce projet est clôturé : il est en lecture seule";
+
+/**
+ * Projet clôturé en lecture seule (RG1.3, RG17.1, RG17.2), sur l'appareil et sur le serveur :
+ *  - le projet ne passe à Terminé que par sa décision de clôture, et n'en sort que par une réouverture ;
+ *  - un projet clôturé ne change plus, sauf les réponses du bilan ;
+ *  - ses lignes (tâches, temps, étapes, équipe, budget, vigilance, commentaires…) ne changent plus ;
+ *    seules une réouverture, et les dépenses et factures de la comptabilité, passent encore.
+ * Sans contexte (ni projet ni décisions connus), la règle ne s'applique pas.
+ */
+export function closedProjectBlocker(actor: Actor, existing: SyncRecord | null, change: Change, ctx?: ProjectContext): string | null {
+  const p = change.patch;
+  if (change.tbl === "projects") {
+    const was = str(existing?.data.status);
+    const next = has(p, "status") ? str(p.status) : was;
+    const decisions = ctx?.decisions?.(change.row);
+    if (was !== "done" && next === "done" && decisions && lastClosureKind(decisions) !== "project_closed") {
+      return "un projet passe à Terminé seulement par sa clôture : utilisez « Clôturer le projet »";
+    }
+    if (was !== "done" || existing?.data[DELETED]) return null;
+    if (next !== "done") {
+      return decisions && lastClosureKind(decisions) !== "project_reopened" ? "ce projet est clôturé : rouvrez-le d'abord, avec le motif de la réouverture" : null;
+    }
+    return Object.keys(p).every((k) => k === "closure_answers" || k === "status") ? null : CLOSED_PROJECT;
+  }
+  if (!ctx || !PROJECT_ROWS.has(change.tbl)) return null;
+  const projectId = str(existing?.data.project_id) || str(p.project_id);
+  if (!projectId || str(ctx.project(projectId)?.data.status) !== "done") return null;
+  switch (change.tbl) {
+    case "project_decisions":
+      return p.kind === "project_reopened" ? null : p.kind === "project_closed" ? "ce projet est déjà clôturé" : CLOSED_PROJECT;
+    case "expenses":
+    case "invoices":
+    case "credit_notes":
+      return ACCOUNTING.includes(actor.role) ? null : "ce projet est clôturé : vous ne pouvez plus y rattacher de dépense ni de facture";
+    case "time_entries":
+      // Facturation du temps après la clôture (une facture de solde peut arriver après, RG17.1).
+      if (ACCOUNTING.includes(actor.role) && existing && Object.keys(p).every((k) => k === "invoice_id")) return null;
+      return "ce projet est clôturé : vous ne pouvez plus y saisir de temps";
+    default:
+      return CLOSED_PROJECT;
+  }
+}
+
 /**
  * Droits propres au module Projets (R9, R12, R14 et tables du lot 1).
  * Appelée par `checkPermission` après le contrôle des tables modifiables.
@@ -347,6 +460,8 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
   const p = change.patch;
   const role = actor.role;
   const direction = DIRECTION.includes(role);
+  const closed = closedProjectBlocker(actor, existing, change, ctx);
+  if (closed) return closed;
 
   switch (change.tbl) {
     case "team_members":
@@ -392,6 +507,13 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
         if (!direction) return "vous ne pouvez pas rouvrir une étape ou un projet";
       } else if (REVISIONS.includes(kind)) {
         if (!canDecide(actor, projectId, ctx) && !leadsProject(actor, projectId, ctx)) return "vous ne pouvez pas réviser le budget ni les dates de ce projet";
+      } else if (kind === "project_closed") {
+        // Clôture (F17) : qui décide du projet ; toutes les étapes validées ou arrêtées (CA6.3).
+        if (!canDecide(actor, projectId, ctx)) return "vous ne pouvez pas clôturer ce projet";
+        if (ctx?.stages && ctx.decisions) {
+          const blocker = closureStageBlocker(ctx.stages(projectId), ctx.decisions(projectId));
+          if (blocker) return blocker;
+        }
       } else if (["plan_requested", "amendment_proposed"].includes(kind)) {
         if (!canDecide(actor, projectId, ctx)) return "vous ne pouvez pas décider pour ce projet";
       } else if (!canDecide(actor, projectId, ctx)) {
@@ -435,6 +557,20 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
     }
     case "task_categories":
       return direction ? null : "vous ne pouvez pas modifier les catégories de tâche";
+    case "watch_points": {
+      // Tout le monde signale un point ; l'employé suit ceux dont il est responsable ou qu'il a signalés.
+      if (!existing && str(p.created_by) && str(p.created_by) !== actor.userId) return "un point de vigilance est signalé au nom de la personne qui le signale";
+      if (role !== "employee") return null;
+      const projectId = str(existing?.data.project_id) || str(p.project_id);
+      if (leadsProject(actor, projectId, ctx)) return null;
+      if (!existing) return null;
+      const own = teamMemberIdOf(actor.userId);
+      if (str(existing.data.owner_id) !== own && str(existing.data.created_by) !== actor.userId) {
+        return "vous pouvez suivre seulement les points de vigilance dont vous êtes responsable ou que vous avez signalés";
+      }
+      if (has(p, "owner_id") && p.owner_id !== own && p.owner_id !== existing.data.owner_id) return "vous pouvez confier ce point de vigilance seulement à vous-même";
+      return null;
+    }
     case "task_comments": {
       // Toute personne qui voit la tâche peut commenter ; seul l'auteur modifie ou supprime son
       // commentaire, et seulement pendant 15 minutes (heure de l'appareil, comme pour le temps).

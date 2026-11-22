@@ -196,7 +196,7 @@ try {
   for (const b of ["Préparer l'avenant", "Réviser", "Demander un plan", "Choisir…"]) await card.getByRole("button", { name: b }).waitFor();
   assert.match(nbsp(await a.getByTestId("project-weather").textContent()), /À redresser.*Le coût final estimé dépasse le budget de 90 000 FCFA \(82 %\)/);
   await a.getByTestId("project-weather").getByRole("button", { name: "Voir le détail" }).click();
-  await a.getByTestId("weather-detail").getByText("Réserves et blocages").waitFor();
+  await a.getByTestId("weather-detail").getByText("Vigilance", { exact: true }).waitFor();
   await shot(a, "fiche-carte-de-decision.png");
   await a.getByTestId("weather-detail").getByRole("button", { name: "Fermer le détail de la météo" }).click();
 

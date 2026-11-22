@@ -168,7 +168,7 @@ const cell = (v: unknown) => {
  */
 export function portfolioCsv(rows: PortfolioRow[], today: string): string {
   const amounts = rows.some((r) => r.money);
-  const head = ["Projet", "Client", "Responsable du projet", "Statut", "Météo", "Délai", "Budget", "Réserves et blocages", "Avancement (%)", "Prévu à date (%)",
+  const head = ["Projet", "Client", "Responsable du projet", "Statut", "Météo", "Délai", "Budget", "Vigilance", "Avancement (%)", "Prévu à date (%)",
     "Étape en cours", "Fin prévue", "Retard estimé (jours)", "Tâches en retard", "Tâches bloquées", "Validations en attente",
     ...(amounts ? ["Vendu HT (FCFA)", "Facturé HT (FCFA)", "Encaissé HT (FCFA)", "Reste à facturer (FCFA)", "Marge estimée (FCFA)", "Marge estimée (%)"] : [])];
   const lines = [head.map(cell).join(";")];

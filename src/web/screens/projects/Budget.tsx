@@ -73,7 +73,7 @@ export function WeatherDetail({ v, onClose }: { v: BudgetView; onClose: () => vo
   const rows: [string, Light, string][] = [
     ["Délai", v.w.schedule.light, v.w.schedule.reason],
     ...(v.amounts ? [["Budget", v.w.budget.light, v.w.budget.reason] as [string, Light, string]] : []),
-    ["Réserves et blocages", v.w.reserves.light, v.w.reserves.reason],
+    ["Vigilance", v.w.reserves.light, v.w.reserves.reason],
   ];
   async function save(e: FormEvent) {
     e.preventDefault();

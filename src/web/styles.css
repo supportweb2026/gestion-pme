@@ -2015,3 +2015,92 @@ button.primary.danger:hover { background: #962017; border-color: #962017; }
   .tp-facts { grid-template-columns: 1fr 1fr; }
   .comment-form-foot button { width: 100%; }
 }
+
+/* ---------- Projets, lot 6 : points de vigilance, clôture et bilan ---------- */
+.notice.info-note { background: var(--info-soft); color: var(--info); }
+.closed-note, .ready-note, .watch-head-note { display: flex; align-items: center; gap: 10px; margin: 0 0 12px; }
+.closed-note .pico, .ready-note .pico, .watch-head-note .pico { width: 18px; height: 18px; flex: none; }
+.ready-note { background: var(--ok-soft); color: var(--ok); }
+.ready-note span { flex: 1; }
+.ready-note strong { color: var(--ok); }
+.watch-head-note span { flex: 1; }
+.watch-head-note button.link { color: var(--warn); flex: none; }
+.stages-head-actions { display: inline-flex; gap: 8px; flex-wrap: wrap; }
+
+.watch-head-badge { margin-left: 10px; vertical-align: 2px; }
+.watch-list { list-style: none; margin: 12px 0 0; padding: 0; display: flex; flex-direction: column; gap: 12px; }
+.watch-card { margin: 0; border-left: 4px solid var(--line-strong); }
+.watch-card.open.alerting, .watch-card.occurred { border-left-color: var(--danger); }
+.watch-card.controlled { border-left-color: var(--ok); }
+.watch-card.closed { opacity: 0.8; }
+.watch-card-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.watch-title { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.watch-title strong { font-size: 0.9375rem; }
+.watch-badges { display: inline-flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; flex: none; }
+.watch-badges .badge + .badge { margin-left: 0; }
+.watch-facts { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr); gap: 12px; margin: 12px 0 0; }
+.watch-facts dt { font-size: 0.75rem; color: var(--ink-3); font-weight: 600; }
+.watch-facts dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+.watch-task { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin: 10px 0 0; color: var(--ink-2); }
+.watch-task .pico { width: 16px; height: 16px; color: var(--ink-3); }
+.watch-when { margin: 6px 0 0; }
+.watch-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--line); }
+.watch-actions .pico { width: 16px; height: 16px; }
+.watch-suggest { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: -6px; }
+.watch-levels { border: 0; margin: 0; padding: 0; min-width: 0; }
+.watch-levels legend { font-size: 0.8125rem; font-weight: 600; color: var(--ink-2); margin-bottom: 6px; padding: 0; }
+.watch-levels .segmented { display: flex; width: 100%; }
+.watch-levels .segmented label { flex: 1; display: flex; align-items: center; justify-content: center; min-height: 34px; border-radius: 7px; cursor: pointer; font-size: 0.8125rem; color: var(--ink-3); font-weight: 600; }
+.watch-levels .segmented label input { position: absolute; opacity: 0; pointer-events: none; }
+.watch-levels .segmented label.active { background: var(--surface); color: var(--ink); box-shadow: 0 1px 2px rgb(16 29 54 / 0.12), 0 0 0 1px rgb(16 29 54 / 0.04); }
+.watch-levels .segmented label:has(input:focus-visible) { box-shadow: var(--ring); }
+.watch-level-line { display: flex; align-items: center; gap: 10px; margin: -4px 0 0; color: var(--ink-2); }
+
+.close-sub { font-size: 0.875rem; margin: 0 0 6px; }
+.close-checks { list-style: none; margin: 0; padding: 0; border: 1px solid var(--line); border-radius: var(--radius-lg); }
+.close-check { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; align-items: center; padding: 10px 12px; border-top: 1px solid var(--line); }
+.close-check:first-child { border-top: 0; }
+.close-check-ico { width: 22px; height: 22px; border-radius: 50%; display: grid; place-items: center; }
+.close-check-ico .pico { width: 14px; height: 14px; }
+.close-check.ok .close-check-ico { background: var(--ok-soft); color: var(--ok); }
+.close-check.warn .close-check-ico { background: var(--warn-soft); color: var(--warn); }
+.close-check.blocked .close-check-ico { background: var(--danger-soft); color: var(--danger); }
+.close-check.blocked strong { color: var(--danger); }
+.close-check-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.close-check-text strong { font-weight: 600; }
+.close-lessons { border: 0; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.close-lessons legend { font-size: 0.875rem; font-weight: 700; color: var(--ink); margin-bottom: 8px; padding: 0; }
+
+.review-tab .info-note { margin: 0 0 16px; }
+.review-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin-bottom: 16px; }
+.review-grid .section-card { margin-bottom: 0; }
+.review-facts { margin: 0; display: flex; flex-direction: column; gap: 8px; }
+.review-facts > div { display: flex; justify-content: space-between; gap: 12px; border-bottom: 1px dashed var(--line); padding-bottom: 6px; }
+.review-facts > div:last-child { border-bottom: 0; }
+.review-facts dt { color: var(--ink-3); }
+.review-facts dd { margin: 0; text-align: right; }
+.review-facts.cols { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px 24px; }
+.review-facts.cols > div { flex-direction: column; gap: 2px; border-bottom: 0; padding: 0; }
+.review-facts.cols dd { text-align: left; font-size: 1rem; }
+.review-big { margin: 0 0 4px; font-size: 1.25rem; font-weight: 700; }
+.review-people { list-style: none; margin: 10px 0 0; padding: 0; }
+.review-people li { display: flex; justify-content: space-between; padding: 6px 0; border-top: 1px solid var(--line); }
+.review-table { width: 100%; }
+.review-table tr.total td { font-weight: 700; border-top: 1px solid var(--line-strong); }
+.review-lessons { margin: 0; display: flex; flex-direction: column; gap: 12px; }
+.review-lessons dt { font-size: 0.8125rem; color: var(--ink-3); font-weight: 600; }
+.review-lessons dd { margin: 2px 0 0; white-space: pre-wrap; }
+
+@media (max-width: 760px) {
+  .watch-card-head { flex-direction: column; }
+  .watch-badges { justify-content: flex-start; }
+  .watch-facts { grid-template-columns: 1fr 1fr; }
+  .watch-facts > div:first-child { grid-column: 1 / -1; }
+  .review-grid { grid-template-columns: 1fr; }
+  .review-facts.cols { grid-template-columns: 1fr 1fr; }
+  .close-check { grid-template-columns: 22px minmax(0, 1fr); }
+  .close-check-action { grid-column: 2; }
+  .ready-note { flex-wrap: wrap; }
+  .ready-note button { width: 100%; }
+  .stages-head-actions { width: 100%; }
+}
