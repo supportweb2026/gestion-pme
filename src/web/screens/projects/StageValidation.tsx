@@ -26,6 +26,8 @@ import {
 import { hoursFr, useGuardedWrite } from "../team.ts";
 import { totalsOf } from "../../ledger.ts";
 import { PIcon } from "../ProjectIcons.tsx";
+import { formatXaf } from "../../../shared/invoice.ts";
+import { tolerances, type Forecast } from "../../../shared/projectBudget.ts";
 
 const dm = (iso: unknown) => (typeof iso === "string" && iso ? formatDate(iso).slice(0, 5) : "");
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
@@ -39,6 +41,8 @@ export interface StageContext {
   billing: BillingData;
   ctx: ProjectContext;
   amounts: boolean;
+  /** Lot 4 : prévisions de coût (budget, réel, coût final estimé) ; seulement si les montants sont visibles. */
+  budget?: Forecast;
 }
 
 /** Ce que l'appareil sait des droits de la personne sur une étape. */
@@ -296,7 +300,7 @@ function DecisionLog({ decisions, amounts, onProof }: { decisions: Rec[]; amount
  * Écran de validation (téléphone et ordinateur) : un résumé, trois issues, l'accord du client
  * et sa preuve, la facture de jalon qui sera préparée.
  */
-export function ValidationDialog({ c, info, onClose, onDone }: { c: StageContext; info: StageInfo<SyncRecord>; onClose: () => void; onDone: (f: Flash) => void }) {
+export function ValidationDialog({ c, info, onClose, onDone, initialChoice = "approve" }: { c: StageContext; info: StageInfo<SyncRecord>; onClose: () => void; onDone: (f: Flash) => void; initialChoice?: Choice }) {
   const { db, session, go } = useApp();
   const settings = useSettings();
   const write = useGuardedWrite();
@@ -305,11 +309,11 @@ export function ValidationDialog({ c, info, onClose, onDone }: { c: StageContext
   const day = today();
   const idx = c.stages.findIndex((x) => x.stage.id === s.id);
   const next = c.stages.slice(idx + 1).find((x) => x.state !== "stopped");
-  const [choice, setChoice] = useState<Choice>("approve");
+  const [choice, setChoice] = useState<Choice>(initialChoice === "stop" ? "pause" : initialChoice);
   const [reserves, setReserves] = useState("");
   const [retain, setRetain] = useState(false);
   const [retention, setRetention] = useState(String(Number(c.billing.project_finance?.find((f) => f.id === `fin-${c.project.id}`)?.data.retention_default_pct) || 5));
-  const [stopKind, setStopKind] = useState<"pause" | "stop">("pause");
+  const [stopKind, setStopKind] = useState<"pause" | "stop">(initialChoice === "stop" ? "stop" : "pause");
   const [comment, setComment] = useState("");
   const [signatory, setSignatory] = useState("");
   const [file, setFile] = useState<File | null>(null);
@@ -386,7 +390,7 @@ export function ValidationDialog({ c, info, onClose, onDone }: { c: StageContext
       <form className="val-dialog" role="dialog" aria-modal="true" aria-labelledby="val-title" onSubmit={submit}>
         <header className="val-head">
           <div>
-            <h3 id="val-title">Valider l'étape {name}</h3>
+            <h3 id="val-title">{initialChoice === "pause" || initialChoice === "stop" ? "Mettre en pause ou arrêter le projet" : `Valider l'étape ${name}`}</h3>
             <p className="muted small">
               {text(c.project.data.name)}
               {asked ? ` · demandée${s.data.review_requested_by_name ? ` par ${text(s.data.review_requested_by_name)}` : ""} le ${dm(asked)}` : ""}
@@ -419,6 +423,19 @@ export function ValidationDialog({ c, info, onClose, onDone }: { c: StageContext
               <dd className="muted small">{end ? `fin prévue le ${dm(end)}` : "aucune fin prévue"}</dd>
             </div>
           </dl>
+          {c.amounts && c.budget && (() => {
+            const sf = c.budget.stages.find((x) => x.stageId === s.id);
+            if (!sf) return null;
+            const over = sf.deltaPct !== null && sf.deltaPct > 0;
+            const tol = tolerances(c.project).budgetPct;
+            return (
+              <dl className="val-cost" aria-label="Coût de l'étape" data-testid="val-cost">
+                <div><dt>Budget de l'étape</dt><dd className="mono">{sf.BP > 0 ? formatXaf(sf.BP) : "—"}</dd>{sf.BP > 0 ? null : <dd className="muted small">pas de budget par étape</dd>}</div>
+                <div><dt>Coût réel</dt><dd className="mono">{formatXaf(sf.CR + sf.committed)}</dd>{sf.committed > 0 ? <dd className="muted small">dont {formatXaf(sf.committed)} en attente</dd> : <dd className="muted small">temps et dépenses</dd>}</div>
+                <div><dt>Écart</dt><dd className={`mono${over && (sf.deltaPct ?? 0) > tol ? " danger-text" : over ? " warn-text" : sf.deltaPct !== null ? " ok-text" : ""}`}>{sf.deltaPct === null ? "—" : `${sf.deltaPct > 0 ? "+" : ""}${sf.deltaPct} %`}</dd><dd className="muted small">{sf.BP > 0 ? `coût final estimé ${formatXaf(sf.CFE)}` : `projet : ${formatXaf(c.budget.CR)} sur ${c.budget.BP ? formatXaf(c.budget.BP) : "budget non défini"}`}</dd></div>
+              </dl>
+            );
+          })()}
           {openTasks.length > 0 && (
             <p className="small val-open"><strong>Encore ouvert : </strong>{openTasks.slice(0, 5).map((t) => `« ${text(t.data.title)} »`).join(", ")}{openTasks.length > 5 ? ` et ${openTasks.length - 5} autres` : ""}.</p>
           )}

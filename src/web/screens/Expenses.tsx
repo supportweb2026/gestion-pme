@@ -4,6 +4,8 @@ import { formatXaf, PAYMENT_METHODS } from "../../shared/invoice.ts";
 import type { SyncRecord } from "../../shared/sync.ts";
 import { EXPENSE_CATEGORIES } from "../../shared/accounting.ts";
 import { prepareReceipt, ReceiptViewer } from "../receipts.tsx";
+import { POSTE_LABELS, POSTES } from "../../shared/projectBudget.ts";
+import { stagesOf } from "../../shared/projectControl.ts";
 
 export { EXPENSE_CATEGORIES };
 
@@ -17,6 +19,9 @@ export function Expenses() {
   const { db, session } = useApp();
   const all = useTable("expenses");
   const projects = useTable("projects");
+  const stages = useTable("project_stages");
+  // Lot 4 : poste du budget et étape, proposés seulement quand un projet est choisi.
+  const [projectId, setProjectId] = useState("");
   const [month, setMonth] = useState(today().slice(0, 7));
   const [editing, setEditing] = useState<SyncRecord | "new" | null>(null);
   const approver = can.approveExpenses(session.user.role);
@@ -65,6 +70,8 @@ export function Expenses() {
       description: f.description.trim(),
       method: f.method,
       project_id: f.project_id ?? "",
+      poste: f.project_id ? f.poste ?? "" : "",
+      stage_id: f.project_id ? f.stage_id ?? "" : "",
     };
     // La photo est gardée sur l'appareil puis envoyée à la prochaine synchronisation.
     if (receipt) {
@@ -99,7 +106,7 @@ export function Expenses() {
     <section>
       <div className="section-head">
         <h2>Dépenses</h2>
-        <button className="primary" onClick={() => setEditing("new")}>Nouvelle dépense</button>
+        <button className="primary" onClick={() => { setEditing("new"); setProjectId(""); }}>Nouvelle dépense</button>
       </div>
 
       {editing && (
@@ -123,9 +130,27 @@ export function Expenses() {
           {projects.length > 0 && (
             <label>
               Projet
-              <select name="project_id" defaultValue={v("project_id")}>
+              <select name="project_id" defaultValue={v("project_id")} onChange={(e) => setProjectId(e.target.value)}>
                 <option value="">Aucun</option>
                 {projects.map((p) => <option key={p.id} value={p.id}>{text(p.data.name)}</option>)}
+              </select>
+            </label>
+          )}
+          {projectId && (
+            <label>
+              Poste du budget
+              <select name="poste" defaultValue={v("poste")}>
+                <option value="">Selon la catégorie</option>
+                {POSTES.filter((p) => p !== "labour").map((p) => <option key={p} value={p}>{POSTE_LABELS[p]}</option>)}
+              </select>
+            </label>
+          )}
+          {projectId && stagesOf(projectId, stages).length > 0 && (
+            <label>
+              Étape
+              <select name="stage_id" defaultValue={v("stage_id")}>
+                <option value="">Aucune étape</option>
+                {stagesOf(projectId, stages).map((st) => <option key={st.id} value={st.id}>{text(st.data.name)}</option>)}
               </select>
             </label>
           )}
@@ -214,7 +239,7 @@ export function Expenses() {
                     <td className="right mono">{formatXaf(Number(e.data.amount))}</td>
                     <td className="right nowrap">
                       {e.data.receipt_id ? <button className="ghost small" onClick={() => setViewing(String(e.data.receipt_id))} aria-label="Voir le justificatif">Justificatif</button> : null}
-                      {canEdit(e) && <button className="ghost small" onClick={() => setEditing(e)}>Modifier</button>}
+                      {canEdit(e) && <button className="ghost small" onClick={() => { setEditing(e); setProjectId(text(e.data.project_id)); }}>Modifier</button>}
                     </td>
                   </tr>
                 );

@@ -40,6 +40,11 @@ const REVIEW_FIELDS = new Set(["review_requested_at", "review_requested_by", "re
 /** Natures de tâche (lot 3 : tâches de réserve créées par une validation). */
 export const TASK_KINDS = ["normal", "reserve", "plan", "issue"] as const;
 
+/** Postes du budget (lot 4). */
+export const BUDGET_POSTES = ["labour", "purchases", "subcontracting", "other"] as const;
+/** Révisions tracées (RG7.3) : le responsable du projet les propose et les enregistre lui-même. */
+const REVISIONS = ["budget_revised", "deadline_revised"];
+
 /** Semaine ISO d'une priorité de la semaine : `2026-W48`. */
 const WEEK = /^\d{4}-W\d{2}$/;
 
@@ -89,6 +94,17 @@ export function decidedState(stageId: string, decisions: { id: string; data: Fie
   return null;
 }
 
+/**
+ * R7 : une fois l'étape Démarrage (sinon la première étape) validée, le budget ne change plus
+ * que par une révision tracée. Une réouverture ne rouvre pas le budget.
+ */
+export function budgetLocked(stages: { id: string; data: Fields }[], decisions: { id: string; data: Fields }[] = []): boolean {
+  const list = stages.filter((s) => !s.data[DELETED]).sort((a, b) => (Number(a.data.rank) || 0) - (Number(b.data.rank) || 0) || a.id.localeCompare(b.id));
+  const lock = list.find((s) => s.data.kind === "start") ?? list[0];
+  if (!lock) return false;
+  return decisionsOfStage(lock.id, decisions).some((d) => isApproval(d.data.kind));
+}
+
 /** Champ non modifiable une fois posé (R5). */
 function frozen(existing: SyncRecord | null, patch: Fields, field: string): boolean {
   if (!existing || !has(patch, field)) return false;
@@ -129,6 +145,22 @@ export function checkProjectChange(existing: SyncRecord | null, change: Change):
       }
       return null;
     }
+    case "budget_lines": {
+      if (frozen(existing, p, "project_id") || frozen(existing, p, "poste")) return "une ligne ne change pas de projet";
+      if (existing && has(p, "stage_id") && str(p.stage_id) !== str(existing.data.stage_id)) return "une ligne ne change pas de projet";
+      const poste = str(value("poste"));
+      if (!(BUDGET_POSTES as readonly string[]).includes(poste)) return "poste de budget inconnu";
+      if (row !== `bl-${str(value("project_id"))}-${str(value("stage_id")) || "all"}-${poste}`) return "identifiant invalide";
+      if (has(p, "amount") && !isInt(p.amount)) return "le montant doit être un nombre entier positif";
+      if (has(p, "hours") && (typeof p.hours !== "number" || !Number.isFinite(p.hours) || p.hours < 0)) return "indiquez un nombre d'heures positif";
+      return null;
+    }
+    case "projects": {
+      for (const k of ["tolerance_budget_pct", "tolerance_delay_pct"]) {
+        if (has(p, k) && p[k] !== "" && (typeof p[k] !== "number" || !Number.isFinite(p[k] as number) || (p[k] as number) < 0 || (p[k] as number) > 100)) return "la tolérance doit être comprise entre 0 et 100 %";
+      }
+      return null;
+    }
     case "project_members": {
       if (frozen(existing, p, "project_id")) return "une ligne ne change pas de projet";
       if (frozen(existing, p, "team_member_id")) return "identifiant invalide";
@@ -163,6 +195,7 @@ export function checkProjectChange(existing: SyncRecord | null, change: Change):
       if (!str(p.decided_by) || !str(p.decided_at)) return "une décision porte son auteur et sa date";
       if (["project_stopped", "stage_reopened", "project_reopened", "project_paused", "budget_revised", "deadline_revised"].includes(kind) && !str(p.comment).trim()) return "indiquez le motif de la décision";
       if (kind === "stage_approved_with_reserves" && !str(p.reserves).trim()) return "indiquez au moins une réserve, une par ligne";
+      if (REVISIONS.includes(kind) && (!p.new_value || typeof p.new_value !== "object" || Array.isArray(p.new_value))) return "une révision porte l'ancienne et la nouvelle valeur";
       if (has(p, "retention_pct")) {
         const v = p.retention_pct;
         if (typeof v !== "number" || !Number.isFinite(v) || v < 0 || v > 100) return "la retenue doit être comprise entre 0 et 100 %";
@@ -276,6 +309,20 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
       return direction ? null : "vous ne pouvez pas modifier l'annuaire ni les coûts horaires";
     case "project_members":
       return ["admin", "director", "sales", "project_manager"].includes(role) ? null : "vous ne pouvez pas modifier l'équipe de ce projet";
+    case "budget_lines": {
+      // R7 : après la validation de Démarrage, un montant ne change qu'avec la révision qui le porte.
+      const projectId = str(existing?.data.project_id) || str(p.project_id);
+      if (!ctx?.stages || !ctx.decisions || !budgetLocked(ctx.stages(projectId), ctx.decisions(projectId))) return null;
+      for (const [field, key] of [["amount", "budget"], ["hours", "hours"]] as const) {
+        if (!has(p, field)) continue;
+        if (existing && !existing.data[DELETED] && existing.data[field] === p[field]) continue;
+        if (!existing && !p[field]) continue;
+        const covered = ctx.decisions(projectId).some((d) => d.data.kind === "budget_revised" && (d.data.new_value as Record<string, Record<string, unknown>> | undefined)?.[key]?.[change.row] === p[field]);
+        if (!covered) return "le budget est validé : modifiez-le par une révision, avec son motif";
+      }
+      if (has(p, DELETED) && p[DELETED] && existing && Number(existing.data.amount) > 0) return "le budget est validé : modifiez-le par une révision, avec son motif";
+      return null;
+    }
     case "project_stages": {
       // Écriture ouverte aux rôles qui gèrent les projets (WRITABLE, comptable compris).
       if (role !== "employee") return null;
@@ -298,6 +345,10 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
       if (str(p.decided_by) !== actor.userId) return "une décision est enregistrée au nom de la personne qui la prend";
       if (DIRECTION_DECISIONS.includes(kind)) {
         if (!direction) return "vous ne pouvez pas rouvrir une étape ou un projet";
+      } else if (REVISIONS.includes(kind)) {
+        if (!canDecide(actor, projectId, ctx) && !leadsProject(actor, projectId, ctx)) return "vous ne pouvez pas réviser le budget ni les dates de ce projet";
+      } else if (["plan_requested", "amendment_proposed"].includes(kind)) {
+        if (!canDecide(actor, projectId, ctx)) return "vous ne pouvez pas décider pour ce projet";
       } else if (!canDecide(actor, projectId, ctx)) {
         return "vous ne pouvez pas valider les étapes de ce projet";
       }

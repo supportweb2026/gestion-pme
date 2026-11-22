@@ -27,6 +27,14 @@ const PATHS = {
   calendar: ["M4 6h16v15H4z", "M4 10h16", "M8 3v5", "M16 3v5"],
   arrowUp: ["M12 19V5", "M6 11l6-6 6 6"],
   arrowDown: ["M12 5v14", "M6 13l6 6 6-6"],
+  // Lot 4 : météo, budget, décisions.
+  sun: ["M12 16a4 4 0 1 0 0-8 4 4 0 0 0 0 8z", "M12 2.5v2", "M12 19.5v2", "M5.3 5.3l1.4 1.4", "M17.3 17.3l1.4 1.4", "M2.5 12h2", "M19.5 12h2", "M5.3 18.7l1.4-1.4", "M17.3 6.7l1.4-1.4"],
+  cloud: ["M7 18.5h10a4 4 0 0 0 .6-8 6 6 0 0 0-11.4 1.6A3.4 3.4 0 0 0 7 18.5z"],
+  storm: ["M7.5 15.5H7a3.4 3.4 0 0 1-.8-6.7 6 6 0 0 1 11.4-1.6 4 4 0 0 1-.1 8.3h-.5", "M13 12l-2.5 4.5h3L11 21"],
+  dash: ["M7 12h10"],
+  edit: ["M4 20h4L19 9l-4-4L4 16z", "M13.5 6.5l4 4"],
+  pause: ["M9 5.5v13", "M15 5.5v13"],
+  trend: ["M3 17l6-6 4 4 7-7", "M14 8h6v6"],
 } as const;
 
 export type ProjectIconName = keyof typeof PATHS;

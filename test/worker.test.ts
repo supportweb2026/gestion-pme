@@ -23,6 +23,7 @@ async function call(path: string, body?: unknown, token?: string) {
 const DEV_A = "device-aaaa-0001";
 const DEV_B = "device-bbbb-0002";
 let tokenA = "";
+let userIdA = "";
 let tokenB = "";
 const clockA = new HlcClock(DEV_A);
 const clockB = new HlcClock(DEV_B);
@@ -36,6 +37,7 @@ test("inscription : création de l'entreprise et de son administrateur, e-mail u
   assert.equal(r.data.company.subscription.state, "trial");
   assert.equal(r.data.company.subscription.daysLeft, 30);
   tokenA = r.data.token;
+  userIdA = r.data.user.id;
   const again = await call("/api/signup", { company: "X", name: "Y", email: "ADMIN@sodepsi.ga", password: "motdepasse1", deviceId: DEV_A });
   assert.equal(again.status, 409);
 });
@@ -242,16 +244,20 @@ test("projets (CA1.4, CA1.5) : aucun montant envoyé à l'employé, historique c
   const leaClock = new HlcClock("device-ffff-0008");
   // Ancien projet (montants dans `projects`), puis reprise dans les tables protégées.
   const pushA = (changes: Change[]) => call("/api/sync", { changes, since: 0 }, tokenA);
-  await pushA([
+  const first = await pushA([
     change(clockA, "projects", "prj-secret", { name: "Rénovation BGFI", status: "active", budget: 18_000_000, hourly_rate: 25_000, cost_rate: 9_000 }),
     change(clockA, "projects", "prj-secret", { budget: 19_000_000 }),
     change(clockA, "project_finance", "fin-prj-secret", { project_id: "prj-secret", legacy_budget: 19_000_000, hourly_rate: 25_000, cost_rate: 9_000 }),
     change(clockA, "cost_rates", `cr-tm-${lea.user.id}`, { team_member_id: `tm-${lea.user.id}`, hourly_cost: 3_500 }),
     change(clockA, "cost_rates", "cr-company", { hourly_cost: 4_000 }),
+    // Lot 4 : budget par poste et révision tracée (montants retirés de la décision).
+    change(clockA, "budget_lines", "bl-prj-secret-all-labour", { project_id: "prj-secret", stage_id: "", poste: "labour", amount: 9_800_000, hours: 1225 }),
+    change(clockA, "project_decisions", "dec-rev-1", { project_id: "prj-secret", kind: "budget_revised", comment: "Avenant accepté", decided_by: userIdA, decided_at: "2026-11-24T10:00:00Z", old_value: { budget: { "bl-prj-secret-all-labour": 9_800_000 }, total: 9_800_000 }, new_value: { budget: { "bl-prj-secret-all-labour": 10_240_000 }, total: 10_240_000 }, snapshot: { cfe: 10_240_000 } }),
     change(clockA, "team_members", `tm-${lea.user.id}`, { user_id: lea.user.id, name: "Léa", active: true }),
     change(clockA, "tasks", "tsk-review", { project_id: "prj-secret", title: "Cloisons", status: "review", assignee_id: `tm-${lea.user.id}` }),
   ]);
 
+  assert.deepEqual(first.data.rejected, [], "budget et révision acceptés pour la direction");
   const all: Change[] = [];
   let since = 0;
   for (;;) {
@@ -263,7 +269,8 @@ test("projets (CA1.4, CA1.5) : aucun montant envoyé à l'employé, historique c
   }
   const raw = JSON.stringify(all);
   for (const field of ["budget", "hourly_rate", "cost_rate", "hourly_cost", "legacy_budget"]) assert.ok(!raw.includes(`"${field}"`), `${field} absent de la réponse`);
-  assert.ok(!all.some((c) => c.tbl === "project_finance" || c.tbl === "cost_rates"));
+  assert.ok(!all.some((c) => c.tbl === "project_finance" || c.tbl === "cost_rates" || c.tbl === "budget_lines"));
+  assert.ok(!raw.includes("9800000") && !raw.includes("10240000") && !raw.includes("old_value") && !raw.includes("new_value"), "aucun montant de budget ni de révision");
   assert.ok(all.some((c) => c.row === "prj-secret" && c.patch.name === "Rénovation BGFI"), "le projet reste visible, sans montant");
   assert.ok(all.some((c) => c.tbl === "team_members"), "l'annuaire est lisible");
 

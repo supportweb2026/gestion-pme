@@ -14,6 +14,7 @@ import {
 } from "../../../shared/projectControl.ts";
 import { PROJECT_TEMPLATES, suggestTemplate, TEMPLATE_ORDER, templateOf, type TemplateId } from "../../../shared/projectTemplates.ts";
 import { teamMemberIdOf } from "../../../shared/projectRules.ts";
+import { budgetFromQuote, companyHourlyCost, quoteBudgetLines } from "../../../shared/projectBudget.ts";
 import type { InvoiceLine } from "../../../shared/invoice.ts";
 import type { SyncRecord } from "../../../shared/sync.ts";
 import { useGuardedWrite, useTeam } from "../team.ts";
@@ -41,6 +42,7 @@ export function NewProject({ quoteId, onClose }: { quoteId?: string; onClose: (o
   const projects = useTable("projects");
   const clients = useTable("clients");
   const articles = useTable("articles");
+  const costRates = useTable("cost_rates");
   const team = useTeam().filter((m) => m.data.active !== false);
   const amounts = can.seeAmounts(session.user.role);
   const me = teamMemberIdOf(session.user.id);
@@ -134,6 +136,11 @@ export function NewProject({ quoteId, onClose }: { quoteId?: string; onClose: (o
       for (const s of seed.stages) await write("project_stages", s.id, s.patch);
       for (const t of seed.tasks) await write("tasks", t.id, t.patch);
       if (seed.quoteLink) await write("quotes", seed.quoteLink.id, seed.quoteLink.patch);
+      // Lot 4 : budget par poste pré-rempli depuis les lignes du devis (coût des articles, heures × coût horaire).
+      if (quote && amounts) {
+        const qb = budgetFromQuote(quote, articles, Number(money.cost) || companyHourlyCost(costRates));
+        for (const l of quoteBudgetLines(seed.project.id, qb, { userId: session.user.id, now: new Date().toISOString() })) await write("budget_lines", l.id, l.patch);
+      }
       onClose(seed.project.id);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Création impossible.");
@@ -249,7 +256,7 @@ export function NewProject({ quoteId, onClose }: { quoteId?: string; onClose: (o
                     <label>Coût horaire interne (FCFA / h)<input type="number" min="0" value={money.cost} onChange={(e) => setMoney({ ...money, cost: e.target.value })} /></label>
                     {!qn && <label>Budget HT (FCFA)<input type="number" min="0" value={money.budget} onChange={(e) => setMoney({ ...money, budget: e.target.value })} /></label>}
                   </div>
-                  <p className="muted small">Montants rangés à part : ils ne sont jamais envoyés aux téléphones des employés. Le budget par poste arrive avec le suivi du budget.</p>
+                  <p className="muted small">Montants rangés à part : ils ne sont jamais envoyés aux téléphones des employés. {qn ? " Le budget par poste est repris des lignes du devis ; il se règle ensuite dans l'onglet Budget." : " Le budget par poste se règle ensuite dans l'onglet Budget."}</p>
                 </Fold>
               )}
               <Fold icon="users" title="Équipe" summary={sponsor ? `Commanditaire : ${text(team.find((m) => m.id === sponsor)?.data.name)}. Ajoutez l'équipe dans la fiche du projet.` : "Choisissez le commanditaire, celui qui valide les étapes. L'équipe s'ajoute dans la fiche."}

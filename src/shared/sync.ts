@@ -15,6 +15,8 @@ export const SYNC_TABLES = [
   "project_stages",
   // Projets, lot 3 : journal des décisions (validations, réserves, pause, arrêt, réouverture), en ajout seul.
   "project_decisions",
+  // Projets, lot 4 : budget prévu par poste (grille étape × poste), protégé comme project_finance.
+  "budget_lines",
 ] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
@@ -137,10 +139,10 @@ const WRITABLE: Record<string, readonly string[] | "all"> = {
   accountant: "all",
   sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses", "projects", "tasks", "time_entries",
     "project_finance", "project_members", "stock_moves", "purchase_orders", "project_stages",
-    "project_decisions"],
+    "project_decisions", "budget_lines"],
   project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks", "time_entries",
     "project_finance", "project_members", "project_stages",
-    "project_decisions"],
+    "project_decisions", "budget_lines"],
   // `project_stages` : seulement « Demander la validation » d'une étape dont il est responsable (projectRules.ts).
   employee: ["expenses", "tasks", "time_entries", "project_stages"],
 };
@@ -208,7 +210,7 @@ const READABLE: Record<string, readonly string[] | "all"> = {
   accountant: "all",
   project_manager: SYNC_TABLES.filter((t) => t !== "journal_entries"),
   sales: SYNC_TABLES.filter((t) => t !== "journal_entries"),
-  // Aucune table de montants (project_finance, cost_rates) ; les anciens champs
+  // Aucune table de montants (project_finance, cost_rates, budget_lines) ; les anciens champs
   // de montant de `projects` sont retirés à l'envoi (redactPatch).
   employee: ["settings", "projects", "tasks", "time_entries", "expenses", "team_members", "project_members", "project_stages", "project_decisions"],
 };
