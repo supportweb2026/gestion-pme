@@ -69,20 +69,22 @@ async function login(page, email, password, fresh) {
 
 /** Envoie une modification au serveur en contournant l'écran et le contrôle de l'appareil. */
 async function forceSync(page, build) {
-  return page.evaluate(async (src) => {
+  // Lecture de l'appareil dans la page, calcul de la modification dans Node : pas d'eval sous la CSP de production.
+  const { all, session, deviceId } = await page.evaluate(async () => {
     const db = await new Promise((res) => { const r = indexedDB.open("gestion-pme"); r.onsuccess = () => res(r.result); });
     const get = (store, key) => new Promise((res) => { const r = db.transaction(store).objectStore(store).get(key); r.onsuccess = () => res(r.result); });
     const all = await new Promise((res) => { const r = db.transaction("records").objectStore("records").getAll(); r.onsuccess = () => res(r.result); });
-    const session = await get("meta", "session");
-    const deviceId = await get("meta", "deviceId");
-    const change = new Function("all", "session", `return (${src})(all, session);`)(all, session);
+    return { all, session: await get("meta", "session"), deviceId: await get("meta", "deviceId") };
+  });
+  const change = build(all, session);
+  return page.evaluate(async ({ change, session, deviceId }) => {
     const hlc = `${String(Date.now()).padStart(15, "0")}-00000-${deviceId}`;
     const res = await fetch("/api/sync", {
       method: "POST", headers: { "content-type": "application/json", authorization: `Bearer ${session.token}` },
       body: JSON.stringify({ since: 0, changes: [{ id: crypto.randomUUID(), hlc, device: deviceId, ...change }] }),
     });
     return (await res.json()).rejected?.[0]?.reason ?? "accepté";
-  }, build.toString());
+  }, { change, session, deviceId });
 }
 
 let A, J;
