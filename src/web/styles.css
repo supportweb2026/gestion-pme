@@ -911,6 +911,7 @@ label.check-inline { display: flex; flex-direction: row; align-items: center; ju
 label.check-inline input { flex: none; margin: 0; }
 .fiscal-card .form-grid label:has(input[inputmode="decimal"]) { max-width: 220px; }
 .fiscal-card .hint { font-size: 0.8125rem; margin: 0; }
+.reminders-card { display: grid; gap: 12px; }
 .fiscal-card fieldset { border: 0; border-top: 1px solid var(--line, #E5E7EB); margin: 16px 0 0; padding: 16px 0 0; display: grid; gap: 12px; }
 .fiscal-card legend { font-weight: 600; padding: 0 8px 0 0; }
 .withholding-rows { display: grid; gap: 8px; }
@@ -1113,3 +1114,8 @@ button.reason.selected .radio-dot { border: 5px solid var(--accent); }
 }
 .task-card .task-move { margin-top: -4px; gap: 2px; }
 .task-card .task-move button.small { min-height: 28px; height: 28px; padding: 0 8px; }
+
+/* ── Lot 4 : relances ──────────────────────────────────────────────── */
+.remind-tag { display: inline-block; margin-left: 8px; padding: 2px 8px; border-radius: 999px; background: #FDF1E7; color: #9A4A12; font-size: 0.75rem; font-weight: 600; white-space: nowrap; }
+.remind-step { margin: -4px 0 4px; font-size: 0.8125rem; color: var(--ink-2); }
+.remind-step .remind-tag { margin-left: 0; }

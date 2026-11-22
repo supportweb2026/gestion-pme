@@ -10,6 +10,7 @@ import {
 } from "../../shared/invoice.ts";
 import { CURRENCIES, decimalsOf, formatMoney, rateFor } from "../../shared/currency.ts";
 import { isNumbered, type DocTable, type SyncRecord } from "../../shared/sync.ts";
+import { reminderDue, reminderSettings, TONE_LABELS, type ReminderDue, type ReminderTone } from "../../shared/reminders.ts";
 import { CASH_LIMIT_XAF, fiscalSettings, newDocTaxFields, pct } from "../../shared/taxes.ts";
 import { currencyOf, invoiceSituations, linesOf, QUOTE_LABELS, quoteStatus, rateOf, SITUATION_LABELS, totalsOf, type Situation } from "../ledger.ts";
 import { PrintView } from "./PrintView.tsx";
@@ -44,7 +45,18 @@ export const DOCS: Record<DocTable, DocConfig> = {
   },
 };
 
-type Filter = "all" | "draft" | "open" | "overdue";
+type Filter = "all" | "draft" | "open" | "overdue" | "remind";
+
+/** Relance à envoyer aujourd'hui pour une facture validée (calendrier des réglages). */
+export function invoiceReminder(inv: SyncRecord, situation: Situation | undefined, settings: Record<string, unknown>): ReminderDue | null {
+  if (inv.data.status !== "validated" || !situation) return null;
+  const r = reminderDue({
+    dueDate: text(inv.data.due_date), amountDue: situation.due, sent: Number(inv.data.reminders ?? 0),
+    lastSent: text(inv.data.reminded_at).slice(0, 10) || undefined, today: today(), settings: reminderSettings(settings),
+  });
+  // Pas de rappel avant échéance pour une facture qui n'a pas encore été envoyée.
+  return r && r.days <= 0 && !inv.data.sent_at ? null : r;
+}
 
 /** Données partagées par la liste et l'éditeur. */
 function useSalesData() {
@@ -60,6 +72,8 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
   const docs = useTable(kind);
   const clients = useTable("clients");
   const { situations } = useSalesData();
+  const listSettings = useSettings();
+  const remindOf = (d: SyncRecord) => (kind === "invoices" ? invoiceReminder(d, situations.get(d.id), listSettings) : null);
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<Filter>("all");
   const cfg = DOCS[kind];
@@ -79,6 +93,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
     if (f === "draft") return k === "draft";
     if (f === "open") return ["unpaid", "partial", "overdue", "sent"].includes(k);
     if (f === "overdue") return k === "overdue" || k === "expired";
+    if (f === "remind") return remindOf(d) !== null;
     return true;
   };
   const rows = docs
@@ -87,8 +102,8 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
       return matchesFilter(d, filter);
     })
     .sort((a, b) => text(b.data.date).localeCompare(text(a.data.date)) || text(b.data.number).localeCompare(text(a.data.number)));
-  const filters = ([["all", "Tous"], ["draft", "Brouillons"], ["open", kind === "quotes" ? "En attente" : "À encaisser"], ["overdue", kind === "quotes" ? "Expirés" : "En retard"]] as [Filter, string][])
-    .filter(([f]) => kind !== "credit_notes" || f === "all" || f === "draft");
+  const filters = ([["all", "Tous"], ["draft", "Brouillons"], ["open", kind === "quotes" ? "En attente" : "À encaisser"], ["overdue", kind === "quotes" ? "Expirés" : "En retard"], ["remind", "À relancer"]] as [Filter, string][])
+    .filter(([f]) => (kind !== "credit_notes" || f === "all" || f === "draft") && (f !== "remind" || kind === "invoices"));
   const count = (f: Filter) => docs.filter((d) => matchesFilter(d, f)).length;
   const noClient = clients.length === 0;
   const withDue = kind !== "credit_notes";
@@ -139,7 +154,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
           <p className="muted">
             {noClient ? "Un devis ou une facture est toujours adressé à un client."
               : kind === "credit_notes" && docs.length === 0 ? "Un avoir se crée depuis une facture validée, pour la corriger ou l'annuler."
-              : docs.length === 0 ? `Créez votre premi${kind === "invoices" ? "ère" : "er"} ${cfg.one.toLowerCase()} : il sera numéroté automatiquement à la validation.`
+              : docs.length === 0 ? `Créez votre premi${kind === "invoices" ? "ère" : "er"} ${cfg.one.toLowerCase()} : ${kind === "invoices" ? "elle sera numérotée" : "il sera numéroté"} automatiquement à la validation.`
               : "Modifiez la recherche ou le filtre."}
           </p>
           {noClient ? <button className="primary" onClick={() => go("clients")}>Créer un client</button>
@@ -166,7 +181,10 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
                     <td className="c-client">{clientName(d.data.client_id)}</td>
                     <td className="c-date">{formatDate(d.data.date)}</td>
                     {withDue && <td className={`c-due-date ${st.key === "overdue" || st.key === "expired" ? "danger-text" : "muted"}`}>{dueDate ? formatDate(dueDate) : "—"}</td>}
-                    <td className="c-status"><span className={`badge ${st.tone}`}>{st.label}</span></td>
+                    <td className="c-status"><span className={`badge ${st.tone}`}>{st.label}</span>{(() => {
+                      const r = remindOf(d);
+                      return r ? <span className="remind-tag" title={TONE_LABELS[r.tone]}>À relancer · {r.label}</span> : null;
+                    })()}</td>
                     {kind === "invoices" && <td className="c-due right mono">{st.key === "draft" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
                     <td className="c-total right mono">{kind === "quotes" && quoteTypeOf(d.data) === "delivery" ? "—" : formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
                   </tr>
@@ -488,7 +506,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const linked = kind === "invoices" ? credits.filter((c) => c.data.invoice_id === id) : [];
   const invoicePayments = kind === "invoices" ? payments.filter((p) => p.data.invoice_id === id).sort((a, b) => text(a.data.date).localeCompare(text(b.data.date))) : [];
   const status = record ? docStatus(kind, record, situations) : null;
-  const share = useShare({ kind, record, client, gross: totals.payable, situation, currency });
+  const nextReminder = kind === "invoices" && record ? invoiceReminder(record, situation, settings) : null;
+  const share = useShare({ kind, record, client, gross: totals.payable, situation, currency, nextReminder });
   const dueLabel = kind === "quotes" ? "Valable jusqu'au" : "Échéance";
   const showDue = kind === "invoices" || (kind === "quotes" && !isDelivery);
   const subtotals = sectionSubtotals(lines, decimals);
@@ -686,6 +705,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
               </div>
               <div className="card aside-actions">
                 <h3>{share.reminder ? "Relancer le client" : "Envoyer au client"}</h3>
+                {nextReminder && <p className="remind-step"><span className="remind-tag">{nextReminder.label}</span> {TONE_LABELS[nextReminder.tone]} prévue aujourd'hui (Réglages, Relances).</p>}
                 <a className="button" href={share.wa} target="_blank" rel="noopener noreferrer" onClick={share.markSent}>
                   <SendIco name="wa" />{share.reminder ? "Relancer par WhatsApp" : "WhatsApp"}
                 </a>
@@ -1037,8 +1057,8 @@ function PaymentHistory({ situation, payments, credits, onCredit }: {
  * message WhatsApp ou e-mail prérempli. Une facture en retard donne un message
  * de relance, et la relance est notée sur la facture.
  */
-function useShare({ kind, record, client, gross, situation, currency }: {
-  kind: DocTable; record: SyncRecord | null; client: SyncRecord | null; gross: number; situation?: Situation; currency: string;
+function useShare({ kind, record, client, gross, situation, currency, nextReminder }: {
+  kind: DocTable; record: SyncRecord | null; client: SyncRecord | null; gross: number; situation?: Situation; currency: string; nextReminder?: ReminderDue | null;
 }) {
   const { db } = useApp();
   const settings = useSettings();
@@ -1047,15 +1067,17 @@ function useShare({ kind, record, client, gross, situation, currency }: {
   const company = text(settings.name);
   const number = text(record?.data.number);
   const due = situation?.due;
-  const reminder = kind === "invoices" && situation?.status === "overdue";
-  const message = documentMessage({ kind, number, client: text(client?.data.name), company, gross, due, currency, dueDate: text(record?.data.due_date), validUntil: text(record?.data.valid_until), reminder, title: docTitle(kind, record?.data) });
+  // Relance : étape du calendrier atteinte, ou facture échue (relance manuelle hors calendrier).
+  const reminder = kind === "invoices" && (!!nextReminder || situation?.status === "overdue");
+  const tone: ReminderTone = nextReminder?.tone ?? "friendly";
+  const message = documentMessage({ kind, number, client: text(client?.data.name), company, gross, due, currency, dueDate: text(record?.data.due_date), validUntil: text(record?.data.valid_until), reminder, tone, title: docTitle(kind, record?.data) });
 
   // Numéro au format international uniquement (+241…) : sinon WhatsApp laisse choisir le contact.
   const phone = text(client?.data.phone).replace(/[^\d+]/g, "");
   const intl = phone.startsWith("+") ? phone.slice(1) : phone.startsWith("00") ? phone.slice(2) : "";
   const wa = `https://wa.me/${intl}?text=${encodeURIComponent(message)}`;
   const docName = docTitle(kind, record?.data);
-  const subject = `${reminder ? "Relance : " : ""}${docName} ${number}${company ? ` - ${company}` : ""}`;
+  const subject = `${reminder ? (tone === "courtesy" ? "Rappel : " : tone === "final" ? "Dernière relance : " : "Relance : ") : ""}${docName} ${number}${company ? ` - ${company}` : ""}`;
   const mail = `mailto:${encodeURIComponent(text(client?.data.email))}?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(message)}`;
 
   // On garde la date du premier envoi ; chaque relance est comptée.
@@ -1083,7 +1105,7 @@ function useShare({ kind, record, client, gross, situation, currency }: {
     }
   }
 
-  return { pdf, wa, mail, markSent, reminder, busy, error };
+  return { pdf, wa, mail, markSent, reminder, tone, busy, error };
 }
 
 function SendIco({ name }: { name: "wa" | "mail" | "share" }) {
@@ -1102,13 +1124,28 @@ const canShare = canShareFiles();
 /** Message d'accompagnement d'un document, ou de relance d'une facture échue. */
 export function documentMessage(p: {
   kind: DocTable; number: string; client: string; company: string; gross: number; due?: number; currency: string;
-  dueDate?: string; validUntil?: string; reminder?: boolean; title?: string;
+  dueDate?: string; validUntil?: string; reminder?: boolean; tone?: ReminderTone; title?: string;
 }): string {
   const lines = [`Bonjour${p.client ? ` ${p.client}` : ""},`];
-  if (p.reminder && p.due !== undefined) {
+  const amount = p.due !== undefined ? formatMoney(p.due, p.currency) : "";
+  const ignore = "Si le paiement a déjà été effectué, merci de ne pas tenir compte de ce message.";
+  if (p.reminder && p.due !== undefined && p.tone === "courtesy") {
     lines.push(
-      `Sauf erreur de notre part, notre facture ${p.number}${p.dueDate ? ` échue le ${formatDate(p.dueDate)}` : ""} reste à régler pour ${formatMoney(p.due, p.currency)}.`,
-      "Merci de bien vouloir procéder au règlement, ou de nous indiquer la date prévue. Si le paiement a déjà été effectué, merci de ne pas tenir compte de ce message.",
+      `Pour rappel, notre facture ${p.number} de ${amount} arrive à échéance${p.dueDate ? ` le ${formatDate(p.dueDate)}` : ""}.`,
+      "Merci de prévoir son règlement. Nous restons à votre disposition pour toute question.",
+    );
+  } else if (p.reminder && p.due !== undefined && (p.tone === "firm" || p.tone === "final")) {
+    lines.push(
+      `Malgré nos précédents messages, notre facture ${p.number}${p.dueDate ? ` échue le ${formatDate(p.dueDate)}` : ""} reste impayée pour ${amount}.`,
+      p.tone === "final"
+        ? "Sans règlement ou nouvelle de votre part sous 8 jours, nous serons contraints d'engager les démarches de recouvrement."
+        : "Merci de procéder au règlement dans les meilleurs délais, ou de nous indiquer la date prévue.",
+      ignore,
+    );
+  } else if (p.reminder && p.due !== undefined) {
+    lines.push(
+      `Sauf erreur de notre part, notre facture ${p.number}${p.dueDate ? ` échue le ${formatDate(p.dueDate)}` : ""} reste à régler pour ${amount}.`,
+      `Merci de bien vouloir procéder au règlement, ou de nous indiquer la date prévue. ${ignore}`,
     );
   } else {
     const what = `notre ${(p.title ?? (p.kind === "quotes" ? "Devis" : p.kind === "credit_notes" ? "Avoir" : "Facture")).toLowerCase()}`;
