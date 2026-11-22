@@ -235,7 +235,8 @@ try {
 
   step("Employé : étapes et avancement, sans montant ni part");
   await j.getByRole("navigation").getByRole("button", { name: "Projets", exact: true }).click();
-  await j.getByText("Aménagement de l'entrepôt de Nkok").first().click();
+  // « À décider » rappelle aussi l'échéance de sa tâche (lot 5) : on ouvre la carte du projet.
+  await j.locator(".project-card", { hasText: "Aménagement de l'entrepôt de Nkok" }).click();
   await j.getByRole("heading", { name: "Aménagement de l'entrepôt de Nkok" }).waitFor();
   await j.getByRole("list", { name: "Frise des étapes" }).waitFor();
   await j.getByTestId("project-progress").filter({ hasText: "45 % fait" }).waitFor();

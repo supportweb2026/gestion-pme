@@ -7,6 +7,7 @@ import { formatDate, text } from "../../context.ts";
 import type { DecisionItem } from "../../../shared/projectDecisions.ts";
 import type { AlertMode, ProjectAlert } from "../../../shared/projectBudget.ts";
 import type { Rec } from "../../../shared/projects.ts";
+import { reminderLabel, type DeadlineReminder } from "../../../shared/projectBoard.ts";
 
 /** Alerte de tolérance (lot 4) : décision pour qui décide, information pour le responsable du projet. */
 export interface AlertItem { alert: ProjectAlert; project: Rec; mode: AlertMode }
@@ -15,19 +16,22 @@ import { PIcon } from "../ProjectIcons.tsx";
 const since = (iso: string, days: number) =>
   days === 0 ? "aujourd'hui" : `le ${formatDate(iso.slice(0, 10))}, ${days === 1 ? "il y a 1 jour" : `il y a ${days} jours`}`;
 
-export function DecisionsBlock({ items, onOpen, alerts = [], onAlert }: {
+export function DecisionsBlock({ items, onOpen, alerts = [], onAlert, reminders = [], projectName = () => "", onTask }: {
   items: DecisionItem[]; onOpen: (projectId: string, stageId: string, review: boolean) => void;
   alerts?: AlertItem[]; onAlert?: (projectId: string, alert: ProjectAlert) => void;
+  /** Lot 5 : mes tâches en retard ou dues dans les 2 jours. */
+  reminders?: DeadlineReminder[]; projectName?: (id: string) => string; onTask?: (taskId: string) => void;
 }) {
-  if (items.length === 0 && alerts.length === 0) return null;
+  if (items.length === 0 && alerts.length === 0 && reminders.length === 0) return null;
   const decide = alerts.filter((a) => a.mode === "decide");
   const info = alerts.filter((a) => a.mode === "info");
   const count = items.length + decide.length;
+  const dues = reminders.length;
   return (
     <section className="card decide-block" aria-labelledby="decide-title" data-testid="decide-block">
       <div className="card-head">
         <h3 id="decide-title"><PIcon name="diamond" />À décider</h3>
-        <span className="muted small">{count ? `${count} ${count > 1 ? "décisions" : "décision"}` : ""}{count && info.length ? " · " : ""}{info.length ? `${info.length} à surveiller` : ""}</span>
+        <span className="muted small">{[count ? `${count} ${count > 1 ? "décisions" : "décision"}` : "", info.length ? `${info.length} à surveiller` : "", dues ? `${dues} ${dues > 1 ? "échéances" : "échéance"}` : ""].filter(Boolean).join(" · ")}</span>
       </div>
       <ul>
         {[...decide, ...info].map(({ alert, project, mode }) => (
@@ -41,6 +45,16 @@ export function DecisionsBlock({ items, onOpen, alerts = [], onAlert }: {
               </span>
             </div>
             <button className={mode === "decide" ? "primary" : ""} onClick={() => onAlert?.(project.id, alert)}>{mode === "decide" ? "Décider" : "Voir le projet"}</button>
+          </li>
+        ))}
+        {reminders.map((r) => (
+          <li key={`due-${r.task.id}`} data-testid="decide-deadline">
+            <span className={`decide-mark deadline ${r.kind}`} aria-hidden="true" />
+            <div className="decide-text">
+              <strong>{text(r.task.data.title)}</strong>
+              <span className="muted small"><span className={r.kind === "late" ? "danger-text strong" : "warn-text"}>{reminderLabel(r)}</span> · {projectName(text(r.task.data.project_id))}{r.task.data.blocked ? " · bloquée" : ""}</span>
+            </div>
+            <button onClick={() => onTask?.(r.task.id)}>Ouvrir la tâche</button>
           </li>
         ))}
         {items.map((i) => (
