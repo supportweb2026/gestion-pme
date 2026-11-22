@@ -17,6 +17,8 @@ export const SYNC_TABLES = [
   "project_decisions",
   // Projets, lot 4 : budget prévu par poste (grille étape × poste), protégé comme project_finance.
   "budget_lines",
+  // Projets, lot 5 : catégories de tâche, discussion, pièces jointes et liens, historique (en ajout seul).
+  "task_categories", "task_comments", "attachments", "task_events",
 ] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
@@ -139,12 +141,13 @@ const WRITABLE: Record<string, readonly string[] | "all"> = {
   accountant: "all",
   sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses", "projects", "tasks", "time_entries",
     "project_finance", "project_members", "stock_moves", "purchase_orders", "project_stages",
-    "project_decisions", "budget_lines"],
+    "project_decisions", "budget_lines", "task_comments", "attachments", "task_events"],
   project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks", "time_entries",
     "project_finance", "project_members", "project_stages",
-    "project_decisions", "budget_lines"],
+    "project_decisions", "budget_lines", "task_comments", "attachments", "task_events"],
   // `project_stages` : seulement « Demander la validation » d'une étape dont il est responsable (projectRules.ts).
-  employee: ["expenses", "tasks", "time_entries", "project_stages"],
+  // Lot 5 : il commente, joint des fichiers et laisse l'historique de ses gestes sur les tâches.
+  employee: ["expenses", "tasks", "time_entries", "project_stages", "task_comments", "attachments", "task_events"],
 };
 
 export interface Actor {
@@ -212,7 +215,8 @@ const READABLE: Record<string, readonly string[] | "all"> = {
   sales: SYNC_TABLES.filter((t) => t !== "journal_entries"),
   // Aucune table de montants (project_finance, cost_rates, budget_lines) ; les anciens champs
   // de montant de `projects` sont retirés à l'envoi (redactPatch).
-  employee: ["settings", "projects", "tasks", "time_entries", "expenses", "team_members", "project_members", "project_stages", "project_decisions"],
+  employee: ["settings", "projects", "tasks", "time_entries", "expenses", "team_members", "project_members", "project_stages", "project_decisions",
+    "task_categories", "task_comments", "attachments", "task_events"],
 };
 const OWN_ONLY: Record<string, readonly string[]> = {
   sales: ["expenses"],

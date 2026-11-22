@@ -18,6 +18,8 @@ export const API_TABLE_LABELS: Record<string, string> = {
   projects: "Projets", tasks: "Tâches", time_entries: "Temps passés", team_members: "Annuaire de l'équipe",
   project_members: "Équipes des projets", stock_moves: "Mouvements de stock", purchase_orders: "Commandes fournisseurs",
   project_stages: "Étapes des projets", project_decisions: "Décisions des projets",
+  task_categories: "Catégories de tâche", task_comments: "Commentaires des tâches", attachments: "Pièces jointes et liens des tâches",
+  task_events: "Historique des tâches",
 };
 
 /** Nettoie une portée reçue : tables connues et ouvertes, modes valides. Vide si rien de valable. */

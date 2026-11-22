@@ -353,3 +353,29 @@ test("projets lot 3 (CA3.4, CA3.5) : la première validation fait foi sur le ser
   const delegated = await call("/api/sync", { since: 0, changes: [pmDecision()] }, pm.token);
   assert.equal(delegated.data.accepted.length, 1);
 });
+
+test("projets lot 5 : une tâche modifiée par l'API garde son historique ; commentaire signé par le jeton", async () => {
+  const signup = await call("/api/signup", { company: "IDO", name: "Jimmy", email: "jimmy@ido.ga", password: "motdepasse1", deviceId: "device-ido0-0010" });
+  const admin = signup.data.token;
+  const key = await call("/api/keys", { name: "Agent de pilotage", scopes: { projects: "rw", tasks: "rw", task_comments: "rw", task_events: "r" } }, admin);
+  assert.equal(key.status, 200);
+  const api = async (method: string, path: string, body?: unknown) => {
+    const res = await worker.fetch(new Request(`http://local/api/v1/${path}`, {
+      method, headers: { "content-type": "application/json", authorization: `Bearer ${key.data.token}` }, body: body === undefined ? undefined : JSON.stringify(body),
+    }), env);
+    return { status: res.status, data: (await res.json()) as any };
+  };
+  assert.equal((await api("PATCH", "projects/prj-ido-pilotage", { name: "IDO – Pilotage", status: "active" })).status, 201);
+  assert.equal((await api("PATCH", "tasks/trello-abc123", { project_id: "prj-ido-pilotage", title: "Renouveler le certificat", status: "todo", category_id: "cat-securite" })).status, 201);
+  assert.equal((await api("PATCH", "tasks/trello-abc123", { status: "doing", due_date: "2026-11-30" })).status, 200);
+  const events = (await api("GET", "task_events")).data.items;
+  assert.deepEqual(events.map((e: any) => e.kind).sort(), ["due_changed", "moved"]);
+  assert.ok(events.every((e: any) => e.task_id === "trello-abc123" && e.via === "api"));
+  const userId = signup.data.user.id;
+  const c = await api("PATCH", "task_comments/cmt-agent-1", { task_id: "trello-abc123", project_id: "prj-ido-pilotage", body: "Mise à jour de 7 h 50 : certificat commandé.", author_id: userId, author_name: "Agent", created_at: new Date().toISOString() });
+  assert.equal(c.status, 201);
+  const forged = await api("PATCH", "task_comments/cmt-agent-2", { task_id: "trello-abc123", body: "x", author_id: "quelqu-un-d-autre", created_at: new Date().toISOString() });
+  assert.equal(forged.status, 422);
+  // Catégories non ouvertes à ce jeton : refus.
+  assert.equal((await api("GET", "task_categories")).status, 403);
+});

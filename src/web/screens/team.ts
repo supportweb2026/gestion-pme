@@ -73,7 +73,7 @@ export function useGuardedWrite(): (tbl: SyncTable, id: string, patch: Fields) =
   const stages = useTable("project_stages");
   const decisions = useTable("project_decisions");
   const closedUntil = String(useSettings().closed_until ?? "");
-  return (tbl, id, patch) => guardedWrite(db, { userId: session.user.id, role: session.user.role }, tbl, id, patch, { ctx: localProjectContext(projects, members, stages, decisions), closedUntil });
+  return (tbl, id, patch) => guardedWrite(db, { userId: session.user.id, role: session.user.role }, tbl, id, patch, { ctx: localProjectContext(projects, members, stages, decisions), closedUntil, actorName: session.user.name });
 }
 
 /** Mon identifiant dans l'annuaire. */

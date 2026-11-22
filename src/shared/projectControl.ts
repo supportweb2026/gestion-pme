@@ -129,7 +129,7 @@ export function isoWeek(date: string): string {
 export function myDay<T extends Rec>(teamMemberId: string, all: { tasks: T[]; projects: Rec[] }, today: string, limit = 7): { today: DayItem<T>[]; others: DayItem<T>[]; review: T[] } {
   const closed = new Set(all.projects.filter((p) => p.data._deleted || ["done", "cancelled"].includes(str(p.data.status))).map((p) => p.id));
   const known = new Set(all.projects.map((p) => p.id));
-  const mine = all.tasks.filter((t) => live(t) && t.data.assignee_id === teamMemberId && !closed.has(str(t.data.project_id)) && known.has(str(t.data.project_id)));
+  const mine = all.tasks.filter((t) => live(t) && t.data.archived !== true && t.data.assignee_id === teamMemberId && !closed.has(str(t.data.project_id)) && known.has(str(t.data.project_id)));
   const week = isoWeek(today);
   const items: DayItem<T>[] = [];
   const review: T[] = [];

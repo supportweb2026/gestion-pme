@@ -11,6 +11,7 @@
 import { useEffect, useMemo, useState, type FormEvent, type ReactNode } from "react";
 import { COMING_SOON, TABS_BY_ROLE, text, today, useApp, useSyncStatus, useTable } from "../context.ts";
 import { BLOCK_LABELS, checkDayHours, chronoRounding, hoursOn, hoursWeek, myDay, type DayItem } from "../../shared/projectControl.ts";
+import { withDeadlines } from "../../shared/projectBoard.ts";
 import { canCloseTask } from "../../shared/projectRules.ts";
 import { localProjectContext } from "../local/guard.ts";
 import type { SyncRecord } from "../../shared/sync.ts";
@@ -88,7 +89,8 @@ export function MyDay() {
     return () => window.removeEventListener("storage", onStorage);
   }, [user.id]);
 
-  const plan = useMemo(() => myDay(tm, { tasks, projects }, day), [tm, tasks, projects, day]);
+  // Lot 5 : rappel des échéances (dues dans les 2 jours) par-dessus le calcul de base.
+  const plan = useMemo(() => withDeadlines(myDay(tm, { tasks, projects }, day), day), [tm, tasks, projects, day]);
   const projectOf = (t: SyncRecord) => projects.find((p) => p.id === t.data.project_id);
   const hoursToday = hoursOn(user.id, entries, day);
   const week = hoursWeek(user.id, entries, day);
@@ -129,7 +131,7 @@ export function MyDay() {
     setChrono(null);
   }
 
-  const render = (i: DayItem<SyncRecord>) => (
+  const render = (i: DayItem<SyncRecord> & { soonDays: number }) => (
     <DayTask key={i.task.id} item={i} project={projectOf(i.task)} running={chrono?.taskId === i.task.id} chronoBusy={!!chrono}
       onOpen={() => setSheet({ task: i.task, mode: "time" })} onStart={() => startChrono(i.task)} />
   );
@@ -262,7 +264,7 @@ export function MyDay() {
 }
 
 function DayTask({ item, project, running, chronoBusy, onOpen, onStart }: {
-  item: DayItem<SyncRecord>; project?: SyncRecord; running: boolean; chronoBusy: boolean; onOpen: () => void; onStart: () => void;
+  item: DayItem<SyncRecord> & { soonDays: number }; project?: SyncRecord; running: boolean; chronoBusy: boolean; onOpen: () => void; onStart: () => void;
 }) {
   const t = item.task;
   const site = text(project?.data.site_address);
@@ -275,9 +277,10 @@ function DayTask({ item, project, running, chronoBusy, onOpen, onStart }: {
           {item.reason === "priority" && <span className="tag"><PIcon name="pushpin" />Priorité de la semaine</span>}
           {item.lateDays > 0 && <span className="tag danger"><PIcon name="clock" />En retard {item.lateDays === 1 ? "d'1 jour" : `de ${item.lateDays} jours`}</span>}
           {item.reason === "due" && <span className="tag warn">Échéance aujourd'hui</span>}
+          {item.soonDays > 0 && <span className="tag warn"><PIcon name="clock" />{item.soonDays === 1 ? "Échéance demain" : `Échéance dans ${item.soonDays} jours`}</span>}
           {(text(t.data.status) === "doing") && <span className="tag info">En cours</span>}
           {item.reason === "start" && <span className="tag">Commence aujourd'hui</span>}
-          {item.reason === "open" && due && <span className="tag">Échéance {new Date(`${due}T12:00:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>}
+          {item.reason === "open" && due && !item.soonDays && <span className="tag">Échéance {new Date(`${due}T12:00:00`).toLocaleDateString("fr-FR", { day: "numeric", month: "short" })}</span>}
         </span>
         <span className="day-sub muted">{text(project?.data.name)}</span>
         {t.data.blocked ? (

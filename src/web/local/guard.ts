@@ -6,6 +6,7 @@
 import { encodeHlc } from "../../shared/hlc.ts";
 import { checkChange, checkPermission, type Actor, type Fields, type SyncRecord, type SyncTable } from "../../shared/sync.ts";
 import type { ProjectContext } from "../../shared/projectRules.ts";
+import { taskEventsOf } from "../../shared/projectBoard.ts";
 import type { LocalDb } from "./db.ts";
 
 export class GuardError extends Error {}
@@ -35,7 +36,7 @@ export const sentence = (m: string) => {
   return `${t.charAt(0).toUpperCase()}${t.slice(1)}${/[.!?]$/.test(t) ? "" : "."}`;
 };
 
-export async function guardedWrite(db: LocalDb, actor: Actor, tbl: SyncTable, id: string, patch: Fields, opts: { ctx?: ProjectContext; closedUntil?: string } = {}): Promise<void> {
+export async function guardedWrite(db: LocalDb, actor: Actor, tbl: SyncTable, id: string, patch: Fields, opts: { ctx?: ProjectContext; closedUntil?: string; actorName?: string } = {}): Promise<void> {
   const existing = await db.get(tbl, id);
   // Décisions lues au moment de l'écriture : une décision écrite juste avant dans le même geste compte (R11).
   if (opts.ctx?.decisions && (tbl === "tasks" || tbl === "invoices" || tbl === "project_decisions" || tbl === "budget_lines")) {
@@ -46,4 +47,13 @@ export async function guardedWrite(db: LocalDb, actor: Actor, tbl: SyncTable, id
   const reason = checkChange(existing, change) ?? checkPermission(actor, existing, change, opts.closedUntil ?? "", opts.ctx);
   if (reason) throw new GuardError(sentence(reason));
   await db.write(tbl, id, patch);
+  // Lot 5 : historique de la tâche (déplacée, échéance, blocage, personne, archivage), écrit
+  // avec la modification, hors ligne compris. La création se lit sur la tâche elle-même.
+  if (tbl === "tasks") {
+    const at = new Date().toISOString();
+    const projectId = String(patch.project_id ?? existing?.data.project_id ?? "");
+    for (const e of taskEventsOf(existing?.data, patch)) {
+      await db.write("task_events", db.newId("tev"), { task_id: id, project_id: projectId, kind: e.kind, from: e.from, to: e.to, by: actor.userId, by_name: opts.actorName ?? "", at });
+    }
+  }
 }

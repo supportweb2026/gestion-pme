@@ -12,6 +12,7 @@
  */
 import { decodeHlc } from "./hlc.ts";
 import type { Actor, Change, Fields, SyncRecord } from "./sync.ts";
+import { COMMENT_EDIT_MINUTES, COMMENT_EDIT_MS, COMMENT_MAX, FILE_ID_RE, LINK_RE, TASK_EVENT_KINDS } from "./projectBoard.ts";
 
 const DELETED = "_deleted";
 
@@ -218,6 +219,50 @@ export function checkProjectChange(existing: SyncRecord | null, change: Change):
       if (has(p, "assignee_id") && p.assignee_id !== "" && !str(p.assignee_id).startsWith("tm-")) return "personne introuvable dans l'annuaire";
       if (has(p, "kind") && !(TASK_KINDS as readonly string[]).includes(str(p.kind))) return "nature de tâche inconnue";
       if (frozen(existing, p, "decision_id")) return "identifiant invalide";
+      // Lot 5 : catégorie et archivage (seule une tâche terminée s'archive).
+      if (has(p, "category_id") && p.category_id !== "" && !str(p.category_id).startsWith("cat-")) return "catégorie inconnue";
+      if (has(p, "archived") && typeof p.archived !== "boolean") return "contenu invalide";
+      if (value("archived") === true && (str(value("status")) || "todo") !== "done" && !p[DELETED]) return "seule une tâche terminée peut être archivée";
+      return null;
+    }
+    case "task_categories": {
+      if (!/^cat-[a-z0-9-]{1,60}$/.test(row)) return "identifiant invalide";
+      if ((!existing || has(p, "name")) && !p[DELETED] && !str(value("name")).trim()) return "donnez un nom à la catégorie";
+      if (has(p, "name") && str(p.name).trim().length > 40) return "le nom de la catégorie ne doit pas dépasser 40 caractères";
+      if (has(p, "rank") && (typeof p.rank !== "number" || !Number.isFinite(p.rank))) return "ordre invalide";
+      return null;
+    }
+    case "task_comments": {
+      for (const k of ["task_id", "project_id", "author_id", "created_at"]) if (frozen(existing, p, k)) return "un commentaire ne change pas de tâche ni d'auteur";
+      if (!existing) {
+        if (!str(p.task_id)) return "ce commentaire n'est rattaché à aucune tâche";
+        if (!str(p.author_id) || !str(p.created_at)) return "un commentaire porte son auteur et sa date";
+        if (!Number.isFinite(Date.parse(str(p.created_at)))) return "date invalide";
+      }
+      if ((!existing || has(p, "body")) && !p[DELETED] && !str(value("body")).trim()) return "écrivez le commentaire";
+      if (has(p, "body") && str(p.body).length > COMMENT_MAX) return `un commentaire ne doit pas dépasser ${COMMENT_MAX} caractères`;
+      const extra = Object.keys(p).filter((k) => !["task_id", "project_id", "body", "author_id", "author_name", "created_at", "edited_at", "created_by", "created_by_name", DELETED].includes(k));
+      if (extra.length) return "contenu invalide";
+      return null;
+    }
+    case "attachments": {
+      for (const k of ["tbl", "row_id", "project_id", "kind", "file_id", "url", "created_by", "created_at"]) if (frozen(existing, p, k)) return "une pièce jointe ne change pas de tâche";
+      if (!existing) {
+        if (str(p.tbl) !== "tasks" || !str(p.row_id)) return "cette pièce jointe n'est rattachée à aucune tâche";
+        if (str(p.kind) === "file") {
+          if (!FILE_ID_RE.test(str(p.file_id))) return "fichier introuvable";
+        } else if (str(p.kind) === "link") {
+          if (!LINK_RE.test(str(p.url)) || str(p.url).length > 2000) return "indiquez une adresse qui commence par https://";
+        } else return "nature de pièce jointe inconnue";
+      }
+      if (has(p, "label") && str(p.label).length > 200) return "le libellé ne doit pas dépasser 200 caractères";
+      return null;
+    }
+    case "task_events": {
+      // Historique en ajout seul : un événement enregistré ne change plus.
+      if (existing) return "l'historique d'une tâche ne se modifie pas";
+      if (!(TASK_EVENT_KINDS as readonly string[]).includes(str(p.kind))) return "nature d'événement inconnue";
+      if (!str(p.task_id) || !str(p.by) || !str(p.at)) return "un événement porte sa tâche, son auteur et sa date";
       return null;
     }
     case "time_entries": {
@@ -388,6 +433,29 @@ export function checkProjectPermission(actor: Actor, existing: SyncRecord | null
       }
       return null;
     }
+    case "task_categories":
+      return direction ? null : "vous ne pouvez pas modifier les catégories de tâche";
+    case "task_comments": {
+      // Toute personne qui voit la tâche peut commenter ; seul l'auteur modifie ou supprime son
+      // commentaire, et seulement pendant 15 minutes (heure de l'appareil, comme pour le temps).
+      const at = decodeHlc(change.hlc).ms;
+      if (!existing) {
+        if (str(p.author_id) !== actor.userId) return "un commentaire est publié au nom de la personne qui l'écrit";
+        if (Date.parse(str(p.created_at)) > at + 60_000) return "date invalide";
+        return null;
+      }
+      if (str(existing.data.author_id) !== actor.userId) return "vous pouvez modifier ou supprimer seulement vos propres commentaires";
+      if (existing.data[DELETED]) return "ce commentaire est supprimé";
+      if (at - Date.parse(str(existing.data.created_at)) > COMMENT_EDIT_MS) return `ce commentaire est figé : il ne peut plus être modifié ni supprimé après ${COMMENT_EDIT_MINUTES} minutes`;
+      return null;
+    }
+    case "attachments": {
+      if (!existing) return str(p.created_by) === actor.userId ? null : "une pièce jointe est ajoutée au nom de la personne qui la joint";
+      if (str(existing.data.created_by) === actor.userId || leadsProject(actor, str(existing.data.project_id), ctx)) return null;
+      return "vous pouvez retirer seulement les pièces jointes que vous avez ajoutées";
+    }
+    case "task_events":
+      return str(p.by) === actor.userId ? null : "un événement d'historique est enregistré au nom de son auteur";
     case "time_entries": {
       // Une nouvelle saisie sur un projet terminé ou annulé est refusée (R12, CA6.4).
       const projectId = str(p.project_id) || str(existing?.data.project_id);

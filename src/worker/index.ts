@@ -9,6 +9,7 @@ import {
   type Change, type SyncRecord, type SyncRequest, type SyncResponse,
 } from "../shared/sync.ts";
 import { redactPatch, redactRecord, type ProjectContext } from "../shared/projectRules.ts";
+import { taskEventsOf } from "../shared/projectBoard.ts";
 import { decodeHlc, encodeHlc } from "../shared/hlc.ts";
 import { allows, API_TOKEN_RE, parseScopes, type ApiScopes } from "../shared/apiKeys.ts";
 import { extendPaidUntil, PLANS, subscriptionInfo, TRIAL_DAYS, type CompanySubscription } from "../shared/plans.ts";
@@ -380,7 +381,7 @@ async function loadProjectContext(env: Env, companyId: string, incoming: Change[
   const ids = new Set<string>();
   for (const c of incoming) {
     let pid: unknown;
-    if (["tasks", "time_entries", "project_stages", "project_decisions", "budget_lines"].includes(c.tbl)) {
+    if (["tasks", "time_entries", "project_stages", "project_decisions", "budget_lines", "attachments"].includes(c.tbl)) {
       pid = c.patch.project_id ?? records.get(`${c.tbl}/${c.row}`)?.data.project_id;
     } else if (c.tbl === "projects" && "manager_can_validate" in c.patch) {
       pid = c.row;
@@ -451,6 +452,7 @@ export async function applyIncoming(env: Env, s: Pick<Session, "sub" | "cid" | "
   const ctx = await loadProjectContext(env, s.cid, incoming, records);
 
   const statements: D1PreparedStatement[] = [];
+  const history: Change[] = [];
   const touched = new Set<string>();
   const receivedAt = now();
 
@@ -468,6 +470,15 @@ export async function applyIncoming(env: Env, s: Pick<Session, "sub" | "cid" | "
     if (reason) {
       rejected.push({ id: c.id, reason, record: redactRecord(actor, existing) });
       continue;
+    }
+    // Projets, lot 5 : une tâche modifiée par l'API ou le connecteur garde son historique, comme
+    // sur l'appareil (qui l'écrit lui-même, hors ligne compris).
+    if (c.tbl === "tasks" && /^(api|mcp)-/.test(s.dev)) {
+      taskEventsOf(existing && !existing.data._deleted ? existing.data : null, c.patch).forEach((e, i) => history.push({
+        id: crypto.randomUUID(), tbl: "task_events", row: `tev-${crypto.randomUUID().replace(/-/g, "").slice(0, 20)}`,
+        patch: { task_id: c.row, project_id: String(c.patch.project_id ?? existing?.data.project_id ?? ""), kind: e.kind, from: e.from, to: e.to, by: s.sub, via: s.dev.slice(0, 3), at: now() },
+        hlc: encodeHlc(decodeHlc(c.hlc).ms, i + 1, s.dev), device: s.dev,
+      }));
     }
     const { record } = applyChange(existing, c);
     records.set(key, record);
@@ -495,6 +506,7 @@ export async function applyIncoming(env: Env, s: Pick<Session, "sub" | "cid" | "
   }
   // batch = une transaction : tout est écrit, ou rien.
   if (statements.length > 0) await env.DB.batch(statements);
+  if (history.length > 0) await applyIncoming(env, s, history);
   return { accepted, rejected };
 }
 

@@ -45,8 +45,13 @@ import { NEW_FROM_QUOTE } from "./projects/QuoteProjectBanner.tsx";
 import { DecisionsBlock, type AlertItem } from "./projects/Decisions.tsx";
 import { AlertNotice, BudgetEditor, BudgetTab, DeadlineDialog, ExceptionCard, WeatherBadge, WeatherDetail, type BudgetView } from "./projects/Budget.tsx";
 import type { Choice } from "../projectInvoices.ts";
+import { EmployeeTaskForm, stepsOf, TaskForm, TaskTags, useCategories } from "./projects/TaskForms.tsx";
+import { TaskPanel } from "./projects/TaskPanel.tsx";
+import { AllTasks } from "./projects/AllTasks.tsx";
+import { Portfolio } from "./projects/Portfolio.tsx";
+import { TaskSettings } from "./projects/TaskSettings.tsx";
+import { categoryName, deadlineReminders } from "../../shared/projectBoard.ts";
 
-const PRIORITY: Record<string, string> = { low: "Basse", normal: "Normale", high: "Haute" };
 const hoursLabel = (h: number) => `${(Math.round(h * 100) / 100).toLocaleString("fr-FR")} h`;
 const plural = (n: number, one: string, many: string) => `${n} ${n > 1 ? many : one}`;
 const live = (r: SyncRecord) => !r.data._deleted;
@@ -75,6 +80,8 @@ function viewerOf(userId: string, role: string, projectId: string, ctx: ProjectC
   return { decides: canDecide(actor, projectId, ctx), manages: ctx.rolesIn(projectId, userId).includes("manager"), leads: leadsProject(actor, projectId, ctx) };
 }
 
+type ListView = "list" | "portfolio" | "tasks" | "team" | "settings";
+
 /** Ouverture d'un projet depuis la liste : étape à examiner, ou alerte à traiter. */
 type Focus = { stage: string; review: boolean; alert?: string };
 
@@ -100,7 +107,9 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
   const data = useProjectData();
   const fromQuote = (o: string | null) => (o && o.startsWith(NEW_FROM_QUOTE) ? o.slice(NEW_FROM_QUOTE.length) : null);
   const [open, setOpen] = useState<string | null>(fromQuote(initialOpen) === null ? initialOpen : null);
-  const [view, setView] = useState<"list" | "team">("list");
+  // Lot 5 : portefeuille, tableau de toutes les tâches et réglages du module à côté de la liste.
+  const [view, setView] = useState<ListView>("list");
+  const [openTask, setOpenTask] = useState<string | null>(null);
   // Nouveau projet : "" = sans devis ; sinon l'identifiant du devis à lancer.
   const [creating, setCreating] = useState<string | null>(fromQuote(initialOpen));
   const [status, setStatus] = useState("open");
@@ -160,27 +169,47 @@ export function Projects({ open: initialOpen = null }: { open?: string | null })
       return mode ? [{ alert: a, project: p, mode }] : [];
     });
   }) : [];
+  const direction = can.manageTeam(role);
+  const views: [ListView, string][] = [
+    ["list", "Projets"],
+    ...(manager ? [["portfolio", "Portefeuille"]] as [ListView, string][] : []),
+    ["tasks", "Tâches"],
+    ...(manager ? [["team", "Personnes"]] as [ListView, string][] : []),
+    ...(direction ? [["settings", "Réglages"]] as [ListView, string][] : []),
+  ];
+  const TITLES: Record<ListView, string> = { list: "Projets", portfolio: "Tous les projets", tasks: "Toutes les tâches", team: "Personnes", settings: "Réglages des projets" };
+  // Lot 5 : rappel des échéances de la personne responsable (en retard ou dues dans les 2 jours).
+  const reminders = deadlineReminders(me, tasks, projects, day);
+  const decisionsBlock = (manager || reminders.length > 0) && (
+    <DecisionsBlock items={manager ? decisionsToMake(projects, data, (p) => canDecide({ userId: session.user.id, role }, p.id, localProjectContext(projects, members)), today(), amounts) : []}
+      onOpen={(projectId, stageId, review) => { setFocus({ stage: stageId, review }); setOpen(projectId); }}
+      alerts={alertItems} onAlert={(projectId, a) => { setFocus({ stage: "", review: false, alert: a.key }); setOpen(projectId); }}
+      reminders={reminders} projectName={(id) => text(projects.find((p) => p.id === id)?.data.name)}
+      onTask={(taskId) => { setOpenTask(taskId); setView("tasks"); }} />
+  );
   return (
     <section>
       <div className="section-head">
-        <h2>{view === "team" ? "Personnes" : "Projets"}</h2>
+        <h2>{TITLES[view]}</h2>
         <div className="head-actions">
-          {manager && (
-            <div className="segmented" role="tablist" aria-label="Affichage">
-              <button role="tab" aria-selected={view === "list"} className={view === "list" ? "active" : ""} onClick={() => setView("list")}>Projets</button>
-              <button role="tab" aria-selected={view === "team"} className={view === "team" ? "active" : ""} onClick={() => setView("team")}>Personnes</button>
-            </div>
-          )}
-          {manager && view === "list" && visibleProjects.length > 0 && <button className="primary" onClick={() => setCreating("")}>Nouveau projet</button>}
+          <div className="segmented" role="tablist" aria-label="Affichage">
+            {views.map(([v, l]) => (
+              <button key={v} role="tab" aria-selected={view === v} className={view === v ? "active" : ""} onClick={() => { setView(v); setOpenTask(null); }}>{l}</button>
+            ))}
+          </div>
+          {manager && (view === "list" || view === "portfolio") && visibleProjects.length > 0 && <button className="primary" onClick={() => setCreating("")}>Nouveau projet</button>}
         </div>
       </div>
-      {view === "team" ? <Team /> : (
+      {view === "team" ? <Team /> : view === "settings" ? <TaskSettings /> : view === "tasks" ? (
+        <AllTasks openTask={openTask} onOpenProject={(id) => { setOpenTask(null); setOpen(id); }} />
+      ) : view === "portfolio" ? (
         <>
-          {manager && (
-            <DecisionsBlock items={decisionsToMake(projects, data, (p) => canDecide({ userId: session.user.id, role }, p.id, localProjectContext(projects, members)), today(), amounts)}
-              onOpen={(projectId, stageId, review) => { setFocus({ stage: stageId, review }); setOpen(projectId); }}
-              alerts={alertItems} onAlert={(projectId, a) => { setFocus({ stage: "", review: false, alert: a.key }); setOpen(projectId); }} />
-          )}
+          {decisionsBlock}
+          <Portfolio projects={projects} data={data} members={members} clients={clients} onOpen={(id) => setOpen(id)} />
+        </>
+      ) : (
+        <>
+          {decisionsBlock}
           {visibleProjects.length > 0 && (
             <div className="toolbar">
               <input type="search" placeholder="Rechercher un projet ou un client" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher un projet" />
@@ -706,20 +735,6 @@ function ProjectTeam({ project, members }: { project: SyncRecord; members: SyncR
 
 const lateLabel = (days: number) => (days === 1 ? "En retard d'1 j" : `En retard de ${days} j`);
 
-/**
- * Actions d'une carte, dites avec un verbe plutôt qu'avec des flèches.
- * Qui peut clore passe directement à Terminé ; les autres envoient la tâche « À vérifier ».
- */
-function stepsOf(status: string, canClose: boolean, mine: boolean): { to: string; label: string; main?: boolean }[] {
-  switch (status) {
-    case "todo": return canClose || mine ? [{ to: "doing", label: "Commencer", main: true }] : [];
-    case "doing": return canClose ? [{ to: "done", label: "Terminer", main: true }] : mine ? [{ to: "review", label: "J'ai terminé", main: true }] : [];
-    case "review": return canClose ? [{ to: "done", label: "Clore la tâche", main: true }, { to: "doing", label: "Reprendre" }] : mine ? [{ to: "doing", label: "Reprendre" }] : [];
-    case "done": return canClose ? [{ to: "doing", label: "Rouvrir" }] : [];
-    default: return [];
-  }
-}
-
 function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, onTeam, onStages }: {
   project: SyncRecord; tasks: SyncRecord[]; members: SyncRecord[]; stages: StageInfo<SyncRecord>[];
   stageFilter: string; setStageFilter: (v: string) => void; onTeam: () => void; onStages?: () => void;
@@ -736,6 +751,17 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
   const [title, setTitle] = useState("");
   const [assignTo, setAssignTo] = useState(employee ? me : "");
   const [editing, setEditing] = useState<string | null>(null);
+  // Lot 5 : fiche complète (discussion, pièces jointes, historique).
+  const [panel, setPanel] = useState<string | null>(null);
+  const categories = useCategories();
+  const comments = useTable("task_comments");
+  const attachments = useTable("attachments");
+  const counts = useMemo(() => {
+    const c = new Map<string, number>();
+    for (const x of comments) if (!x.data._deleted) c.set(String(x.data.task_id), (c.get(String(x.data.task_id)) ?? 0) + 1);
+    for (const x of attachments) if (!x.data._deleted && x.data.tbl === "tasks") c.set(`f:${String(x.data.row_id)}`, (c.get(`f:${String(x.data.row_id)}`) ?? 0) + 1);
+    return c;
+  }, [comments, attachments]);
   const [over, setOver] = useState<string | null>(null);
   // L'employé arrive sur ses propres tâches quand il en a sur ce projet.
   const [picked, setWho] = useState<string | null>(null);
@@ -805,7 +831,8 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
     return patch(t, { priority_week: pinned ? "" : week });
   }
   const inStage = (t: SyncRecord) => stageFilter === "all" || (stageFilter === "none" ? !t.data.stage_id || !stages.some((i) => i.stage.id === t.data.stage_id) : t.data.stage_id === stageFilter);
-  const visible = tasks.filter((t) => inStage(t) && (who === "all" || (who === "none" ? !t.data.assignee_id && !t.data.assignee : t.data.assignee_id === who)));
+  // Les tâches archivées quittent le tableau du projet ; elles se retrouvent avec le filtre « Archivées » de Toutes les tâches.
+  const visible = tasks.filter((t) => t.data.archived !== true && inStage(t) && (who === "all" || (who === "none" ? !t.data.assignee_id && !t.data.assignee : t.data.assignee_id === who)));
   const day = today();
 
   return (
@@ -883,11 +910,11 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
                 return (
                   <div key={t.id} className={`task-card${t.data.blocked ? " blocked" : ""}`} draggable={editing !== t.id} onDragStart={(e) => e.dataTransfer.setData("text/plain", t.id)}>
                     {editing === t.id ? (employee
-                      ? <EmployeeTaskForm task={t} onClose={() => setEditing(null)} />
-                      : <TaskForm task={t} members={members} stages={stages} onClose={() => setEditing(null)} />) : (
+                      ? <EmployeeTaskForm task={t} onClose={() => setEditing(null)} onOpen={() => { setEditing(null); setPanel(t.id); }} />
+                      : <TaskForm task={t} members={members} stages={stages} onClose={() => setEditing(null)} onOpen={() => { setEditing(null); setPanel(t.id); }} />) : (
                       <>
                         <button className="task-title" onClick={() => setEditing(t.id)} title={employee ? "Voir la tâche" : "Modifier la tâche"}>{text(t.data.title)}</button>
-                        <TaskTags task={t} stage={stageFilter === "all" ? stageName(t.data.stage_id) : ""} pinned={t.data.priority_week === week} />
+                        <TaskTags task={t} stage={stageFilter === "all" ? stageName(t.data.stage_id) : ""} pinned={t.data.priority_week === week} category={categoryName(t.data.category_id, categories)} />
                         {t.data.blocked ? (
                           <div className="task-blocked"><PIcon name="alert" />Bloquée : {BLOCK_LABELS[text(t.data.blocked_reason)] ?? "motif non précisé"}{t.data.blocked_note ? ` (${text(t.data.blocked_note)})` : ""}</div>
                         ) : null}
@@ -900,6 +927,8 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
                           <span className="task-facts">
                             {late > 0 ? <span className="danger-text strong">{lateLabel(late)}</span> : due ? <span title="Échéance">{formatDate(due).slice(0, 5)}</span> : null}
                             {t.data.estimate_hours ? <span title="Estimation">{hoursLabel(Number(t.data.estimate_hours))}</span> : null}
+                            {counts.get(t.id) ? <button className="fact-ico link" onClick={() => setPanel(t.id)} title="Ouvrir la discussion" aria-label={`${counts.get(t.id)} ${counts.get(t.id)! > 1 ? "commentaires" : "commentaire"}`}><PIcon name="chat" />{counts.get(t.id)}</button> : null}
+                            {counts.get(`f:${t.id}`) ? <button className="fact-ico link" onClick={() => setPanel(t.id)} title="Voir les pièces jointes" aria-label={`${counts.get(`f:${t.id}`)} pièces jointes ou liens`}><PIcon name="clip" />{counts.get(`f:${t.id}`)}</button> : null}
                           </span>
                         </div>
                         {(steps.length > 0 || (status === "review" && !canClose) || (t.data.blocked && (canClose || mine)) || (canClose && status !== "done")) && (
@@ -926,154 +955,8 @@ function Kanban({ project, tasks, members, stages, stageFilter, setStageFilter, 
         })}
       </div>
       )}
+      {panel && <TaskPanel taskId={panel} onClose={() => setPanel(null)} />}
     </div>
-  );
-}
-
-/** Étiquettes d'une carte : étape, priorité de la semaine, livrable, priorité haute. Toujours un mot, pas seulement une couleur. */
-function TaskTags({ task, stage, pinned }: { task: SyncRecord; stage: string; pinned: boolean }) {
-  const done = task.data.status === "done";
-  const reserve = task.data.kind === "reserve";
-  if (!stage && !pinned && !task.data.deliverable && task.data.priority !== "high" && !reserve) return null;
-  return (
-    <div className="task-tags">
-      {stage && <span className="tag stage-tag"><PIcon name="diamond" />{stage}</span>}
-      {reserve && <span className="tag warn">Réserve</span>}
-      {pinned && <span className="tag"><PIcon name="pushpin" />Priorité</span>}
-      {task.data.deliverable ? <span className={`tag ${done ? "ok" : "info"}`}>{done ? "Remis au client" : "À remettre au client"}</span> : null}
-      {task.data.priority === "high" && !reserve && <span className="tag danger">Priorité haute</span>}
-    </div>
-  );
-}
-
-function TaskForm({ task, members, stages, onClose }: { task: SyncRecord; members: SyncRecord[]; stages: StageInfo<SyncRecord>[]; onClose: () => void }) {
-  const write = useGuardedWrite();
-  const team = useTeam();
-  const [error, setError] = useState<string | null>(null);
-  const legacy = !task.data.assignee_id && task.data.assignee ? text(task.data.assignee) : "";
-  const suggestion = legacy ? matchTeamMember(legacy, team) : null;
-  const [assignee, setAssignee] = useState(text(task.data.assignee_id));
-  // Personnes du projet d'abord, puis le reste de l'annuaire actif.
-  const inProject = new Set(members.map((m) => text(m.data.team_member_id)));
-  const choices = team.filter((m) => m.data.active !== false || m.id === assignee);
-  const ordered = [...choices.filter((m) => inProject.has(m.id)), ...choices.filter((m) => !inProject.has(m.id))];
-
-  async function save(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const f = Object.fromEntries(new FormData(e.currentTarget)) as Record<string, string>;
-    const values: Record<string, unknown> = {
-      title: f.title, description: f.description, assignee_id: assignee, start_date: f.start_date, due_date: f.due_date,
-      estimate_hours: Number(f.estimate_hours) || 0, priority: f.priority, deliverable: f.deliverable === "on",
-      ...(stages.length ? { stage_id: f.stage_id ?? "" } : {}),
-    };
-    const patch: Record<string, unknown> = {};
-    for (const [k, v] of Object.entries(values)) if ((task.data[k] ?? "") !== v) patch[k] = v;
-    if (task.data.estimate_hours === undefined && values.estimate_hours === 0) delete patch.estimate_hours;
-    if (task.data.deliverable === undefined && values.deliverable === false) delete patch.deliverable;
-    try {
-      if (Object.keys(patch).length) await write("tasks", task.id, patch);
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "La tâche n'a pas pu être enregistrée.");
-    }
-  }
-  async function remove() {
-    if (!confirm(`Supprimer la tâche « ${text(task.data.title)} » ? Le temps déjà saisi reste sur le projet.`)) return;
-    try {
-      await write("tasks", task.id, { _deleted: true });
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "La tâche n'a pas pu être supprimée.");
-    }
-  }
-  return (
-    <form className="task-form" onSubmit={save} onKeyDown={(e) => e.key === "Escape" && onClose()}>
-      <label>Titre<input name="title" required defaultValue={text(task.data.title)} autoFocus /></label>
-      <label>Description<textarea name="description" rows={2} defaultValue={text(task.data.description)} /></label>
-      <label>
-        Attribuée à
-        <select value={assignee} onChange={(e) => setAssignee(e.target.value)}>
-          <option value="">{legacy ? `${legacy} (nom saisi avant l'annuaire)` : "Personne pour l'instant"}</option>
-          {ordered.map((m) => <option key={m.id} value={m.id}>{text(m.data.name)}{inProject.has(m.id) ? "" : " (pas sur ce projet)"}</option>)}
-        </select>
-      </label>
-      {legacy && !assignee && (
-        <p className="legacy-hint small">
-          Nom saisi avant l'annuaire : « {legacy} ».{" "}
-          {suggestion ? <button type="button" className="link" onClick={() => setAssignee(suggestion.id)}>Choisir {text(suggestion.data.name)}</button> : "Choisissez la personne dans la liste."}
-        </p>
-      )}
-      <div className="task-form-row dates">
-        <label>Début<input type="date" name="start_date" defaultValue={text(task.data.start_date)} /></label>
-        <label>Échéance<input type="date" name="due_date" defaultValue={text(task.data.due_date)} /></label>
-      </div>
-      {stages.length > 0 && (
-        <label>
-          Étape
-          <select name="stage_id" defaultValue={text(task.data.stage_id)}>
-            <option value="">Sans étape</option>
-            {stages.map((i) => <option key={i.stage.id} value={i.stage.id}>{text(i.stage.data.name)}</option>)}
-          </select>
-        </label>
-      )}
-      <div className="task-form-row">
-        <label>Estimation (h)<input type="number" min="0" step="0.5" name="estimate_hours" defaultValue={text(task.data.estimate_hours)} /></label>
-        <label>
-          Priorité
-          <select name="priority" defaultValue={text(task.data.priority) || "normal"}>
-            {Object.entries(PRIORITY).map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
-        </label>
-      </div>
-      <label className="inline check-line"><input type="checkbox" name="deliverable" defaultChecked={Boolean(task.data.deliverable)} /> Livrable à remettre</label>
-      {task.data.blocked ? (
-        <button type="button" className="ghost small" onClick={() => write("tasks", task.id, { blocked: false, blocked_reason: "", blocked_note: "" })}>Débloquer la tâche</button>
-      ) : null}
-      {error && <p className="error">{error}</p>}
-      <div className="form-actions">
-        <button type="button" className="ghost danger small" onClick={remove}>Supprimer</button>
-        <button type="button" className="ghost small" onClick={onClose}>Annuler</button>
-        <button className="primary small">Enregistrer</button>
-      </div>
-    </form>
-  );
-}
-
-/** Ce qu'un employé modifie sur une tâche : la description, et la prendre si elle est libre. */
-function EmployeeTaskForm({ task, onClose }: { task: SyncRecord; onClose: () => void }) {
-  const { session } = useApp();
-  const write = useGuardedWrite();
-  const team = useTeam();
-  const [error, setError] = useState<string | null>(null);
-  const me = teamMemberIdOf(session.user.id);
-  const person = assigneeOf(task, team);
-  const due = text(task.data.due_date);
-  async function save(e: FormEvent<HTMLFormElement>) {
-    e.preventDefault();
-    const description = String(new FormData(e.currentTarget).get("description") ?? "");
-    try {
-      if (description !== text(task.data.description)) await write("tasks", task.id, { description });
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "La tâche n'a pas pu être enregistrée.");
-    }
-  }
-  return (
-    <form className="task-form" onSubmit={save} onKeyDown={(e) => e.key === "Escape" && onClose()}>
-      <strong>{text(task.data.title)}</strong>
-      <p className="muted small task-form-facts">
-        {person ? `Attribuée à ${person.name}` : "Non attribuée"}
-        {due ? ` · échéance le ${formatDate(due)}` : ""}
-        {task.data.estimate_hours ? ` · ${hoursLabel(Number(task.data.estimate_hours))} estimées` : ""}
-      </p>
-      <label>Description et remarques<textarea name="description" rows={3} defaultValue={text(task.data.description)} /></label>
-      {!task.data.assignee_id && <button type="button" className="small" onClick={() => write("tasks", task.id, { assignee_id: me }).then(onClose, (err) => setError(err.message))}>Prendre cette tâche</button>}
-      {error && <p className="error">{error}</p>}
-      <div className="form-actions">
-        <button type="button" className="ghost small" onClick={onClose}>Annuler</button>
-        <button className="primary small">Enregistrer</button>
-      </div>
-    </form>
   );
 }
 
