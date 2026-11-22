@@ -245,7 +245,7 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
             <p className="auth-switch">Nouvelle entreprise ? <button type="button" className="link" onClick={() => switchTo("signup")}>Créer mon entreprise</button></p>
             <details className="small muted">
               <summary>Mot de passe oublié ?</summary>
-              <p>Demandez à l'administrateur de votre entreprise de vous donner un mot de passe provisoire (Réglages › Utilisateurs). Si vous êtes l'administrateur, contactez l'équipe Gestia.</p>
+              <p>Un mot de passe provisoire se crée dans Réglages › Utilisateurs. Si personne dans votre espace ne peut le faire, écrivez à l'équipe Gestia.</p>
               <SupportLine support={support} prefix="Équipe Gestia :" />
             </details>
           </>
