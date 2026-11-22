@@ -1,11 +1,14 @@
 import { isValidHlc, type Hlc } from "./hlc.ts";
 import type { SubscriptionInfo } from "./plans.ts";
 import { QUOTE_SERIES } from "./documents.ts";
+import { checkProjectChange, checkProjectPermission, COMPANY_COST_ID, type ProjectContext } from "./projectRules.ts";
 
 /** Tables synchronisées entre appareils. */
 export const SYNC_TABLES = [
   "clients", "articles", "quotes", "invoices", "credit_notes", "payments",
   "expenses", "settings", "journal_entries", "projects", "tasks", "time_entries",
+  // Module Projets, lot 1 : annuaire, coûts horaires (protégés), données financières (protégées), équipe du projet.
+  "team_members", "cost_rates", "project_finance", "project_members",
 ] as const;
 export type SyncTable = (typeof SYNC_TABLES)[number];
 
@@ -88,7 +91,7 @@ export function isNumbered(data: Fields | undefined): boolean {
 export function checkChange(existing: SyncRecord | null, change: Change): string | null {
   if (!(SYNC_TABLES as readonly string[]).includes(change.tbl)) return "table inconnue";
   if (!isValidHlc(change.hlc)) return "horodatage invalide";
-  if (typeof change.row !== "string" || change.row.length < 3 || change.row.length > 64) return "identifiant de ligne invalide";
+  if (typeof change.row !== "string" || change.row.length < 3 || change.row.length > 96) return "identifiant de ligne invalide";
   if (!change.patch || typeof change.patch !== "object" || Array.isArray(change.patch)) return "contenu invalide";
   if (Object.keys(change.patch).length === 0) return "modification vide";
 
@@ -113,7 +116,7 @@ export function checkChange(existing: SyncRecord | null, change: Change): string
       return "le numéro n'est attribué qu'à la validation";
     }
   }
-  return null;
+  return checkProjectChange(existing, change);
 }
 
 /** Tables dont les lignes portent une date comptable, verrouillées après clôture. */
@@ -124,8 +127,10 @@ const WRITABLE: Record<string, readonly string[] | "all"> = {
   admin: "all",
   director: "all",
   accountant: "all",
-  sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses", "projects", "tasks", "time_entries"],
-  project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks", "time_entries"],
+  sales: ["clients", "articles", "quotes", "invoices", "credit_notes", "payments", "expenses", "projects", "tasks", "time_entries",
+    "project_finance", "project_members"],
+  project_manager: ["clients", "quotes", "invoices", "payments", "expenses", "projects", "tasks", "time_entries",
+    "project_finance", "project_members"],
   employee: ["expenses", "tasks", "time_entries"],
 };
 
@@ -138,7 +143,7 @@ export interface Actor {
  * Droits et clôture, vérifiés par le serveur (et utilisables par l'appareil).
  * `closedUntil` : dernière date clôturée (AAAA-MM-JJ), ou vide.
  */
-export function checkPermission(actor: Actor, existing: SyncRecord | null, change: Change, closedUntil = ""): string | null {
+export function checkPermission(actor: Actor, existing: SyncRecord | null, change: Change, closedUntil = "", ctx?: ProjectContext): string | null {
   const writable = WRITABLE[actor.role] ?? [];
   if (writable !== "all" && !writable.includes(change.tbl)) return "votre rôle ne permet pas cette modification";
 
@@ -171,7 +176,7 @@ export function checkPermission(actor: Actor, existing: SyncRecord | null, chang
       return `période clôturée jusqu'au ${closedUntil.split("-").reverse().join("/")}`;
     }
   }
-  return null;
+  return checkProjectPermission(actor, existing, change, ctx);
 }
 
 /** Requête et réponse de l'unique point d'échange /api/sync. */
@@ -192,23 +197,40 @@ const READABLE: Record<string, readonly string[] | "all"> = {
   accountant: "all",
   project_manager: SYNC_TABLES.filter((t) => t !== "journal_entries"),
   sales: SYNC_TABLES.filter((t) => t !== "journal_entries"),
-  employee: ["settings", "projects", "tasks", "time_entries", "expenses"],
+  // Aucune table de montants (project_finance, cost_rates) ; les anciens champs
+  // de montant de `projects` sont retirés à l'envoi (redactPatch).
+  employee: ["settings", "projects", "tasks", "time_entries", "expenses", "team_members", "project_members"],
 };
 const OWN_ONLY: Record<string, readonly string[]> = {
   sales: ["expenses"],
   employee: ["expenses"],
 };
 
-export function canRead(actor: Actor, tbl: string, owner: unknown): boolean {
+/**
+ * Coût horaire par personne : direction et comptable seulement. Le chef de projet
+ * et le commercial ne lisent que le coût moyen de l'entreprise (arbitrage 2).
+ */
+const COST_RATES_ALL = ["admin", "director", "accountant"];
+
+export function canRead(actor: Actor, tbl: string, owner: unknown, rowId?: string): boolean {
   const readable = READABLE[actor.role] ?? [];
   if (readable !== "all" && !readable.includes(tbl)) return false;
+  if (tbl === "cost_rates" && !COST_RATES_ALL.includes(actor.role)) return rowId === COMPANY_COST_ID;
   if ((OWN_ONLY[actor.role] ?? []).includes(tbl)) return owner === actor.userId;
   return true;
 }
 
+/**
+ * Version des règles de lecture. Quand elle change, l'appareil d'un employé
+ * repart de zéro pour effacer les montants reçus avant le filtrage (lot 1).
+ */
+export const DATA_EPOCH = 1;
+
 export interface SyncResponse {
   /** Rôle pris en compte : s'il change, l'appareil repart de zéro. */
   role: string;
+  /** Version des règles de lecture (voir DATA_EPOCH). */
+  dataEpoch?: number;
   /** État de l'abonnement de l'entreprise (lecture seule si expiré ou suspendu). */
   subscription?: SubscriptionInfo;
   accepted: string[];

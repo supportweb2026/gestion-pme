@@ -5,9 +5,10 @@
 import type { D1PreparedStatement, Env } from "./d1.ts";
 import { hashPassword, signToken, verifyPassword, verifyToken, type Session } from "./auth.ts";
 import {
-  applyChange, canRead, checkChange, checkPermission, MAX_PULL, MAX_PUSH,
+  applyChange, canRead, checkChange, checkPermission, DATA_EPOCH, MAX_PULL, MAX_PUSH,
   type Change, type SyncRecord, type SyncRequest, type SyncResponse,
 } from "../shared/sync.ts";
+import { redactPatch, redactRecord, type ProjectContext } from "../shared/projectRules.ts";
 import { decodeHlc } from "../shared/hlc.ts";
 import { extendPaidUntil, PLANS, subscriptionInfo, TRIAL_DAYS, type CompanySubscription } from "../shared/plans.ts";
 
@@ -300,6 +301,42 @@ function parseRecord(row: { tbl: string; id: string; data: string; clocks: strin
 }
 
 /**
+ * Contexte projet des règles (équipe du projet, statut du projet), lu en une
+ * seule requête et seulement si l'envoi touche des tâches ou des temps.
+ * Les lignes acceptées plus tôt dans le même envoi (map `records`) priment.
+ */
+async function loadProjectContext(env: Env, companyId: string, incoming: Change[], records: Map<string, SyncRecord | null>): Promise<ProjectContext | undefined> {
+  const ids = new Set<string>();
+  for (const c of incoming) {
+    if (c.tbl !== "tasks" && c.tbl !== "time_entries") continue;
+    const pid = c.patch.project_id ?? records.get(`${c.tbl}/${c.row}`)?.data.project_id;
+    if (typeof pid === "string" && pid) ids.add(pid);
+  }
+  if (ids.size === 0) return undefined;
+  const { results } = await env.DB.prepare(
+    `SELECT tbl, id, data, clocks FROM records
+     WHERE company_id = ? AND (
+       (tbl = 'projects' AND id IN (SELECT value FROM json_each(?)))
+       OR (tbl = 'project_members' AND json_extract(data, '$.project_id') IN (SELECT value FROM json_each(?))))`,
+  ).bind(companyId, JSON.stringify([...ids]), JSON.stringify([...ids])).all<{ tbl: string; id: string; data: string; clocks: string }>();
+  const loaded = new Map<string, SyncRecord>();
+  for (const r of results) loaded.set(`${r.tbl}/${r.id}`, parseRecord(r)!);
+  const current = (key: string) => (records.has(key) ? records.get(key) ?? null : loaded.get(key) ?? null);
+  return {
+    project: (pid) => current(`projects/${pid}`),
+    rolesIn: (pid, uid) => {
+      const keys = new Set([...loaded.keys(), ...records.keys()].filter((k) => k.startsWith("project_members/")));
+      const roles: string[] = [];
+      for (const k of keys) {
+        const m = current(k);
+        if (m && !m.data._deleted && m.data.project_id === pid && m.data.user_id === uid) roles.push(String(m.data.role ?? "member"));
+      }
+      return roles;
+    },
+  };
+}
+
+/**
  * Point d'échange unique : envoie les modifications de l'appareil et reçoit
  * celles des autres en un seul aller-retour (une seule requête facturée).
  */
@@ -343,6 +380,7 @@ async function handleSync(req: Request, env: Env, s: Session, company: Company) 
     ).bind(s.cid).first<{ closed: string | null }>();
     const closedUntil = settingsRow?.closed ?? "";
     const actor = { userId: s.sub, role: s.role };
+    const ctx = await loadProjectContext(env, s.cid, incoming, records);
 
     const statements: D1PreparedStatement[] = [];
     const touched = new Set<string>();
@@ -355,12 +393,12 @@ async function handleSync(req: Request, env: Env, s: Session, company: Company) 
       }
       const key = `${c.tbl}/${c.row}`;
       const existing = records.get(key) ?? null;
-      let reason = c.device !== s.dev ? "appareil incohérent" : checkChange(existing, c) ?? checkPermission(actor, existing, c, closedUntil);
+      let reason = c.device !== s.dev ? "appareil incohérent" : checkChange(existing, c) ?? checkPermission(actor, existing, c, closedUntil, ctx);
       if (!reason && decodeHlc(c.hlc).ms > Date.now() + MAX_CLOCK_AHEAD_MS) {
         reason = "horloge de l'appareil trop en avance : corrigez la date du téléphone";
       }
       if (reason) {
-        rejected.push({ id: c.id, reason, record: existing });
+        rejected.push({ id: c.id, reason, record: redactRecord(actor, existing) });
         continue;
       }
       const { record } = applyChange(existing, c);
@@ -403,12 +441,16 @@ async function handleSync(req: Request, env: Env, s: Session, company: Company) 
   const more = results.length > MAX_PULL;
   const page = more ? results.slice(0, MAX_PULL) : results;
   const reader = { userId: s.sub, role: s.role };
-  const changes: Change[] = page
-    .filter((r) => r.device_id !== s.dev && canRead(reader, r.tbl, r.owner))
-    .map((r) => ({ id: r.op_id, tbl: r.tbl as Change["tbl"], row: r.row_id, patch: JSON.parse(r.patch), hlc: r.hlc, device: r.device_id }));
+  // Les montants sont retirés de tout l'historique rejoué (redactPatch, lot 1 Projets).
+  const changes: Change[] = [];
+  for (const r of page) {
+    if (r.device_id === s.dev || !canRead(reader, r.tbl, r.owner, r.row_id)) continue;
+    const patch = redactPatch(reader, r.tbl, JSON.parse(r.patch));
+    if (patch) changes.push({ id: r.op_id, tbl: r.tbl as Change["tbl"], row: r.row_id, patch, hlc: r.hlc, device: r.device_id });
+  }
   const cursor = page.length > 0 ? page[page.length - 1].seq : since;
 
-  const response: SyncResponse = { role: s.role, accepted, rejected, changes, cursor, more, subscription };
+  const response: SyncResponse = { role: s.role, dataEpoch: DATA_EPOCH, accepted, rejected, changes, cursor, more, subscription };
   return json(response);
 }
 
