@@ -10,6 +10,7 @@ import { DEFAULT_REMINDER_STEPS, reminderSettings, stepLabel } from "../../share
 import { DEFAULT_VAT_RATES, fiscalSettings, type WithholdingPreset } from "../../shared/taxes.ts";
 import { DOC_COLORS, docColor, softOf, tooLight } from "../../shared/branding.ts";
 import qrcode from "qrcode-generator";
+import { API_TABLE_LABELS, API_TABLES, type ApiMode } from "../../shared/apiKeys.ts";
 
 const COMPANY_FIELDS: { name: string; label: string; placeholder?: string; wide?: boolean }[] = [
   { name: "name", label: "Raison sociale" },
@@ -63,6 +64,7 @@ export function Settings() {
       {can.manageCompany(session.user.role) && <CurrencySettings />}
       {can.manageUsers(session.user.role) && <Users />}
       {can.manageCompany(session.user.role) && <DataExport />}
+      {session.user.role === "admin" && <ApiKeys />}
     </section>
   );
 }
@@ -904,5 +906,107 @@ function TargetCard() {
         <button className="primary">Enregistrer</button>
       </div>
     </form>
+  );
+}
+
+interface ApiKeyRow { id: string; name: string; hint: string; scopes: Record<string, ApiMode>; created_at: string; last_used_at: string | null; revoked: boolean }
+
+/** Jetons d'accès à l'API : pour relier Gestia à un autre outil ou à un agent, table par table. */
+function ApiKeys() {
+  const [keys, setKeys] = useState<ApiKeyRow[] | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [scopes, setScopes] = useState<Record<string, ApiMode | "">>({});
+  const [created, setCreated] = useState<{ token: string; name: string } | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [busy, setBusy] = useState(false);
+  const load = () => api<{ keys: ApiKeyRow[] }>("/api/keys").then((r) => setKeys(r.keys)).catch(() => setKeys(null));
+  useEffect(() => { load(); }, []);
+  const label = (m: ApiMode) => (m === "rw" ? "lecture et écriture" : "lecture");
+  const summary = (sc: Record<string, ApiMode>) => Object.entries(sc).map(([t, m]) => `${API_TABLE_LABELS[t] ?? t} (${label(m)})`).join(", ");
+
+  async function create(e: FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    setError(null);
+    const name = String(new FormData(e.currentTarget).get("name") ?? "").trim();
+    const chosen = Object.fromEntries(Object.entries(scopes).filter(([, m]) => m));
+    if (!name) return setError("Donnez un nom au jeton.");
+    if (Object.keys(chosen).length === 0) return setError("Choisissez au moins une table.");
+    setBusy(true);
+    try {
+      const r = await api<{ token: string; name: string }>("/api/keys", { name, scopes: chosen });
+      setCreated(r);
+      setCreating(false);
+      setScopes({});
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? sentence(err.message) : "Connexion internet nécessaire.");
+    } finally { setBusy(false); }
+  }
+
+  async function revoke(k: ApiKeyRow) {
+    if (!confirm(`Révoquer le jeton « ${k.name} » ? Les outils qui l'utilisent perdront l'accès immédiatement.`)) return;
+    await api("/api/keys/revoke", { id: k.id }).catch(() => undefined);
+    load();
+  }
+
+  if (keys === null) return null;
+  const active = keys.filter((k) => !k.revoked);
+  return (
+    <section className="card section-card api-keys" aria-label="Accès par API">
+      <div className="section-head">
+        <div>
+          <h3>Accès par API</h3>
+          <p className="muted small">Un jeton relie Gestia à un autre outil ou à un agent, limité aux tables choisies. Les écritures sont faites avec vos droits ; les coûts horaires, les données financières des projets et les réglages restent fermés.</p>
+        </div>
+        {!creating && <button onClick={() => { setCreating(true); setCreated(null); }}>Nouveau jeton</button>}
+      </div>
+
+      {created && (
+        <div className="api-created" role="status">
+          <p><b>Jeton « {created.name} » créé.</b> Copiez-le maintenant : il ne sera plus affiché.</p>
+          <div className="api-token"><code data-testid="api-token">{created.token}</code>
+            <button type="button" className="small" onClick={() => navigator.clipboard?.writeText(created.token)}>Copier</button></div>
+          <p className="muted small">Exemple : <code>curl -H "Authorization: Bearer {created.token.slice(0, 8)}…" {location.origin}/api/v1/tasks</code></p>
+        </div>
+      )}
+
+      {creating && (
+        <form className="api-form" onSubmit={create} aria-label="Nouveau jeton">
+          <label>Nom du jeton<input name="name" placeholder="Agent de suivi des projets" maxLength={60} autoFocus /></label>
+          <div className="api-scopes">
+            {API_TABLES.map((t) => (
+              <label key={t} className="api-scope">
+                <span>{API_TABLE_LABELS[t] ?? t}</span>
+                <select aria-label={`Accès : ${API_TABLE_LABELS[t] ?? t}`} value={scopes[t] ?? ""} onChange={(e) => setScopes((s) => ({ ...s, [t]: e.target.value as ApiMode | "" }))}>
+                  <option value="">Aucun</option>
+                  <option value="r">Lecture</option>
+                  <option value="rw">Lecture et écriture</option>
+                </select>
+              </label>
+            ))}
+          </div>
+          {error && <p className="error" role="alert">{error}</p>}
+          <div className="form-actions">
+            <button type="button" className="ghost" onClick={() => { setCreating(false); setError(null); }}>Annuler</button>
+            <button className="primary" disabled={busy}>Créer le jeton</button>
+          </div>
+        </form>
+      )}
+
+      {active.length > 0 ? (
+        <ul className="list-rows api-list">
+          {active.map((k) => (
+            <li key={k.id} className="api-row">
+              <span className="grow">
+                <b>{k.name}</b> <span className="muted mono small">…{k.hint}</span>
+                <small className="muted">{summary(k.scopes)}</small>
+                <small className="muted">{k.last_used_at ? `Utilisé le ${formatDate(k.last_used_at.slice(0, 10))}` : "Jamais utilisé"}</small>
+              </span>
+              <button className="ghost" onClick={() => revoke(k)}>Révoquer</button>
+            </li>
+          ))}
+        </ul>
+      ) : !creating && !created && <p className="muted small">Aucun jeton actif.</p>}
+    </section>
   );
 }

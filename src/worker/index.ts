@@ -9,7 +9,8 @@ import {
   type Change, type SyncRecord, type SyncRequest, type SyncResponse,
 } from "../shared/sync.ts";
 import { redactPatch, redactRecord, type ProjectContext } from "../shared/projectRules.ts";
-import { decodeHlc } from "../shared/hlc.ts";
+import { decodeHlc, encodeHlc } from "../shared/hlc.ts";
+import { allows, API_TOKEN_RE, parseScopes, type ApiScopes } from "../shared/apiKeys.ts";
 import { extendPaidUntil, PLANS, subscriptionInfo, TRIAL_DAYS, type CompanySubscription } from "../shared/plans.ts";
 import { hashRecoveryCode, newRecoveryCodes, newTotpSecret, otpauthUri, verifyTotp } from "../shared/totp.ts";
 
@@ -417,6 +418,86 @@ async function loadProjectContext(env: Env, companyId: string, incoming: Change[
 }
 
 /**
+ * Applique un lot de modifications (appareil ou API) : idempotence, règles de droits,
+ * fusion champ par champ, puis écriture en une transaction.
+ */
+async function applyIncoming(env: Env, s: Pick<Session, "sub" | "cid" | "role" | "dev">, incoming: Change[]) {
+  const accepted: string[] = [];
+  const rejected: SyncResponse["rejected"] = [];
+  // Lectures groupées : modifications déjà reçues (renvoi après coupure) et lignes concernées.
+  const ids = JSON.stringify(incoming.map((c) => c.id));
+  const seenRows = await env.DB.prepare(
+    `SELECT op_id FROM changes WHERE op_id IN (SELECT value FROM json_each(?))`,
+  ).bind(ids).all<{ op_id: string }>();
+  const seen = new Set(seenRows.results.map((r) => r.op_id));
+
+  const keys = JSON.stringify(incoming.map((c) => [c.tbl, c.row]));
+  const recRows = await env.DB.prepare(
+    `SELECT r.tbl, r.id, r.data, r.clocks FROM records r
+     JOIN (SELECT DISTINCT json_extract(value, '$[0]') AS tbl, json_extract(value, '$[1]') AS id FROM json_each(?)) k
+       ON r.tbl = k.tbl AND r.id = k.id
+     WHERE r.company_id = ?`,
+  ).bind(keys, s.cid).all<{ tbl: string; id: string; data: string; clocks: string }>();
+  const records = new Map<string, SyncRecord | null>();
+  for (const r of recRows.results) records.set(`${r.tbl}/${r.id}`, parseRecord(r));
+
+  // Date de clôture comptable, lue une fois par envoi.
+  const settingsRow = await env.DB.prepare(
+    `SELECT json_extract(data, '$.closed_until') AS closed FROM records WHERE company_id = ? AND tbl = 'settings' AND id = 'company'`,
+  ).bind(s.cid).first<{ closed: string | null }>();
+  const closedUntil = settingsRow?.closed ?? "";
+  const actor = { userId: s.sub, role: s.role };
+  const ctx = await loadProjectContext(env, s.cid, incoming, records);
+
+  const statements: D1PreparedStatement[] = [];
+  const touched = new Set<string>();
+  const receivedAt = now();
+
+  for (const c of incoming) {
+    if (seen.has(c.id)) {
+      accepted.push(c.id); // déjà appliquée : on confirme sans rien réécrire
+      continue;
+    }
+    const key = `${c.tbl}/${c.row}`;
+    const existing = records.get(key) ?? null;
+    let reason = c.device !== s.dev ? "appareil incohérent" : checkChange(existing, c) ?? checkPermission(actor, existing, c, closedUntil, ctx);
+    if (!reason && decodeHlc(c.hlc).ms > Date.now() + MAX_CLOCK_AHEAD_MS) {
+      reason = "horloge de l'appareil trop en avance : corrigez la date du téléphone";
+    }
+    if (reason) {
+      rejected.push({ id: c.id, reason, record: redactRecord(actor, existing) });
+      continue;
+    }
+    const { record } = applyChange(existing, c);
+    records.set(key, record);
+    touched.add(key);
+    seen.add(c.id);
+    accepted.push(c.id);
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO changes (op_id, company_id, device_id, user_id, tbl, row_id, patch, hlc, received_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(c.id, s.cid, s.dev, s.sub, c.tbl, c.row, JSON.stringify(c.patch), c.hlc, receivedAt),
+    );
+  }
+
+  // Une seule écriture par ligne touchée, avec son état final fusionné.
+  for (const key of touched) {
+    const r = records.get(key)!;
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO records (company_id, tbl, id, data, clocks, updated_seq)
+         VALUES (?, ?, ?, ?, ?, (SELECT MAX(seq) FROM changes))
+         ON CONFLICT(company_id, tbl, id) DO UPDATE SET data = excluded.data, clocks = excluded.clocks, updated_seq = excluded.updated_seq`,
+      ).bind(s.cid, r.tbl, r.id, JSON.stringify(r.data), JSON.stringify(r.clocks)),
+    );
+  }
+  // batch = une transaction : tout est écrit, ou rien.
+  if (statements.length > 0) await env.DB.batch(statements);
+  return { accepted, rejected };
+}
+
+/**
  * Point d'échange unique : envoie les modifications de l'appareil et reçoit
  * celles des autres en un seul aller-retour (une seule requête facturée).
  */
@@ -430,84 +511,12 @@ async function handleSync(req: Request, env: Env, s: Session, company: Company) 
     if (!c || typeof c.id !== "string" || c.id.length < 8 || c.id.length > 64) throw new HttpError(400, "modification sans identifiant");
   }
 
-  const accepted: string[] = [];
-  const rejected: SyncResponse["rejected"] = [];
-
   // Abonnement expiré ou suspendu : consultation seule. Les modifications ne sont
   // ni acceptées ni refusées : elles restent en attente sur l'appareil, sans perte,
   // et partiront dès le renouvellement.
-  if (incoming.length > 0 && !subscription.readOnly) {
-    // Lectures groupées : modifications déjà reçues (renvoi après coupure) et lignes concernées.
-    const ids = JSON.stringify(incoming.map((c) => c.id));
-    const seenRows = await env.DB.prepare(
-      `SELECT op_id FROM changes WHERE op_id IN (SELECT value FROM json_each(?))`,
-    ).bind(ids).all<{ op_id: string }>();
-    const seen = new Set(seenRows.results.map((r) => r.op_id));
-
-    const keys = JSON.stringify(incoming.map((c) => [c.tbl, c.row]));
-    const recRows = await env.DB.prepare(
-      `SELECT r.tbl, r.id, r.data, r.clocks FROM records r
-       JOIN (SELECT DISTINCT json_extract(value, '$[0]') AS tbl, json_extract(value, '$[1]') AS id FROM json_each(?)) k
-         ON r.tbl = k.tbl AND r.id = k.id
-       WHERE r.company_id = ?`,
-    ).bind(keys, s.cid).all<{ tbl: string; id: string; data: string; clocks: string }>();
-    const records = new Map<string, SyncRecord | null>();
-    for (const r of recRows.results) records.set(`${r.tbl}/${r.id}`, parseRecord(r));
-
-    // Date de clôture comptable, lue une fois par envoi.
-    const settingsRow = await env.DB.prepare(
-      `SELECT json_extract(data, '$.closed_until') AS closed FROM records WHERE company_id = ? AND tbl = 'settings' AND id = 'company'`,
-    ).bind(s.cid).first<{ closed: string | null }>();
-    const closedUntil = settingsRow?.closed ?? "";
-    const actor = { userId: s.sub, role: s.role };
-    const ctx = await loadProjectContext(env, s.cid, incoming, records);
-
-    const statements: D1PreparedStatement[] = [];
-    const touched = new Set<string>();
-    const receivedAt = now();
-
-    for (const c of incoming) {
-      if (seen.has(c.id)) {
-        accepted.push(c.id); // déjà appliquée : on confirme sans rien réécrire
-        continue;
-      }
-      const key = `${c.tbl}/${c.row}`;
-      const existing = records.get(key) ?? null;
-      let reason = c.device !== s.dev ? "appareil incohérent" : checkChange(existing, c) ?? checkPermission(actor, existing, c, closedUntil, ctx);
-      if (!reason && decodeHlc(c.hlc).ms > Date.now() + MAX_CLOCK_AHEAD_MS) {
-        reason = "horloge de l'appareil trop en avance : corrigez la date du téléphone";
-      }
-      if (reason) {
-        rejected.push({ id: c.id, reason, record: redactRecord(actor, existing) });
-        continue;
-      }
-      const { record } = applyChange(existing, c);
-      records.set(key, record);
-      touched.add(key);
-      seen.add(c.id);
-      accepted.push(c.id);
-      statements.push(
-        env.DB.prepare(
-          `INSERT INTO changes (op_id, company_id, device_id, user_id, tbl, row_id, patch, hlc, received_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        ).bind(c.id, s.cid, s.dev, s.sub, c.tbl, c.row, JSON.stringify(c.patch), c.hlc, receivedAt),
-      );
-    }
-
-    // Une seule écriture par ligne touchée, avec son état final fusionné.
-    for (const key of touched) {
-      const r = records.get(key)!;
-      statements.push(
-        env.DB.prepare(
-          `INSERT INTO records (company_id, tbl, id, data, clocks, updated_seq)
-           VALUES (?, ?, ?, ?, ?, (SELECT MAX(seq) FROM changes))
-           ON CONFLICT(company_id, tbl, id) DO UPDATE SET data = excluded.data, clocks = excluded.clocks, updated_seq = excluded.updated_seq`,
-        ).bind(s.cid, r.tbl, r.id, JSON.stringify(r.data), JSON.stringify(r.clocks)),
-      );
-    }
-    // batch = une transaction : tout est écrit, ou rien.
-    if (statements.length > 0) await env.DB.batch(statements);
-  }
+  const { accepted, rejected } = incoming.length > 0 && !subscription.readOnly
+    ? await applyIncoming(env, s, incoming)
+    : { accepted: [] as string[], rejected: [] as SyncResponse["rejected"] };
 
   // Réception : modifications postérieures au curseur, hors celles de cet appareil,
   // limitées à ce que le rôle de l'utilisateur peut voir.
@@ -728,6 +737,164 @@ async function handleFile(req: Request, env: Env, s: Session, id: string) {
   throw new HttpError(405, "méthode non autorisée");
 }
 
+// ---------------------------------------------------------------------------
+// API publique (lot 8d) : jetons à portée limitée, créés dans Réglages › API.
+// ---------------------------------------------------------------------------
+
+async function sha256Hex(text: string): Promise<string> {
+  const d = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(d)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+
+function randomString(n: number, alphabet: string): string {
+  const bytes = crypto.getRandomValues(new Uint8Array(n));
+  return [...bytes].map((b) => alphabet[b % alphabet.length]).join("");
+}
+
+const apiDevice = (keyId: string) => `api-${keyId}`;
+
+/** Gestion des jetons par les administrateurs : liste, création (jeton montré une fois), révocation. */
+async function handleApiKeys(req: Request, env: Env, s: Session, action: string) {
+  if (s.role !== "admin") throw new HttpError(403, "réservé aux administrateurs");
+  if (action === "" && req.method === "GET") {
+    const { results } = await env.DB.prepare(
+      `SELECT id, name, hint, scopes, created_at, last_used_at, revoked FROM api_keys WHERE company_id = ? ORDER BY created_at DESC`,
+    ).bind(s.cid).all<{ id: string; name: string; hint: string; scopes: string; created_at: string; last_used_at: string | null; revoked: number }>();
+    return json({ keys: results.map((k) => ({ ...k, scopes: JSON.parse(k.scopes), revoked: !!k.revoked })) });
+  }
+  if (action === "" && req.method === "POST") {
+    const body = await readJson<Record<string, unknown>>(req);
+    const name = str(body.name, "nom", 60);
+    const scopes = parseScopes(body.scopes);
+    if (Object.keys(scopes).length === 0) throw new HttpError(400, "choisissez au moins une table");
+    const { n } = (await env.DB.prepare(`SELECT COUNT(*) AS n FROM api_keys WHERE company_id = ? AND revoked = 0`).bind(s.cid).first<{ n: number }>())!;
+    if (n >= 20) throw new HttpError(400, "20 jetons actifs au plus : révoquez-en un");
+    const id = randomString(12, "abcdefghijklmnopqrstuvwxyz0123456789");
+    const token = `gst_${id}_${randomString(32, "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789")}`;
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO api_keys (id, company_id, user_id, name, hash, hint, scopes, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      ).bind(id, s.cid, s.sub, name, await sha256Hex(token), token.slice(-4), JSON.stringify(scopes), now()),
+      // Pseudo-appareil du jeton : ses écritures sont redistribuées comme celles d'un appareil.
+      env.DB.prepare(`INSERT INTO devices (id, company_id, user_id, last_seen) VALUES (?, ?, ?, ?)`).bind(apiDevice(id), s.cid, s.sub, now()),
+    ]);
+    return json({ id, name, token, scopes });
+  }
+  if (action === "revoke" && req.method === "POST") {
+    const body = await readJson<Record<string, unknown>>(req);
+    const id = str(body.id, "jeton", 20);
+    await env.DB.batch([
+      env.DB.prepare(`UPDATE api_keys SET revoked = 1 WHERE id = ? AND company_id = ?`).bind(id, s.cid),
+      env.DB.prepare(`UPDATE devices SET revoked = 1 WHERE id = ? AND company_id = ?`).bind(apiDevice(id), s.cid),
+    ]);
+    return json({ ok: true });
+  }
+  throw new HttpError(404, "route inconnue");
+}
+
+interface ApiCaller {
+  s: Pick<Session, "sub" | "cid" | "role" | "dev">;
+  scopes: ApiScopes;
+  name: string;
+  company: Company;
+}
+
+async function authenticateApi(req: Request, env: Env): Promise<ApiCaller> {
+  const header = req.headers.get("authorization") ?? "";
+  const token = header.startsWith("Bearer ") ? header.slice(7).trim() : "";
+  if (!API_TOKEN_RE.test(token)) throw new HttpError(401, "jeton d'API manquant ou invalide");
+  const row = await env.DB.prepare(
+    `SELECT k.id, k.name, k.scopes, k.last_used_at, k.user_id, u.role, u.active, c.id AS cid, c.name AS cname, c.plan, c.status, c.trial_ends_at, c.paid_until
+     FROM api_keys k JOIN users u ON u.id = k.user_id JOIN companies c ON c.id = k.company_id
+     WHERE k.hash = ? AND k.revoked = 0`,
+  ).bind(await sha256Hex(token)).first<{ id: string; name: string; scopes: string; last_used_at: string | null; user_id: string; role: string; active: number; cid: string; cname: string; plan: string; status: string; trial_ends_at: string | null; paid_until: string | null }>();
+  // Le jeton s'éteint si son créateur est désactivé ou perd le rôle d'administrateur.
+  if (!row || !row.active || row.role !== "admin") throw new HttpError(401, "jeton d'API révoqué ou inconnu");
+  if (!row.last_used_at || Date.now() - Date.parse(row.last_used_at) > 3600_000) {
+    await env.DB.prepare(`UPDATE api_keys SET last_used_at = ? WHERE id = ?`).bind(now(), row.id).run();
+  }
+  return {
+    s: { sub: row.user_id, cid: row.cid, role: row.role, dev: apiDevice(row.id) },
+    scopes: JSON.parse(row.scopes),
+    name: row.name,
+    company: { id: row.cid, name: row.cname, plan: row.plan, status: row.status, trial_ends_at: row.trial_ends_at, paid_until: row.paid_until },
+  };
+}
+
+const apiRecord = (r: SyncRecord) => ({ id: r.id, ...r.data });
+
+/**
+ * /api/v1/{table}            GET  : liste (?since=<curseur>, ?deleted=1 pour inclure les suppressions)
+ * /api/v1/{table}/{id}       GET  : un élément ; PATCH : fusion de champs (création si nouveau) ; DELETE : suppression
+ */
+async function handlePublicApi(req: Request, env: Env, path: string) {
+  const caller = await authenticateApi(req, env);
+  const { s, scopes } = caller;
+  if (caller.company.status === "suspended") throw new HttpError(403, "compte de l'entreprise suspendu");
+  const [tbl, rowId, extra] = path.split("/");
+  if (extra !== undefined || !tbl) throw new HttpError(404, "route inconnue");
+  const write = req.method === "PATCH" || req.method === "DELETE";
+  if (!["GET", "PATCH", "DELETE"].includes(req.method)) throw new HttpError(405, "méthode non autorisée");
+  if (!allows(scopes, tbl, write)) throw new HttpError(403, write ? `ce jeton ne peut pas modifier « ${tbl} »` : `ce jeton ne peut pas lire « ${tbl} »`);
+  const reader = { userId: s.sub, role: s.role };
+
+  if (req.method === "GET" && !rowId) {
+    const url = new URL(req.url);
+    const since = Math.max(0, Number(url.searchParams.get("since")) || 0);
+    const deleted = url.searchParams.get("deleted") === "1";
+    const { results } = await env.DB.prepare(
+      `SELECT tbl, id, data, clocks, updated_seq FROM records WHERE company_id = ? AND tbl = ? AND updated_seq > ? ORDER BY updated_seq LIMIT ?`,
+    ).bind(s.cid, tbl, since, MAX_PULL + 1).all<{ tbl: string; id: string; data: string; clocks: string; updated_seq: number }>();
+    const more = results.length > MAX_PULL;
+    const page = more ? results.slice(0, MAX_PULL) : results;
+    const items = [];
+    for (const r of page) {
+      const rec = redactRecord(reader, parseRecord(r))!;
+      if (!deleted && rec.data._deleted) continue;
+      items.push(apiRecord(rec));
+    }
+    return json({ items, cursor: page.length ? page[page.length - 1].updated_seq : since, more });
+  }
+
+  if (!rowId || rowId.length < 3 || rowId.length > 96) throw new HttpError(400, "identifiant invalide");
+  const row = await env.DB.prepare(`SELECT tbl, id, data, clocks FROM records WHERE company_id = ? AND tbl = ? AND id = ?`)
+    .bind(s.cid, tbl, rowId).first<{ tbl: string; id: string; data: string; clocks: string }>();
+  const existing = parseRecord(row ?? undefined);
+
+  if (req.method === "GET") {
+    if (!existing || existing.data._deleted) throw new HttpError(404, "élément introuvable");
+    return json(apiRecord(redactRecord(reader, existing)!));
+  }
+
+  if (subscriptionInfo(caller.company, today()).readOnly) throw new HttpError(403, "abonnement expiré : consultation seule");
+  let patch: Record<string, unknown>;
+  if (req.method === "DELETE") {
+    if (!existing || existing.data._deleted) throw new HttpError(404, "élément introuvable");
+    patch = { _deleted: true };
+  } else {
+    const body = await readJson<unknown>(req);
+    if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError(400, "corps JSON attendu : un objet de champs");
+    patch = { ...(body as Record<string, unknown>) };
+    delete patch.id;
+    if (Object.keys(patch).length === 0) throw new HttpError(400, "aucun champ à modifier");
+    if (!existing) {
+      patch.created_by ??= s.sub;
+      patch.created_by_name ??= `API : ${caller.name}`;
+    }
+  }
+  // Horodatage postérieur à toute écriture connue de la ligne : la modification de l'API l'emporte.
+  const latest = Math.max(0, ...Object.values(existing?.clocks ?? {}).map((h) => decodeHlc(String(h)).ms));
+  const change: Change = {
+    id: crypto.randomUUID(), tbl: tbl as Change["tbl"], row: rowId, patch,
+    hlc: encodeHlc(Math.max(Date.now(), latest + 1), 0, s.dev), device: s.dev,
+  };
+  const { rejected } = await applyIncoming(env, s, [change]);
+  if (rejected.length) throw new HttpError(422, rejected[0].reason);
+  const after = await env.DB.prepare(`SELECT tbl, id, data, clocks FROM records WHERE company_id = ? AND tbl = ? AND id = ?`)
+    .bind(s.cid, tbl, rowId).first<{ tbl: string; id: string; data: string; clocks: string }>();
+  return json(req.method === "DELETE" ? { ok: true } : apiRecord(redactRecord(reader, parseRecord(after ?? undefined))!), existing ? 200 : 201);
+}
+
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const p = url.pathname;
@@ -749,6 +916,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (p === "/api/signup" && m === "POST") return handleSignup(req, env);
   if (p === "/api/login" && m === "POST") return handleLogin(req, env);
   if (p === "/api/errors" && m === "POST") return handleClientError(req, env);
+  if (p.startsWith("/api/v1/")) return handlePublicApi(req, env, p.slice("/api/v1/".length));
   const { s: session, company } = await authenticate(req, env);
   if (company.status === "suspended" && p !== "/api/export") throw new HttpError(403, "compte de l'entreprise suspendu : contactez l'équipe Gestia");
   if (p === "/api/sync" && m === "POST") return handleSync(req, env, session, company);
@@ -760,6 +928,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (p === "/api/users/update" && m === "POST") return handleUpdateUser(req, env, session);
   if (p === "/api/users/password" && m === "POST") return handleResetPassword(req, env, session);
   if (p === "/api/export" && m === "GET") return handleExport(env, session);
+  if (p === "/api/keys" || p.startsWith("/api/keys/")) return handleApiKeys(req, env, session, p.slice("/api/keys".length).replace(/^\//, ""));
   if (p.startsWith("/api/platform/")) return handlePlatform(req, env, session, p.slice("/api/platform/".length));
   if (p.startsWith("/api/files/")) return handleFile(req, env, session, p.slice("/api/files/".length));
   throw new HttpError(404, "route inconnue");
