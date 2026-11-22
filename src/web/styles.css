@@ -1657,3 +1657,18 @@ button.primary.danger:hover { background: #962017; border-color: #962017; }
   .decide-block li { grid-template-columns: 10px minmax(0, 1fr); }
   .decide-block li button { grid-column: 2; justify-self: start; }
 }
+
+/* Réglages › Accès par API (lot 8d). */
+.api-keys .section-head { align-items: flex-start; gap: 16px; }
+.api-form { display: grid; gap: 14px; margin-top: 12px; }
+.api-scopes { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px 20px; }
+.api-scope { display: flex; align-items: center; justify-content: space-between; gap: 12px; font-size: 0.875rem; }
+.api-scope select { max-width: 170px; }
+.api-created { margin-top: 12px; padding: 12px 14px; border-radius: 10px; background: var(--accent-soft); display: grid; gap: 8px; }
+.api-created p { margin: 0; }
+.api-token { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.api-token code { flex: 1; min-width: 0; overflow-wrap: anywhere; font-size: 0.8125rem; background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 6px 8px; }
+.api-created .muted code { overflow-wrap: anywhere; }
+.api-list { margin-top: 8px; }
+.api-row { display: flex; align-items: center; gap: 12px; padding: 10px 0; border-top: 1px solid var(--line); }
+.api-row .grow { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
