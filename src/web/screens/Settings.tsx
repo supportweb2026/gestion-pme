@@ -6,6 +6,7 @@ import { formatDate, SubscriptionBadge } from "../subscription.tsx";
 import { PLANS } from "../../shared/plans.ts";
 import { DEFAULT_PAYMENT_DAYS } from "../../shared/invoice.ts";
 import { CURRENCIES, rateFor } from "../../shared/currency.ts";
+import { DEFAULT_REMINDER_STEPS, reminderSettings, stepLabel } from "../../shared/reminders.ts";
 import { DEFAULT_VAT_RATES, fiscalSettings, type WithholdingPreset } from "../../shared/taxes.ts";
 
 const COMPANY_FIELDS: { name: string; label: string; placeholder?: string; wide?: boolean }[] = [
@@ -54,6 +55,7 @@ export function Settings() {
       {can.manageCompany(session.user.role) && <SubscriptionCard />}
       {can.manageCompany(session.user.role) && <CompanySettings />}
       {can.manageCompany(session.user.role) && <FiscalSettingsCard />}
+      {can.manageCompany(session.user.role) && <RemindersCard />}
       {can.manageCompany(session.user.role) && <CurrencySettings />}
       {can.manageUsers(session.user.role) && <Users />}
       {can.manageCompany(session.user.role) && <DataExport />}
@@ -609,6 +611,50 @@ function FiscalSettingsCard() {
       <div className="form-actions">
         {message && <span className={message === "Enregistré" ? "ok-text" : "error"}>{message}</span>}
         <button className="primary">Enregistrer la fiscalité</button>
+      </div>
+    </form>
+  );
+}
+
+/** Calendrier de relance des factures impayées. */
+function RemindersCard() {
+  const { db } = useApp();
+  const s = useSettings();
+  const r = reminderSettings(s);
+  const [enabled, setEnabled] = useState(r.enabled);
+  const [steps, setSteps] = useState(r.steps.map(stepLabel).join(" ; "));
+  const [message, setMessage] = useState<string | null>(null);
+
+  async function save(e: FormEvent) {
+    e.preventDefault();
+    setMessage(null);
+    const parsed = steps.split(/[;,\s]+/).filter(Boolean).map((t) => {
+      const m = /^J?\s*([+-]?\d+)$/i.exec(t.trim());
+      return m ? Number(m[1]) : NaN;
+    });
+    if (parsed.length === 0 || parsed.some((n) => !Number.isInteger(n) || n < -60 || n > 365)) {
+      return setMessage("Indiquez des étapes comme « J-3 ; J+1 ; J+7 » (de J-60 à J+365).");
+    }
+    await db.write("settings", "company", { reminders_enabled: enabled, reminder_steps: [...new Set(parsed)].sort((a, b) => a - b) });
+    setSteps([...new Set(parsed)].sort((a, b) => a - b).map(stepLabel).join(" ; "));
+    setMessage("Enregistré");
+    setTimeout(() => setMessage(null), 2500);
+  }
+
+  return (
+    <form className="card section-card reminders-card" onSubmit={save}>
+      <h3>Relances des factures</h3>
+      <p className="muted small">
+        À chaque étape, la facture apparaît dans Factures &gt; « À relancer » avec un message adapté
+        (rappel courtois avant l'échéance, puis relances de plus en plus fermes). L'envoi se fait en un clic par WhatsApp, e-mail ou PDF.
+      </p>
+      <label className="check-inline"><input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} /> Proposer les relances selon ce calendrier</label>
+      <div className="form-grid">
+        <label className="wide">Étapes, par rapport à l'échéance<input value={steps} onChange={(e) => setSteps(e.target.value)} placeholder={DEFAULT_REMINDER_STEPS.map(stepLabel).join(" ; ")} disabled={!enabled} /></label>
+      </div>
+      <div className="form-actions">
+        {message && <span className={message === "Enregistré" ? "ok-text" : "error"}>{message}</span>}
+        <button className="primary">Enregistrer les relances</button>
       </div>
     </form>
   );

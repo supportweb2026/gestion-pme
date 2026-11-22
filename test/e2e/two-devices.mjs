@@ -105,7 +105,7 @@ try {
   step("B hors ligne : devis depuis le catalogue, conversion en facture, encaissement partiel");
   await B.context.setOffline(true);
   await nav(B.page, "Devis");
-  await B.page.getByRole("button", { name: "Nouveau devis" }).click();
+  await B.page.getByRole("button", { name: "Nouveau devis" }).first().click();
   await B.page.getByLabel("Désignation").fill("Audit informatique");
   await B.page.getByLabel("Quantité").fill("2");
   assert.equal(await B.page.getByTestId("total-ttc").textContent(), "354 000 FCFA", "prix repris du catalogue");
@@ -204,7 +204,7 @@ try {
 
   step("Facture en euros : montants au centime, contre-valeur en FCFA");
   await nav(A.page, "Factures");
-  await A.page.getByRole("button", { name: "Nouvelle facture" }).click();
+  await A.page.getByRole("button", { name: "Nouvelle facture" }).first().click();
   await A.page.getByLabel("Devise").selectOption("EUR");
   await A.page.getByLabel("Désignation").fill("Hébergement annuel");
   await A.page.getByLabel("Prix unitaire").fill("100.5");

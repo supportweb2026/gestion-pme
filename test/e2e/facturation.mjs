@@ -99,7 +99,7 @@ try {
 
   step("Facture : article du catalogue avec remise 10 %, ligne libre exonérée ; calculs HT / TVA / TTC");
   await nav("Factures");
-  await page.getByRole("button", { name: "Nouvelle facture" }).click();
+  await page.getByRole("button", { name: "Nouvelle facture" }).first().click();
   await page.getByLabel("Désignation").fill("Développement logiciel (jour)");
   await page.getByLabel("Quantité").fill("4");
   await page.getByLabel("Remise", { exact: true }).fill("10");
