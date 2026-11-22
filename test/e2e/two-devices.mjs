@@ -169,7 +169,7 @@ try {
 
   step("Tableau de bord");
   await nav(A.page, "Tableau de bord");
-  await A.page.getByText("Chiffre d'affaires et dépenses").waitFor();
+  await A.page.getByRole("heading", { name: "Performance" }).waitFor();
   await shot(A.page, "tableau-de-bord.png");
   await nav(A.page, "Factures");
   await shot(A.page, "factures.png");

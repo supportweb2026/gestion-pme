@@ -1,5 +1,5 @@
 /**
- * Tableau de bord des gains : chiffre d'affaires, encaissements, marge, reste dû,
+ * Partie « Performance » du tableau de bord : chiffre d'affaires, encaissements, marge, reste dû,
  * avec filtres (période, comparaison, client, article, type, statut, moyen de paiement,
  * commercial, devise, TVA). Tout est calculé sur l'appareil, donc disponible hors ligne.
  */
@@ -39,8 +39,9 @@ export function presetRange(p: Preset, now = new Date()): { from: string; to: st
 }
 
 const STORE = "gestia:gains";
+const DETAIL_STORE = "gestia:analyse-detaillee";
 function loadSaved(): Saved {
-  const base: Saved = { ...EMPTY_FILTERS, preset: "month", ...presetRange("month"), compare: "previous" };
+  const base: Saved = { ...EMPTY_FILTERS, preset: "12m", ...presetRange("12m"), compare: "previous" };
   try {
     const s = JSON.parse(localStorage.getItem(STORE) ?? "null") as Partial<Saved> | null;
     if (!s) return base;
@@ -66,6 +67,8 @@ export function Gains() {
   const clients = useTable("clients");
   const [f, setF] = useState<Saved>(loadSaved);
   const [showFilters, setShowFilters] = useState(false);
+  const [detail, setDetail] = useState(() => { try { return localStorage.getItem(DETAIL_STORE) === "1"; } catch { return false; } });
+  useEffect(() => { try { localStorage.setItem(DETAIL_STORE, detail ? "1" : "0"); } catch { /* stockage indisponible */ } }, [detail]);
 
   useEffect(() => {
     try { localStorage.setItem(STORE, JSON.stringify(f)); } catch { /* stockage indisponible */ }
@@ -158,41 +161,37 @@ export function Gains() {
   }
 
   return (
-    <section className="gains">
-      <div className="page-head">
+    <section className="gains" aria-labelledby="perf-title">
+      <div className="section-head">
         <div>
-          <h2>Tableau de bord des gains</h2>
+          <h3 id="perf-title">Performance</h3>
           <p className="muted small">Du {range} · calculé sur cet appareil, même hors ligne</p>
         </div>
-        <div className="quick">
-          <button onClick={exportCsv} disabled={report.documents.length === 0}>Exporter (CSV)</button>
+        <div className="filter-bar" role="group" aria-label="Filtres du tableau de bord">
+          <label className="field-inline">
+            <span>Période</span>
+            <select value={f.preset} onChange={(e) => setPreset(e.target.value as Preset)} aria-label="Période">
+              {PRESETS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
+            </select>
+          </label>
+          {f.preset === "custom" && (
+            <>
+              <label className="field-inline"><span>Du</span><input type="date" value={f.from} max={f.to} onChange={(e) => e.target.value && set({ from: e.target.value })} aria-label="Du" /></label>
+              <label className="field-inline"><span>Au</span><input type="date" value={f.to} min={f.from} onChange={(e) => e.target.value && set({ to: e.target.value })} aria-label="Au" /></label>
+            </>
+          )}
+          <label className="field-inline">
+            <span>Comparer à</span>
+            <select value={f.compare} onChange={(e) => set({ compare: e.target.value as Compare })} aria-label="Comparer à">
+              <option value="previous">Période précédente</option>
+              <option value="year">Même période l'an dernier</option>
+              <option value="none">Pas de comparaison</option>
+            </select>
+          </label>
+          <button className={showFilters ? "active" : ""} aria-expanded={showFilters} onClick={() => setShowFilters((s) => !s)}>
+            Filtres{active.length > 0 && <span className="seg-count">{active.length}</span>}
+          </button>
         </div>
-      </div>
-
-      <div className="filter-bar" role="group" aria-label="Filtres du tableau de bord">
-        <label className="field-inline">
-          <span>Période</span>
-          <select value={f.preset} onChange={(e) => setPreset(e.target.value as Preset)} aria-label="Période">
-            {PRESETS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}
-          </select>
-        </label>
-        {f.preset === "custom" && (
-          <>
-            <label className="field-inline"><span>Du</span><input type="date" value={f.from} max={f.to} onChange={(e) => e.target.value && set({ from: e.target.value })} aria-label="Du" /></label>
-            <label className="field-inline"><span>Au</span><input type="date" value={f.to} min={f.from} onChange={(e) => e.target.value && set({ to: e.target.value })} aria-label="Au" /></label>
-          </>
-        )}
-        <label className="field-inline">
-          <span>Comparer à</span>
-          <select value={f.compare} onChange={(e) => set({ compare: e.target.value as Compare })} aria-label="Comparer à">
-            <option value="previous">Période précédente</option>
-            <option value="year">Même période l'an dernier</option>
-            <option value="none">Pas de comparaison</option>
-          </select>
-        </label>
-        <button className={showFilters ? "active" : ""} aria-expanded={showFilters} onClick={() => setShowFilters((s) => !s)}>
-          Plus de filtres{active.length > 0 && <span className="seg-count">{active.length}</span>}
-        </button>
       </div>
 
       {showFilters && (
@@ -219,22 +218,31 @@ export function Gains() {
           sub={`${formatXaf(k.revenueGross)} TTC · TVA ${formatXaf(k.vat)}`} />
         <Kpi testId="kpi-encaisse" label="Encaissé" value={k.collected} prev={p?.collected} cmp={cmpLabel}
           sub={report.byMethod[0] ? `surtout ${report.byMethod[0].label}` : "aucun encaissement"} />
-        <Kpi testId="kpi-marge" label="Marge brute HT" value={k.margin} prev={p?.margin} cmp={cmpLabel}
+        <Kpi testId="kpi-marge" label="Marge brute HT" value={k.margin} prev={p?.margin} cmp={cmpLabel} unknown={k.marginRate === null}
           sub={k.marginRate === null ? "Renseignez les prix d'achat des articles" : `Taux de marge ${pct(k.marginRate, 1)}${k.marginCoverage < 0.999 ? ` · sur ${pct(k.marginCoverage)} du CA` : ""}`} />
-        <Kpi testId="kpi-du" label="Reste à encaisser (TTC)" value={k.due} tone={k.overdue > 0 ? "danger" : undefined}
-          sub={k.overdue > 0 ? `dont ${formatXaf(k.overdue)} en retard` : "aucun retard"} subTone={k.overdue > 0 ? "danger" : undefined} />
+        <Kpi testId="kpi-devis" label="Devis signés HT" value={k.quotesSignedAmount}
+          sub={k.quotesSent ? `${k.quotesSigned} sur ${k.quotesSent} devis · transformation ${pct(k.conversion)}` : "aucun devis envoyé sur la période"} />
       </div>
+
+      <TrendChart report={report} />
+
+      <div className="detail-toggle">
+        <button aria-expanded={detail} aria-controls="analyse-detaillee" onClick={() => setDetail((d) => !d)}>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className="chev"><path d="M6 9l6 6 6-6" /></svg>
+          {detail ? "Masquer l'analyse détaillée" : "Afficher l'analyse détaillée"}
+        </button>
+        <span className="muted small">Répartitions, balance âgée, liste des factures et export</span>
+      </div>
+
+      {detail && (
+      <div id="analyse-detaillee" className="detail">
       <div className="kpis gains-kpis small-kpis">
         <MiniKpi label="Factures validées" value={String(k.invoiceCount)} prev={p?.invoiceCount} now={k.invoiceCount} />
         <MiniKpi label="Panier moyen HT" value={formatXaf(k.averageBasket)} prev={p?.averageBasket} now={k.averageBasket} />
         <MiniKpi label="Clients facturés" value={`${k.activeClients}${k.newClients ? ` · ${k.newClients} nouveau${k.newClients > 1 ? "x" : ""}` : ""}`} prev={p?.activeClients} now={k.activeClients} />
         <MiniKpi label="Délai moyen de paiement" value={k.paymentDelay === null ? "—" : `${k.paymentDelay} j`} />
-        <MiniKpi label="Devis signés" value={`${k.quotesSigned} / ${k.quotesSent}`} hint={k.quotesSigned ? `${formatXaf(k.quotesSignedAmount)} HT` : undefined} />
-        <MiniKpi label="Taux de transformation" value={pct(k.conversion)} />
         <MiniKpi label="Avoirs" value={formatXaf(k.credits)} />
       </div>
-
-      <TrendChart report={report} />
 
       <div className="dash-grid gains-grid">
         <BreakdownCard report={report} clientName={clientName} sellerName={sellerName} onPick={(dim, value) => { toggle(dim, value); }} />
@@ -242,7 +250,13 @@ export function Gains() {
       </div>
 
       <div className="card table-wrap section-card">
-        <div className="card-head table-head"><h3>Factures de la période</h3><span className="muted small">{report.documents.length} facture{report.documents.length > 1 ? "s" : ""}</span></div>
+        <div className="card-head table-head">
+          <h3>Factures de la période</h3>
+          <span className="head-actions">
+            <span className="muted small">{report.documents.length} facture{report.documents.length > 1 ? "s" : ""}</span>
+            <button className="small" onClick={exportCsv} disabled={report.documents.length === 0}>Exporter (CSV)</button>
+          </span>
+        </div>
         {report.documents.length === 0 ? <p className="empty">Aucune facture validée ne correspond à ces filtres.</p> : (
           <table className="gains-docs">
             <thead><tr><th>Numéro</th><th>Date</th><th>Client</th><th>Commercial</th><th className="right">CA HT</th><th className="right">Encaissé</th><th className="right">Reste dû</th><th>Statut</th></tr></thead>
@@ -264,6 +278,8 @@ export function Gains() {
         )}
       </div>
       <p className="list-foot">Chiffre d'affaires : factures validées moins avoirs validés, datés dans la période, en FCFA au taux de chaque document. Encaissé : encaissements datés dans la période. Brouillons exclus.</p>
+      </div>
+      )}
     </section>
   );
 }
@@ -271,7 +287,8 @@ export function Gains() {
 function Delta({ now, prev, cmp }: { now: number; prev?: number; cmp?: string }) {
   if (prev === undefined) return null;
   const d = delta(now, prev);
-  if (d === null) return <span className="delta flat">{now ? "nouveau" : "="} <span className="muted">{cmp}</span></span>;
+  // Période de comparaison vide : pas de pourcentage, on le dit simplement.
+  if (d === null) return now ? <span className="delta flat"><span className="muted">pas d'historique {cmp}</span></span> : null;
   const up = d >= 0;
   return (
     <span className={`delta ${Math.abs(d) < 0.005 ? "flat" : up ? "up" : "down"}`} title={`Avant : ${formatXaf(prev)}`}>
@@ -280,24 +297,25 @@ function Delta({ now, prev, cmp }: { now: number; prev?: number; cmp?: string })
   );
 }
 
-function Kpi({ label, value, prev, cmp, sub, tone, subTone, testId }: { label: string; value: number; prev?: number; cmp?: string; sub?: string; tone?: "danger"; subTone?: "danger"; testId?: string }) {
+function Kpi({ label, value, prev, cmp, sub, tone, subTone, testId, unknown }: { label: string; value: number; prev?: number; cmp?: string; sub?: string; tone?: "danger"; subTone?: "danger"; testId?: string; unknown?: boolean }) {
   const s = formatXaf(value);
   return (
     <div className={`kpi${tone ? ` ${tone}` : ""}`} data-testid={testId}>
       <div className="kpi-label">{label}</div>
-      <div className="kpi-value mono">{s.replace(/ FCFA$/, "")}<span className="cur">FCFA</span></div>
-      <Delta now={value} prev={prev} cmp={cmp} />
+      {/* Valeur inconnue (ex. marge sans prix d'achat) : un tiret plutôt qu'un 0 trompeur. */}
+      {unknown ? <div className="kpi-value mono muted">—</div> : <div className="kpi-value mono">{s.replace(/ FCFA$/, "")}<span className="cur">FCFA</span></div>}
+      {!unknown && <Delta now={value} prev={prev} cmp={cmp} />}
       {sub && <div className={`kpi-sub${subTone ? ` ${subTone}` : ""}`}>{sub}</div>}
     </div>
   );
 }
 
-function MiniKpi({ label, value, hint, prev, now }: { label: string; value: string; hint?: string; prev?: number; now?: number }) {
+function MiniKpi({ label, value, hint, prev, now, testId, danger }: { label: string; value: string; hint?: string; prev?: number; now?: number; testId?: string; danger?: boolean }) {
   return (
-    <div className="kpi mini">
+    <div className="kpi mini" data-testid={testId}>
       <div className="kpi-label">{label}</div>
       <div className="kpi-value mono">{value}</div>
-      {hint && <div className="kpi-sub">{hint}</div>}
+      {hint && <div className={`kpi-sub${danger ? " danger" : ""}`}>{hint}</div>}
       {now !== undefined && prev ? <Delta now={now} prev={prev} /> : null}
     </div>
   );
@@ -367,6 +385,7 @@ function BreakdownCard({ report, clientName, sellerName, onPick }: { report: Rep
   const val = (b: Breakdown) => (byMoney ? b.collected : b.revenue);
   const max = Math.max(1, ...rows.map(val));
   const total = (report[t.field] as Breakdown[]).reduce((n, b) => n + val(b), 0);
+  const anyMargin = rows.some((b) => b.margin !== null);
   const name = (b: Breakdown) => (tab === "clients" ? clientName(b.key) : tab === "sellers" ? sellerName(b.key) : b.label);
   return (
     <div className="card section-card breakdown">
@@ -383,7 +402,7 @@ function BreakdownCard({ report, clientName, sellerName, onPick }: { report: Rep
               <th>{t.label}</th>
               <th className="right">{byMoney ? "Encaissé" : "CA HT"}</th>
               <th className="right hide-sm">Part</th>
-              {!byMoney && <th className="right hide-sm">Marge</th>}
+              {!byMoney && anyMargin && <th className="right hide-sm">Marge</th>}
               {tab === "articles" && <th className="right hide-sm">Qté</th>}
               {(tab === "clients" || tab === "sellers") && <th className="right hide-sm">Reste dû</th>}
               {byMoney && <th className="right">Opérations</th>}
@@ -398,7 +417,7 @@ function BreakdownCard({ report, clientName, sellerName, onPick }: { report: Rep
                 </td>
                 <td className="right mono">{formatXaf(val(b))}</td>
                 <td className="right mono hide-sm">{total > 0 ? pct(val(b) / total) : "—"}</td>
-                {!byMoney && <td className="right mono hide-sm">{b.margin === null ? "—" : `${formatXaf(b.margin)}${b.revenue > 0 ? ` (${pct(b.margin / b.revenue)})` : ""}`}</td>}
+                {!byMoney && anyMargin && <td className="right mono hide-sm">{b.margin === null ? "—" : `${formatXaf(b.margin)}${b.revenue > 0 ? ` (${pct(b.margin / b.revenue)})` : ""}`}</td>}
                 {tab === "articles" && <td className="right mono hide-sm">{b.qty.toLocaleString("fr-FR")}</td>}
                 {(tab === "clients" || tab === "sellers") && <td className={`right mono hide-sm${b.due > 0 ? " strong" : ""}`}>{formatXaf(b.due)}</td>}
                 {byMoney && <td className="right mono">{b.count}</td>}
@@ -407,7 +426,7 @@ function BreakdownCard({ report, clientName, sellerName, onPick }: { report: Rep
           </tbody>
         </table>
       )}
-      <p className="muted small" style={{ margin: "10px 0 0" }}>Cliquez une ligne pour filtrer tout le tableau de bord.</p>
+      <p className="muted small" style={{ margin: "10px 0 0" }}>Cliquez une ligne pour filtrer toute la partie Performance.</p>
     </div>
   );
 }
@@ -419,7 +438,7 @@ function AgingCard({ aging, onOpen }: { aging: Report["aging"]; onOpen: () => vo
     <div className="card section-card aging">
       <div className="card-head">
         <h3>Balance âgée des impayés</h3>
-        <button className="small" onClick={onOpen}>Voir les factures</button>
+        <button className="link small" onClick={onOpen}>Factures</button>
       </div>
       <p className="muted small" style={{ marginTop: -6 }}>Reste dû TTC aujourd'hui, par retard après échéance · total <span className="mono">{formatXaf(total)}</span></p>
       <ul className="list-rows">
@@ -494,7 +513,7 @@ function TrendChart({ report }: { report: Report }) {
         </div>
         <div className="legend">
           <span><i className="swatch s1 current" /> Chiffre d'affaires HT</span>
-          <span><i className="swatch s2" /> Encaissé</span>
+          <span><i className="swatch s2" /> Encaissé (TTC)</span>
           <button className="small" onClick={() => setAsTable((t) => !t)} aria-pressed={asTable}>{asTable ? "Voir le graphique" : "Voir le tableau"}</button>
         </div>
       </div>
