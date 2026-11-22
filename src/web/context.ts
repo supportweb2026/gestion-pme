@@ -57,11 +57,12 @@ export function useSyncStatus(): SyncStatus {
 }
 
 export type Tab =
-  | "dashboard" | "quotes" | "invoices" | "credit_notes" | "expenses"
+  | "dashboard" | "gains" | "quotes" | "invoices" | "credit_notes" | "expenses"
   | "clients" | "articles" | "projects" | "accounting" | "settings" | "platform";
 
 export const TAB_LABELS: Record<Tab, string> = {
   dashboard: "Tableau de bord",
+  gains: "Gains",
   quotes: "Devis",
   invoices: "Factures",
   credit_notes: "Avoirs",
@@ -105,12 +106,12 @@ const previewAll = (() => {
 export const COMING_SOON: Partial<Record<Tab, { title: string; points: string[] }>> = previewAll ? {} : COMING_SOON_MODULES;
 
 /** Écrans visibles selon le rôle (les droits sont aussi vérifiés côté serveur au fil des lots). */
-const ALL: Tab[] = ["dashboard", "quotes", "invoices", "credit_notes", "projects", "expenses", "clients", "articles", "accounting", "settings"];
+const ALL: Tab[] = ["dashboard", "gains", "quotes", "invoices", "credit_notes", "projects", "expenses", "clients", "articles", "accounting", "settings"];
 export const TABS_BY_ROLE: Record<string, Tab[]> = {
   admin: ALL,
   director: ALL,
-  accountant: ["dashboard", "accounting", "invoices", "credit_notes", "quotes", "projects", "expenses", "clients", "articles", "settings"],
-  sales: ["dashboard", "quotes", "invoices", "projects", "clients", "articles", "expenses", "settings"],
+  accountant: ["dashboard", "gains", "accounting", "invoices", "credit_notes", "quotes", "projects", "expenses", "clients", "articles", "settings"],
+  sales: ["dashboard", "gains", "quotes", "invoices", "projects", "clients", "articles", "expenses", "settings"],
   project_manager: ["dashboard", "projects", "quotes", "invoices", "expenses", "clients", "settings"],
   employee: ["projects", "expenses", "settings"],
 };

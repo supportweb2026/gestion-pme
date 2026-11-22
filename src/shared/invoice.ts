@@ -12,6 +12,8 @@ export interface InvoiceLine {
   articleId?: string;
   /** Remise commerciale en pourcentage du montant de la ligne (0 à 100), facultative. */
   discount?: number;
+  /** Prix d'achat unitaire HT (devise du document), noté pour le calcul de la marge ; jamais imprimé. */
+  cost?: number;
 }
 
 export interface InvoiceTotals {
