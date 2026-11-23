@@ -6,7 +6,7 @@
 import { useMemo, useState } from "react";
 import { formatDate, text, useApp, useSettings } from "./context.ts";
 import { formatAmount } from "../shared/invoice.ts";
-import { buildVfImport, type VfImport, type VfRecord } from "../shared/vosfactures.ts";
+import { buildVfImport, VF_COMPLEMENT_FIELDS, type VfImport, type VfRecord } from "../shared/vosfactures.ts";
 import type { SyncTable } from "../shared/sync.ts";
 
 const TABLES = ["clients", "quotes", "invoices", "credit_notes", "payments"] as const;
@@ -21,7 +21,7 @@ async function readText(file: File): Promise<string> {
   }
 }
 
-type Phase = { step: "idle" } | { step: "writing" | "sending"; done: number; total: number } | { step: "done"; added: number; refused: number };
+type Phase = { step: "idle" } | { step: "writing" | "sending"; done: number; total: number } | { step: "done"; added: number; completed: number; refused: number };
 
 export function ImportHistory() {
   const { db, sync } = useApp();
@@ -29,7 +29,7 @@ export function ImportHistory() {
   const [contents, setContents] = useState<string[] | null>(null);
   const [fileCount, setFileCount] = useState(0);
   const [sellers, setSellers] = useState<string[] | null>(null);
-  const [known, setKnown] = useState<{ ids: Set<string>; clients: { id: string; name: string }[] }>({ ids: new Set(), clients: [] });
+  const [known, setKnown] = useState<{ ids: Set<string>; clients: { id: string; name: string }[]; filled: Map<string, Record<string, unknown>> }>({ ids: new Set(), clients: [], filled: new Map() });
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<Phase>({ step: "idle" });
 
@@ -44,6 +44,20 @@ export function ImportHistory() {
   }, [contents, sellers, known]);
 
   const fresh: VfRecord[] = useMemo(() => (result ? result.records.filter((r) => !known.ids.has(`${r.tbl}/${r.id}`)) : []), [result, known]);
+  // Documents déjà repris : références que cette reprise sait lire et qui leur manquent encore.
+  const complements: VfRecord[] = useMemo(() => {
+    if (!result) return [];
+    const out: VfRecord[] = [];
+    for (const r of result.records) {
+      const have = known.filled.get(`${r.tbl}/${r.id}`);
+      if (!have) continue;
+      const patch: Record<string, unknown> = {};
+      for (const f of VF_COMPLEMENT_FIELDS) if (text(r.data[f]) && !text(have[f])) patch[f] = r.data[f];
+      if (Object.keys(patch).length) out.push({ tbl: r.tbl, id: r.id, data: patch });
+    }
+    return out;
+  }, [result, known]);
+  const todo = useMemo(() => [...fresh, ...complements], [fresh, complements]);
   const closed = text(settings.closed_until);
   const firstDate = result?.records.reduce((min, r) => {
     const d = text(r.data.date);
@@ -53,13 +67,19 @@ export function ImportHistory() {
 
   async function loadKnown() {
     const ids = new Set<string>();
+    const filled = new Map<string, Record<string, unknown>>();
     let clients: { id: string; name: string }[] = [];
     for (const tbl of TABLES) {
       const rows = await db.list(tbl);
-      for (const r of rows) ids.add(`${tbl}/${r.id}`);
+      for (const r of rows) {
+        ids.add(`${tbl}/${r.id}`);
+        if (r.data.imported && (tbl === "quotes" || tbl === "invoices" || tbl === "credit_notes")) {
+          filled.set(`${tbl}/${r.id}`, Object.fromEntries(VF_COMPLEMENT_FIELDS.map((f) => [f, r.data[f]])));
+        }
+      }
       if (tbl === "clients") clients = rows.map((r) => ({ id: r.id, name: text(r.data.name) }));
     }
-    setKnown({ ids, clients });
+    setKnown({ ids, clients, filled });
   }
 
   async function choose(files: FileList | null) {
@@ -81,12 +101,12 @@ export function ImportHistory() {
   }
 
   async function run() {
-    if (!result || fresh.length === 0) return;
+    if (!result || todo.length === 0) return;
     setError(null);
-    const total = fresh.length;
+    const total = todo.length;
     try {
       setPhase({ step: "writing", done: 0, total });
-      await db.writeMany(fresh.map((r) => ({ tbl: r.tbl as SyncTable, id: r.id, patch: r.data })), (done) => setPhase({ step: "writing", done, total }));
+      await db.writeMany(todo.map((r) => ({ tbl: r.tbl as SyncTable, id: r.id, patch: r.data })), (done) => setPhase({ step: "writing", done, total }));
       // Envoi au serveur par paquets, jusqu'à ce que la file soit vide.
       let refused = 0;
       let stalled = 0;
@@ -101,7 +121,7 @@ export function ImportHistory() {
       }
       await loadKnown();
       if (left > 0) setError("Tout est enregistré sur cet appareil. L'envoi au serveur se terminera dès que la connexion reviendra.");
-      setPhase({ step: "done", added: total, refused });
+      setPhase({ step: "done", added: fresh.length, completed: complements.length, refused });
     } catch (e) {
       setError(e instanceof Error ? e.message : "La reprise a été interrompue. Relancez-la : rien ne sera créé en double.");
       setPhase({ step: "idle" });
@@ -188,18 +208,26 @@ export function ImportHistory() {
           ) : phase.step === "done" ? (
             <p className="ok-text" data-testid="import-history-done">
               Reprise terminée : {phase.added} élément{phase.added > 1 ? "s" : ""} ajouté{phase.added > 1 ? "s" : ""}.
+              {phase.completed > 0 && ` ${phase.completed} document${phase.completed > 1 ? "s" : ""} complété${phase.completed > 1 ? "s" : ""}.`}
               {phase.refused > 0 && ` ${phase.refused} refusé${phase.refused > 1 ? "s" : ""} par le serveur.`}
             </p>
           ) : busy ? (
             <p role="status" data-testid="import-history-progress">
               {phase.step === "writing" ? "Enregistrement sur cet appareil" : "Envoi au serveur"} : {phase.done} sur {phase.total}. Gardez cette page ouverte.
             </p>
-          ) : fresh.length === 0 ? (
+          ) : todo.length === 0 ? (
             <p className="ok-text" data-testid="import-history-uptodate">Tout est déjà repris : rien à ajouter.</p>
           ) : (
             <div className="row">
-              <button className="primary" onClick={run} data-testid="import-history-run">Reprendre {fresh.length} élément{fresh.length > 1 ? "s" : ""}</button>
-              {result.records.length > fresh.length && <span className="muted small">{result.records.length - fresh.length} déjà repris, ignorés.</span>}
+              <button className="primary" onClick={run} data-testid="import-history-run">
+                {fresh.length > 0 ? `Reprendre ${fresh.length} élément${fresh.length > 1 ? "s" : ""}` : `Compléter ${complements.length} document${complements.length > 1 ? "s" : ""}`}
+              </button>
+              {complements.length > 0 && (
+                <span className="muted small" data-testid="import-history-complements">
+                  {complements.length} document{complements.length > 1 ? "s" : ""} déjà repris {complements.length > 1 ? "reçoivent" : "reçoit"} les références qui {complements.length > 1 ? "leur" : "lui"} manquaient (référence du client, conditions de règlement, informations imprimées, commercial). Rien d'autre n'est modifié.
+                </span>
+              )}
+              {result.records.length > fresh.length && complements.length === 0 && <span className="muted small">{result.records.length - fresh.length} déjà repris, ignorés.</span>}
               <span className="muted small">Conseil : exportez d'abord une sauvegarde (Réglages › Données).</span>
             </div>
           )}

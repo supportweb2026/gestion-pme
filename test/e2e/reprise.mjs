@@ -106,6 +106,10 @@ try {
   assert.equal(await txt("total-vat"), "0 FCFA");
   assert.equal(await txt("total-withholding"), "-194 700 FCFA");
   assert.equal(await txt("total-payable"), "1 752 300 FCFA");
+  // Références en tête du document, plus dans la note du bas.
+  assert.match(await txt("doc-client-ref"), /ORDRE D'ACHAT N°2035609 FL : 1436/);
+  assert.match(await page.locator(".notes").innerText(), /Acompte de 50 % versé à la commande\./);
+  assert.doesNotMatch(await page.locator(".notes").innerText(), /ORDRE D'ACHAT/);
   await shot("reprise-facture-retenue.png");
 
   step("Facture à décimales : total d'origine arrondi au franc, avoir déduit du reste dû");

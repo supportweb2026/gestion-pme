@@ -112,3 +112,94 @@ export function docArrete(kind: "quotes" | "invoices" | "credit_notes", data: Re
   if (kind === "credit_notes") return "Arrêté le présent avoir";
   return data?.deposit ? "Arrêtée la présente facture d'acompte" : "Arrêtée la présente facture";
 }
+
+/**
+ * Références d'un document, à imprimer en tête : objet, référence donnée par le client
+ * (bon de commande, ordre d'achat, lettre de commande) et conditions de règlement.
+ * `notes` est la note libre restante, imprimée en bas.
+ *
+ * Les documents repris avant la version 2 de la reprise rangeaient tout dans la note
+ * (« Objet : … », référence du client, « Règlement : … ») : on les relit ici pour les
+ * remettre à leur place sans toucher au document, qui est figé.
+ */
+export interface DocRefs { subject: string; clientRef: string; paymentTerms: string; notes: string }
+
+const str = (v: unknown) => (typeof v === "string" ? v.trim() : "");
+
+export function docRefs(data: Record<string, unknown> | undefined): DocRefs {
+  const subject = str(data?.subject);
+  const refs: DocRefs = { subject, clientRef: str(data?.client_ref), paymentTerms: str(data?.payment_terms), notes: str(data?.notes) };
+  const extra = str(data?.import_info);
+  if (!data?.imported || data.import_v === 2) {
+    if (extra) refs.notes = [refs.notes, extra].filter(Boolean).join("\n");
+    return refs;
+  }
+  let rest = refs.notes;
+  const head = `Objet : ${subject}`;
+  if (subject && rest.startsWith(head)) rest = rest.slice(head.length).trim();
+  const lines = rest ? rest.split("\n") : [];
+  const kept: string[] = [];
+  let legacyRef: string[] = [];
+  for (const l of lines) {
+    if (l.startsWith("Règlement : ")) refs.paymentTerms ||= l.slice("Règlement : ".length).trim();
+    else if (l.startsWith("Motif : ")) kept.push(l);
+    else legacyRef.push(l);
+  }
+  legacyRef = legacyRef.filter((l) => l.trim() !== "");
+  refs.clientRef ||= legacyRef.join("\n");
+  refs.notes = [...kept, extra].filter(Boolean).join("\n");
+  return refs;
+}
+
+/** Texte de recherche d'un document : numéro, objet, référence du client. */
+export function docSearchText(data: Record<string, unknown> | undefined): string {
+  const r = docRefs(data);
+  return `${str(data?.number)} ${r.subject} ${r.clientRef}`;
+}
+
+export interface RelatedDoc { tbl: "quotes" | "invoices" | "credit_notes"; id: string; relation: string }
+
+type Rec = { id: string; data: Record<string, unknown> };
+
+/**
+ * Documents liés à un document, dans les deux sens : d'où il vient, ce qu'il a donné.
+ * Les liens sont lus tels qu'ils sont notés (quote_id, invoice_id, source_id), d'un côté ou de l'autre.
+ */
+export function relatedDocs(
+  kind: "quotes" | "invoices" | "credit_notes", doc: Rec,
+  all: { quotes: Rec[]; invoices: Rec[]; credit_notes: Rec[] },
+): RelatedDoc[] {
+  const out: RelatedDoc[] = [];
+  const seen = new Set<string>();
+  const add = (tbl: RelatedDoc["tbl"], r: Rec | undefined, relation: string) => {
+    if (!r || r.id === doc.id || seen.has(`${tbl}/${r.id}`)) return;
+    seen.add(`${tbl}/${r.id}`);
+    out.push({ tbl, id: r.id, relation });
+  };
+  const d = doc.data;
+  const byId = (list: Rec[], id: unknown) => (typeof id === "string" && id ? list.find((r) => r.id === id) : undefined);
+  if (kind === "quotes") {
+    add("quotes", byId(all.quotes, d.source_id), "Établi d'après");
+    add("invoices", byId(all.invoices, d.source_id), "Établi d'après");
+    for (const q of all.quotes) if (q.data.source_id === doc.id) add("quotes", q, "A donné");
+    for (const i of all.invoices) {
+      if (i.data.quote_id === doc.id) add("invoices", i, i.data.deposit ? "Acompte" : i.data.final_invoice ? "Facture de solde" : "Facturé par");
+    }
+    add("invoices", byId(all.invoices, d.invoice_id), "Facturé par");
+    for (const i of all.invoices) if (i.data.source_id === doc.id) add("invoices", i, "Facturé par");
+  } else if (kind === "invoices") {
+    add("quotes", byId(all.quotes, d.quote_id), "Issue de");
+    add("quotes", byId(all.quotes, d.source_id), "Issue de");
+    for (const q of all.quotes) if (q.data.invoice_id === doc.id) add("quotes", q, "Issue de");
+    add("invoices", byId(all.invoices, d.recurrence_of), "Facture récurrente, d'après");
+    // Acomptes et solde du même devis.
+    if (typeof d.quote_id === "string" && d.quote_id) {
+      for (const i of all.invoices) if (i.data.quote_id === d.quote_id) add("invoices", i, i.data.deposit ? "Acompte" : "Facture du même devis");
+    }
+    for (const q of all.quotes) if (q.data.source_id === doc.id) add("quotes", q, "A donné");
+    for (const c of all.credit_notes) if (c.data.invoice_id === doc.id) add("credit_notes", c, "Corrigée par");
+  } else {
+    add("invoices", byId(all.invoices, d.invoice_id), "Corrige");
+  }
+  return out;
+}

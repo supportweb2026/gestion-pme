@@ -26,7 +26,7 @@ const C = {
   number: 1, type: 2, seller: 4, state: 6, date: 7, saleDate: 8, due: 9,
   client: 10, nif: 11, street: 13, zip: 14, city: 15, country: 16, extra: 17, email: 18, phone: 19, mobile: 20,
   net: 21, vat: 22, gross: 23, method: 27, paidOn: 28, paid: 29, currency: 31, subject: 32,
-  orderRef: 39, privateNotes: 45, sentAt: 46, corrected: 47, creditReason: 48, cancelled: 52,
+  sellerName: 38, orderRef: 39, recipient: 40, info: 42, privateNotes: 45, sentAt: 46, corrected: 47, creditReason: 48, cancelled: 52,
   lines: 54,
 } as const;
 /** Positions dans un bloc de ligne de produit. */
@@ -122,6 +122,9 @@ export interface VfOptions {
   /** Clients déjà présents : nom → identifiant, pour ne pas les créer deux fois. */
   existingClients?: { id: string; name: string }[];
 }
+
+/** Champs qu'une nouvelle reprise peut ajouter à un document déjà repris, s'ils y sont encore vides. */
+export { IMPORT_COMPLEMENT_FIELDS as VF_COMPLEMENT_FIELDS } from "./sync.ts";
 
 /** Clé de rapprochement d'un nom de client. */
 export const clientKey = (name: string) => plain(name).replace(/[^a-z0-9]/g, "");
@@ -336,12 +339,19 @@ export function buildVfImport(files: string[], options: VfOptions = {}): VfImpor
     const terms = dueDate ? "" : (r[C.due] ?? "").trim();
     const subject = (r[C.subject] ?? "").trim();
     const extra = (r[C.extra] ?? "").replace(/\r\n?/g, "\n").trim();
-    const notes = [subject && `Objet : ${subject}`, extra, (r[C.orderRef] ?? "").trim() && `Commande n° ${(r[C.orderRef] ?? "").trim()}`, terms && `Règlement : ${terms}`]
-      .filter(Boolean).join("\n");
+    // Références remises à leur place : la « description additionnelle » et le « destinataire » de
+    // VosFactures portent la référence de commande du client (ordre d'achat, lettre de commande…).
+    const clean = (v: string | undefined) => (v ?? "").replace(/\r\n?/g, "\n").replace(/^'\s?/gm, "").trim();
+    const orderRef = (r[C.orderRef] ?? "").trim();
+    const recipient = clean(r[C.recipient]);
+    const clientRef = [extra, recipient !== extra && recipient, orderRef && `Commande n° ${orderRef}`].filter(Boolean).join("\n");
+    const info = clean(r[C.info]);
+    const notes = "";
     const data: Record<string, unknown> = {
       number: d.number, date: d.date, client_id: clientIds.get(clientKey(d.client) || "clientinconnu"),
-      lines, currency: "XAF", rate: 1, notes, subject, project_id: "",
-      imported: VF_SOURCE, import_type: (r[C.type] ?? "").trim(), import_seller: d.seller,
+      lines, currency: "XAF", rate: 1, notes, subject, client_ref: clientRef, payment_terms: terms, import_info: info,
+      seller_name: (r[C.sellerName] ?? "").trim(), project_id: "",
+      imported: VF_SOURCE, import_v: 2, import_type: (r[C.type] ?? "").trim(), import_seller: d.seller,
       created_by_name: "Reprise VosFactures",
     };
     const sent = vfDate(r[C.sentAt]);

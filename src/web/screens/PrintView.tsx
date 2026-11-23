@@ -10,7 +10,7 @@ import { computeTotals, docTaxes, lineDiscount, lineNet, lineVat, type InvoiceLi
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../../shared/currency.ts";
 import type { DocTable, SyncRecord } from "../../shared/sync.ts";
 import type { Situation } from "../ledger.ts";
-import { docArrete, docTitle, isSection, quoteTypeOf } from "../../shared/documents.ts";
+import { docArrete, docRefs, docTitle, isSection, quoteTypeOf } from "../../shared/documents.ts";
 import { fiscalMentions, pct } from "../../shared/taxes.ts";
 import { docColor, softOf, stampFor, termsFor } from "../../shared/branding.ts";
 
@@ -32,6 +32,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
   const hasDiscount = lines.some((l) => lineDiscount(l) > 0);
   const title = docTitle(kind, record.data);
   const delivery = kind === "quotes" && quoteTypeOf(record.data) === "delivery";
+  const refs = docRefs(record.data);
 
   // TVA ventilée par taux, comme l'exige une facture.
   const vatByRate = new Map<number, { base: number; vat: number }>();
@@ -88,11 +89,17 @@ export function PrintView({ kind, record, client, situation, onClose }: {
           </div>
         </header>
 
-        <section className="ps-client">
-          <div className="ps-label">{kind === "quotes" ? "Destinataire" : "Facturé à"}</div>
-          <div className="ps-client-name">{text(c.name)}</div>
-          <Lines>{[text(c.address), text(c.city), text(c.nif) && `NIF : ${text(c.nif)}`, text(c.rccm) && `RCCM : ${text(c.rccm)}`]}</Lines>
-        </section>
+        <div className="ps-parties">
+          <section className="ps-refs">
+            {refs.subject && (<><div className="ps-label">Objet</div><div className="ps-subject">{refs.subject}</div></>)}
+            {refs.clientRef && (<><div className="ps-label">Référence de commande</div><div className="ps-ref">{refs.clientRef}</div></>)}
+          </section>
+          <section className="ps-client">
+            <div className="ps-label">{delivery ? "Livré à" : kind === "quotes" ? "Destinataire" : "Facturé à"}</div>
+            <div className="ps-client-name">{text(c.name)}</div>
+            <Lines>{[text(c.address), text(c.city), text(c.nif) && `NIF : ${text(c.nif)}`, text(c.rccm) && `RCCM : ${text(c.rccm)}`]}</Lines>
+          </section>
+        </div>
 
         <table className="ps-lines">
           <thead>
@@ -121,7 +128,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
         {!delivery && <div className="ps-bottom">
           <div className="ps-words">
             {docArrete(kind, record.data)} à la somme de <strong>{amountInWordsWithCurrency(totals.gross, currency)}</strong> toutes taxes comprises.
-            {text(record.data.notes) && <p className="ps-notes">{text(record.data.notes)}</p>}
+            {refs.notes && <p className="ps-notes">{refs.notes}</p>}
             {fiscalMentions({
               kind, settings: s, data: record.data,
               hasZeroVat: lines.some((l) => !isSection(l) && !l.deposit && !l.depositInvoiceId && l.vatRate === 0 && lineNet(l, decimals) !== 0),
@@ -165,10 +172,10 @@ export function PrintView({ kind, record, client, situation, onClose }: {
           </section>
         )}
 
-        {!delivery && kind !== "credit_notes" && (text(s.bank) || text(s.mobile_money)) && (
+        {!delivery && kind !== "credit_notes" && (refs.paymentTerms || text(s.bank) || text(s.mobile_money)) && (
           <section className="ps-pay">
             <div className="ps-label">Règlement</div>
-            <Lines>{[text(s.bank) && `Virement : ${text(s.bank)}`, text(s.mobile_money) && `Mobile money : ${text(s.mobile_money)}`]}</Lines>
+            <Lines>{[refs.paymentTerms && `Conditions : ${refs.paymentTerms}`, text(s.bank) && `Virement : ${text(s.bank)}`, text(s.mobile_money) && `Mobile money : ${text(s.mobile_money)}`]}</Lines>
           </section>
         )}
 

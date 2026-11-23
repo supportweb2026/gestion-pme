@@ -97,7 +97,10 @@ test("VosFactures : documents, clients et encaissements repris avec leurs numér
   const t2 = totals(by("FALPHA002").data);
   assert.deepEqual([t2.net, t2.vat, t2.payable], [450444, 81080, 531524]);
   assert.equal(by("FALPHA002").data.due_date, "2020-03-15");
-  assert.match(String(by("FALPHA002").data.notes), /Règlement : A la commande/);
+  // Références à leur place : conditions de règlement dans leur champ, plus dans la note.
+  assert.equal(by("FALPHA002").data.payment_terms, "A la commande");
+  assert.equal(by("FALPHA002").data.notes, "");
+  assert.equal(by("FALPHA002").data.import_v, 2);
 
   // TVA négative = retenue à la source, jamais une TVA négative.
   const beta = by("FBETA001");
@@ -155,6 +158,25 @@ test("Reprise : numéro d'origine accepté pour un document repris, réservé à
   // Une fois repris, le document est figé comme tout document numéroté.
   const existing = { tbl: "invoices" as const, id: inv.id, data: inv.data, clocks: {} };
   assert.match(checkChange(existing, { ...c, patch: { lines: [] } }) ?? "", /non modifiable/);
+});
+
+test("Reprise : une nouvelle reprise complète les références vides d'un document déjà repris, sans rien remplacer", () => {
+  const r = buildVfImport([FILE]);
+  const inv = r.records.find((x) => x.data.number === "FALPHA001")!;
+  const { client_ref: _c, payment_terms: _p, import_info: _n, seller_name: _s, import_v: _v, ...old } = inv.data;
+  const existing = { tbl: "invoices" as const, id: inv.id, data: old, clocks: {} };
+  const c: Change = { id: "op-00000002", tbl: "invoices", row: inv.id, patch: { client_ref: "ORDRE D'ACHAT N°2035609", seller_name: "Awa" }, hlc: encodeHlc(2, 0, "dev"), device: "dev" };
+  assert.equal(checkChange(existing, c), null);
+  assert.equal(checkPermission({ userId: "u", role: "director" }, existing, c), null);
+  assert.match(checkPermission({ userId: "u", role: "sales" }, existing, c) ?? "", /réservée à la direction/);
+  // Déjà renseignée : on ne la remplace pas. Champ hors liste : refusé. Document non repris : refusé.
+  const filled = { ...existing, data: { ...old, client_ref: "BC 12" } };
+  assert.match(checkChange(filled, c) ?? "", /non modifiable/);
+  assert.match(checkChange(existing, { ...c, patch: { client_ref: "X", notes: "Y" } }) ?? "", /non modifiable/);
+  const { imported: _i, ...native } = old;
+  assert.match(checkChange({ ...existing, data: native }, c) ?? "", /non modifiable/);
+  // Période clôturée : un complément de référence passe, une autre modification non.
+  assert.equal(checkPermission({ userId: "u", role: "admin" }, existing, c, "2030-12-31"), null);
 });
 
 test("Ligne figée : montants d'origine, recalcul dès qu'on la libère", () => {

@@ -11,7 +11,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFP
 import { computeTotals, docTaxes, lineDiscount, lineNet, lineVat, type InvoiceLine } from "../shared/invoice.ts";
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../shared/currency.ts";
 import type { DocTable } from "../shared/sync.ts";
-import { docArrete, docTitle, isSection, quoteTypeOf, sectionSubtotals } from "../shared/documents.ts";
+import { docArrete, docRefs, docTitle, isSection, quoteTypeOf, sectionSubtotals } from "../shared/documents.ts";
 import { fiscalMentions, pct } from "../shared/taxes.ts";
 import { docColor, rgb01, softOf, stampFor, termsFor } from "../shared/branding.ts";
 
@@ -215,7 +215,23 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     text(l, boxX + 12, cy, 9.5);
     cy -= 12;
   }
-  y -= boxH + 18;
+  // Références, à gauche de l'encadré du client : objet, référence de commande.
+  const refs = docRefs(doc);
+  const refW = boxX - M - 24;
+  let ry = y - 2;
+  const refBlock = (label: string, value: string, strong: boolean) => {
+    if (!value) return;
+    text(label.toUpperCase(), M, ry - 8, 7.5, regular, GREY);
+    ry -= 21;
+    for (const w of wrap(value, strong ? 10.5 : 9.5, refW, strong ? bold : regular).slice(0, 8)) {
+      text(w, M, ry, strong ? 10.5 : 9.5, strong ? bold : regular);
+      ry -= strong ? 13 : 12;
+    }
+    ry -= 6;
+  };
+  refBlock("Objet", refs.subject, true);
+  refBlock("Référence de commande", refs.clientRef, false);
+  y = Math.min(y - boxH, ry + 6) - 18;
 
   // ── Lignes ───────────────────────────────────────────────────────────────
   // Colonnes numériques alignées à droite (bord droit de chaque colonne).
@@ -287,7 +303,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
 
   if (delivery) {
     // ── Bon de livraison : notes puis signatures ───────────────────────────
-    const notes = str(doc.notes) ? wrap(str(doc.notes), 9, xr - M) : [];
+    const notes = refs.notes ? wrap(refs.notes, 9, xr - M) : [];
     if (y - (notes.length * 11 + 110) < M + FOOT) newPage();
     for (const n of notes) {
       text(n, M, y, 9, regular, GREY);
@@ -338,7 +354,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     hasZeroVat: lines.some((l) => !isSection(l) && !l.deposit && !l.depositInvoiceId && l.vatRate === 0 && lineNet(l, decimals) !== 0),
     payableXaf: Math.round(totals.payable * (currency === "XAF" ? 1 : Number(doc.rate) || 1)),
   });
-  const notes = [str(doc.notes), ...mentions].filter(Boolean).flatMap((n) => wrap(n, 9, totX - M - 20));
+  const notes = [refs.notes, ...mentions].filter(Boolean).flatMap((n) => wrap(n, 9, totX - M - 20));
   const blockH = Math.max(rows.length * 18, words.length * 12 + (notes.length ? notes.length * 11 + 10 : 0));
   if (y - blockH < M + FOOT) newPage();
   let ty = y;
@@ -366,7 +382,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
 
   // ── Règlement, bon pour accord ───────────────────────────────────────────
   const pay = kind !== "credit_notes"
-    ? [str(s.bank) && `Virement : ${str(s.bank)}`, str(s.mobile_money) && `Mobile money : ${str(s.mobile_money)}`].filter(Boolean)
+    ? [refs.paymentTerms && `Conditions : ${refs.paymentTerms}`, str(s.bank) && `Virement : ${str(s.bank)}`, str(s.mobile_money) && `Mobile money : ${str(s.mobile_money)}`].filter(Boolean)
     : [];
   if (pay.length) {
     const payLines = pay.flatMap((p) => wrap(p, 9.5, xr - M));
