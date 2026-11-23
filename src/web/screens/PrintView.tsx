@@ -98,7 +98,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
             {kind === "invoices" && record.data.due_date ? <div>Échéance : {formatDate(record.data.due_date)}</div> : null}
             {kind === "quotes" && record.data.valid_until ? <div>Valable jusqu'au {formatDate(record.data.valid_until)}</div> : null}
             {kind === "credit_notes" && record.data.invoice_number ? <div>Sur facture {text(record.data.invoice_number)}</div> : null}
-            {kind === "invoices" && record.data.quote_number ? <div>Réf. devis {text(record.data.quote_number)}</div> : null}
+            {kind === "invoices" && record.data.quote_number ? <div>Réf. {text(record.data.quote_number)}</div> : null}
             {sellerOf(record.data, s) ? <div>Votre interlocuteur : {sellerOf(record.data, s)}</div> : null}
           </div>
         </header>

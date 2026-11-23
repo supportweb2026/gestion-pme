@@ -17,7 +17,7 @@ import { CASH_LIMIT_XAF, fiscalSettings, newDocTaxFields, pct } from "../../shar
 import { currencyOf, invoiceSituations, linesOf, QUOTE_LABELS, quoteStatus, rateOf, SITUATION_LABELS, totalsOf, type Situation } from "../ledger.ts";
 import { PrintView } from "./PrintView.tsx";
 import {
-  applyGlobalDiscount, deductionLines, depositLines, docRefs, docSearchText, docTitle, followUps, isDepositLine, isSection, isSlip, isSlipType, percentForAmount, SLIP_TEXTS,
+  applyGlobalDiscount, deductionLines, depositLines, docRefs, docSearchText, docTitle, followUps, invoicesFromSlips, isDepositLine, isSection, isSlip, isSlipType, slipBilling, percentForAmount, SLIP_TEXTS,
   QUOTE_TYPES, quoteTypeOf, relatedDocs, sectionSubtotals, type QuoteType,
 } from "../../shared/documents.ts";
 import { inPeriod, PERIOD_LABELS, periodRange, type PeriodPreset } from "../../shared/periods.ts";
@@ -447,7 +447,10 @@ const emptyLine = (): InvoiceLine => ({ label: "", qty: 1, unitPrice: 0, vatRate
 function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
   kind: DocTable; backLabel: string; record: SyncRecord | null; clients: SyncRecord[]; onClose: () => void; onOpen: (id: string) => void;
 }) {
-  const { db, sync, session, go } = useApp();
+  const { db, sync, session, go: goTab } = useApp();
+  /** Ouvre un document dans l'entrée de menu de son type (un bon de commande sous « Commandes », pas sous « Devis »). */
+  const go = (t: Tab, openId?: string, data?: Record<string, unknown>) =>
+    goTab(t === "quotes" && openId ? viewOf("quotes", data ?? allQuotes.find((q) => q.id === openId)?.data) : t, openId);
   const cfg = DOCS[kind];
   const settings = useSettings();
   const articles = useTable("articles");
@@ -628,6 +631,38 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
     ? invoices.some((i) => text(i.data.stage_id) && i.data.project_id === record.data.project_id)
     : false;
 
+  /** Bon de livraison ou de prestation : peut-on le facturer, ou l'est-il déjà ? */
+  const slipBill = isDelivery && record && numbered ? slipBilling(record, { quotes: allQuotes, invoices }) : null;
+  /** Devis ou commande déjà facturé au fil de ses bons : le convertir en entier compterait deux fois. */
+  const slipInvoices = kind === "quotes" && !isDelivery && record ? invoicesFromSlips(record, { quotes: allQuotes, invoices }) : [];
+
+  /** Facture d'un bon livré : les quantités du bon, les prix, taxes et conditions du document chiffré d'origine. */
+  async function slipToInvoice() {
+    if (slipBill?.state !== "ready") return;
+    const base = slipBill.priced;
+    const baseRefs = base ? docRefs(base.data) : null;
+    const invId = db.newId("fa");
+    await db.write("invoices", invId, {
+      status: "draft",
+      client_id: record!.data.client_id,
+      date: today(),
+      due_date: addDays(today(), paymentDays),
+      lines: linesOf(record).filter((l) => !isDepositLine(l)),
+      ...(base ? taxCopy(base as SyncRecord) : {}),
+      notes: baseRefs?.notes ?? "",
+      subject: refs.subject, client_ref: refs.clientRef, payment_terms: baseRefs?.paymentTerms ?? "",
+      currency: currencyOf(record),
+      rate: rateOf(record),
+      project_id: text(record!.data.project_id),
+      quote_id: id,
+      quote_number: record!.data.number,
+      created_by: session.user.id,
+      created_by_name: session.user.name,
+    });
+    await db.write("quotes", id, { invoice_id: invId });
+    go("invoices", invId);
+  }
+
   async function quoteToInvoice() {
     const invId = db.newId("fa");
     // Facture de solde : toutes les lignes, moins chaque acompte déjà facturé.
@@ -708,7 +743,7 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
     });
     // Un bon de commande tiré d'un devis envoyé vaut accord du client.
     if (type === "order" && kind === "quotes" && record!.data.status === "sent") await db.write("quotes", id, { status: "accepted", decided_at: new Date().toISOString() });
-    go("quotes", blId);
+    go("quotes", blId, { doc_type: type });
   }
 
   async function createCreditNote() {
@@ -961,16 +996,26 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                         {record!.data.status === "sent" ? (
                           <button className="primary" onClick={() => setQuoteStatus("accepted")}>{slip?.mark}</button>
                         ) : <p className="status-line ok">{slip?.confirmed}</p>}
+                        {slipBill?.state === "invoiced" && (
+                          <button onClick={() => go("invoices", slipBill.invoice.id)}>Voir la facture</button>
+                        )}
                       </div>
                     )}
                     {kind === "quotes" && !isDelivery && (
                       <div className="aside-actions" style={{ marginTop: 16 }}>
                         {stageBilled && <p className="hint">Ce devis est facturé étape par étape depuis son projet.</p>}
-                        {!stageBilled && ["sent", "accepted"].includes(text(record!.data.status)) && (
+                        {slipInvoices.length > 0 && (
+                          <p className="hint" data-testid="billed-by-slips">
+                            Déjà facturé au fil des livraisons ({slipInvoices.map((i, n) => (
+                              <span key={i.id}>{n ? ", " : ""}<button className="link inline" onClick={() => go("invoices", i.id)}>{text(i.data.number) || "facture en brouillon"}</button></span>
+                            ))}). Le reste se facture depuis chaque bon livré.
+                          </p>
+                        )}
+                        {!stageBilled && !slipInvoices.length && ["sent", "accepted"].includes(text(record!.data.status)) && (
                           <button className="primary" onClick={quoteToInvoice}>{deposits.length ? "Facture de solde" : "Convertir en facture"}</button>
                         )}
                         {draftDeposits.length > 0 && <p className="hint">Un acompte en brouillon n'est pas déduit : validez-le d'abord.</p>}
-                        {!stageBilled && ["sent", "accepted"].includes(text(record!.data.status)) && <DepositForm onCreate={createDeposit} currency={currency} />}
+                        {!stageBilled && !slipInvoices.length && ["sent", "accepted"].includes(text(record!.data.status)) && <DepositForm onCreate={createDeposit} currency={currency} />}
                         {record!.data.status === "sent" && (
                           <>
                             <button onClick={() => setQuoteStatus("accepted")}>Marquer accepté</button>
@@ -1000,6 +1045,26 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                       );
                     })}
                   </ul>
+                </div>
+              )}
+              {slipBill && slipBill.state !== "invoiced" && (
+                <div className="card aside-actions next-steps" data-testid="next-steps">
+                  <h3>Étape suivante</h3>
+                  {slipBill.state === "deposit" ? (
+                    <>
+                      <p className="hint">Un acompte a été facturé sur {docTitle("quotes", slipBill.origin.data).toLowerCase()} {text(slipBill.origin.data.number)} : la facture de solde se crée depuis ce document, pour que l'acompte soit déduit.</p>
+                      <button onClick={() => go("quotes", slipBill.origin.id)}>Ouvrir {text(slipBill.origin.data.number)}</button>
+                    </>
+                  ) : record!.data.status === "accepted" ? (
+                    <>
+                      <button className="primary" onClick={slipToInvoice}>Créer la facture</button>
+                      <p className="hint">{slipBill.priced
+                        ? `La facture reprend les quantités de ce bon et les prix d'origine (${docTitle("quotes", slipBill.priced.data).toLowerCase()} ${text(slipBill.priced.data.number)}).`
+                        : "La facture reprend les lignes de ce bon. Il n'a pas de prix : vous les complétez sur la facture avant de la valider."}</p>
+                    </>
+                  ) : (
+                    <p className="hint">{slip?.mark} ce bon, puis créez sa facture ici.</p>
+                  )}
                 </div>
               )}
               {followUps(kind, record?.data).length > 0 && (
@@ -1488,6 +1553,9 @@ function originPhrase(number: string): string {
   const prefix = number.split("-")[0];
   if (prefix === "PF") return "Issue de la pro forma";
   if (prefix === "BC") return "Issue du bon de commande";
+  if (prefix === "BL") return "Issue du bon de livraison";
+  if (prefix === "BP") return "Issue du bon de prestation";
+  if (prefix === "BI") return "Issue du bon d'intervention";
   return "Issue du devis";
 }
 

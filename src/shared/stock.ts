@@ -60,7 +60,20 @@ const deliveries = (quotes: Rec[]) => quotes.filter((q) => q.data.doc_type === "
 export function salesMoves(invoices: Rec[], quotes: Rec[]): StockMove[] {
   const out: StockMove[] = [];
   const bls = deliveries(quotes);
-  const covered = new Set(bls.map((b) => str(b.data.source_id)).filter(Boolean));
+  // Ce qu'un bon de livraison a déjà sorti du stock : le bon lui-même et toute sa chaîne d'origine
+  // (commande, devis, facture), pour qu'une facture tirée de l'un d'eux ne le sorte pas une seconde fois.
+  const covered = new Set<string>();
+  for (const b of bls) {
+    let cur: Rec | undefined = b;
+    const walked = new Set<string>();
+    while (cur && !walked.has(cur.id)) {
+      walked.add(cur.id);
+      covered.add(cur.id);
+      const sid = str(cur.data.source_id);
+      if (sid) covered.add(sid);
+      cur = sid ? quotes.find((q) => q.id === sid) : undefined;
+    }
+  }
   for (const b of bls) {
     for (const l of linesOf(b)) {
       out.push({ articleId: l.articleId!, date: str(b.data.date), qty: -Math.abs(Number(l.qty) || 0), kind: "delivery", label: `Livraison ${str(b.data.number)}`, sourceId: b.id, table: "quotes" });
