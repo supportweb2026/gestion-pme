@@ -15,6 +15,8 @@ import { allows, API_TOKEN_RE, parseScopes, type ApiScopes } from "../shared/api
 import { extendPaidUntil, PLANS, subscriptionInfo, TRIAL_DAYS, type CompanySubscription } from "../shared/plans.ts";
 import { hashRecoveryCode, newRecoveryCodes, newTotpSecret, otpauthUri, verifyTotp } from "../shared/totp.ts";
 import { handleConnections, handleConnector } from "./oauth.ts";
+import { isSignToken, parseSignPath, publicDoc, sameToken, shareable, signLock } from "../shared/publicDoc.ts";
+import { checkSignature } from "../shared/signature.ts";
 
 /** Taille d'un bloc de numéros de facture réservé par un appareil. */
 const NUMBER_BLOCK_SIZE = 50;
@@ -928,6 +930,64 @@ async function handlePublicApi(req: Request, env: Env, path: string) {
   return json(req.method === "DELETE" ? { ok: true } : apiRecord(redactRecord(reader, parseRecord(after ?? undefined))!), existing ? 200 : 201);
 }
 
+/**
+ * Signature en ligne d'un devis, sans compte : le client ouvre le lien reçu
+ * (/signer/{entreprise}/{document}/{jeton}), lit le document et le signe.
+ *   GET  /api/public/sign/{entreprise}/{document}/{jeton} : ce qui est imprimé sur le document
+ *   POST idem, corps { name, image } : pose la signature, le document passe à « Accepté »
+ * Le jeton (192 bits) est celui noté sur le document ; un lien inconnu, retiré ou d'un autre
+ * document reçoit la même réponse 404.
+ */
+async function handlePublicSign(req: Request, env: Env, path: string) {
+  const gone = () => new HttpError(404, "ce lien n'est plus valable");
+  const link = parseSignPath(path.replace(/^\/sign\//, "/signer/"));
+  if (!link) throw gone();
+  if (!["GET", "POST"].includes(req.method)) throw new HttpError(405, "méthode non autorisée");
+  const load = (tbl: string, id: string) => env.DB.prepare(`SELECT tbl, id, data, clocks FROM records WHERE company_id = ? AND tbl = ? AND id = ?`)
+    .bind(link.companyId, tbl, id).first<{ tbl: string; id: string; data: string; clocks: string }>().then((r) => parseRecord(r ?? undefined));
+  const quote = await load("quotes", link.docId);
+  const token = quote?.data.sign_token;
+  if (!quote || !shareable(quote.data) || !isSignToken(token) || !sameToken(token, link.token)) throw gone();
+  const company = await env.DB.prepare(`SELECT id, name, status, plan, trial_ends_at, paid_until FROM companies WHERE id = ?`).bind(link.companyId).first<Company>();
+  if (!company || company.status === "suspended") throw gone();
+
+  if (req.method === "GET") {
+    const [client, settings] = await Promise.all([
+      typeof quote.data.client_id === "string" ? load("clients", quote.data.client_id) : null,
+      load("settings", "company"),
+    ]);
+    return json(publicDoc(quote.data, client?.data, { name: company.name, ...settings?.data }, today()));
+  }
+
+  const lock = signLock(quote.data, today());
+  if (lock) throw new HttpError(409, lock === "signed" ? "ce document est déjà signé" : lock === "expired" ? "ce devis a expiré : demandez-en un nouveau" : "ce document ne peut plus être signé");
+  if (subscriptionInfo(company, today()).readOnly) throw new HttpError(409, "ce document ne peut pas être signé pour le moment");
+  if (Number(req.headers.get("content-length") ?? 0) > 200_000) throw new HttpError(413, "signature trop lourde");
+  const body = await readJson<{ name?: unknown; image?: unknown; decline?: unknown }>(req);
+  const at = now();
+  // Écriture au nom de la personne qui a établi le devis, depuis un « appareil » réservé aux réponses en ligne.
+  const dev = "signature-en-ligne";
+  const write = async (patch: Record<string, unknown>) => {
+    const latest = Math.max(0, ...Object.values(quote.clocks ?? {}).map((h) => decodeHlc(String(h)).ms));
+    const change: Change = { id: crypto.randomUUID(), tbl: "quotes", row: quote.id, patch, hlc: encodeHlc(Math.max(Date.now(), latest + 1), 0, dev), device: dev };
+    const author = typeof quote.data.created_by === "string" && quote.data.created_by ? quote.data.created_by : "client";
+    const { rejected } = await applyIncoming(env, { sub: author, cid: link.companyId, role: "sales", dev }, [change]);
+    if (rejected.length) throw new HttpError(409, rejected[0].reason);
+    const after = await load("quotes", quote.id);
+    return json(publicDoc(after!.data, undefined, undefined, today()));
+  };
+  // Le client décline le devis : l'entreprise le voit « Refusé ».
+  if (body.decline === true) return write({ status: "refused", decided_at: at });
+  const signature = {
+    name: typeof body.name === "string" ? body.name.trim() : "", at, image: body.image, via: "link",
+    ip: (req.headers.get("cf-connecting-ip") ?? "").slice(0, 64),
+    agent: (req.headers.get("user-agent") ?? "").slice(0, 300),
+  };
+  const bad = checkSignature(signature);
+  if (bad) throw new HttpError(400, bad);
+  return write({ signature, status: "accepted", decided_at: at });
+}
+
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const p = url.pathname;
@@ -955,6 +1015,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (p === "/api/signup" && m === "POST") return handleSignup(req, env);
   if (p === "/api/login" && m === "POST") return handleLogin(req, env);
   if (p === "/api/errors" && m === "POST") return handleClientError(req, env);
+  if (p.startsWith("/api/public/sign/")) return handlePublicSign(req, env, p.slice("/api/public".length));
   if (p.startsWith("/api/v1/")) return handlePublicApi(req, env, p.slice("/api/v1/".length));
   const { s: session, company } = await authenticate(req, env);
   if (company.status === "suspended" && p !== "/api/export") throw new HttpError(403, "compte de l'entreprise suspendu : contactez l'équipe Gestia");
