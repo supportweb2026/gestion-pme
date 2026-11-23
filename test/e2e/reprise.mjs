@@ -204,8 +204,22 @@ try {
   step("Clients : la recherche trouve un client par le nom d'un contact");
   await nav("Clients");
   await page.getByLabel("Rechercher un client").fill("obiang");
-  assert.equal(await page.locator("tbody tr").count(), 1);
+  await page.waitForFunction(() => document.querySelectorAll("tbody tr").length === 1);
   assert.match(await page.locator("tbody tr").first().innerText(), /BETA/);
+
+  step("Import standard : le modèle rempli se reprend, un fichier sans les colonnes attendues est refusé en clair");
+  await nav("Réglages");
+  await page.getByRole("tab", { name: "Données" }).click();
+  await page.getByLabel("Fichiers d'historique à importer").setInputFiles(join(root, "test", "fixtures", "documents-incomplets.csv"));
+  await page.getByText(/documents-incomplets\.csv : colonnes introuvables \(Numéro, Date, Client, Désignation, Prix unitaire HT\)/).waitFor();
+  await page.getByLabel("Fichiers d'historique à importer").setInputFiles(join(root, "test", "fixtures", "documents-standard.csv"));
+  await preview.waitFor();
+  assert.match((await preview.innerText()).replace(/\s/g, " "), /1 fichier lu : 1 facture, 1 avoir, 1 devis et bons, 1 nouveau client, 1 encaissement/);
+  await page.getByTestId("import-history-run").click();
+  assert.match(await txt("import-history-done"), /Reprise terminée : 5 éléments ajoutés\.$/);
+  await open("Factures", "F-0001");
+  assert.equal(await txt("total-ht"), "1 662 000 FCFA");
+  assert.equal(await txt("total-ttc"), "1 961 160 FCFA");
 
   step("La numérotation de Gestia n'est pas touchée");
   await nav("Factures");
