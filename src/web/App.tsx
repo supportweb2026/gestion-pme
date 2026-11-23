@@ -555,7 +555,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
           )}
           {COMING_SOON[tab] && <ComingSoon tab={tab} onBack={() => go(ready[0] ?? "settings")} />}
           {tab === "expenses" && !COMING_SOON.expenses && <Expenses />}
-          {tab === "clients" && <Clients />}
+          {tab === "clients" && <Clients open={open} setOpen={setOpen} />}
           {tab === "articles" && <Articles />}
           {tab === "my_day" && <MyDay />}
           {tab === "projects" && !COMING_SOON.projects && <Projects open={open} />}

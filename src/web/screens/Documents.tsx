@@ -97,6 +97,12 @@ export function presetList(kind: DocTable, patch: Partial<ListState>) {
   LIST_STATE.set(kind, { ...DEFAULT_LIST, ...patch });
 }
 
+/** Client à proposer sur le prochain nouveau document (créé depuis la page d'un client). */
+let NEW_DOC_CLIENT = "";
+export function presetNewDoc(clientId: string) {
+  NEW_DOC_CLIENT = clientId;
+}
+
 export function Documents({ kind, open, setOpen }: { kind: DocTable; open: string | null; setOpen: (id: string | null) => void }) {
   const { go, session } = useApp();
   // Reprise d'historique d'un autre logiciel : ouverte depuis la liste, pour la direction.
@@ -374,7 +380,11 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const paymentDays = Number(settings.payment_days ?? DEFAULT_PAYMENT_DAYS);
 
   const [id] = useState(() => record?.id ?? db.newId(kind === "quotes" ? "dv" : kind === "invoices" ? "fa" : "av"));
-  const [clientId, setClientId] = useState(text(record?.data.client_id) || clients[0]?.id || "");
+  const [clientId, setClientId] = useState(() => {
+    const preset = NEW_DOC_CLIENT;
+    NEW_DOC_CLIENT = "";
+    return text(record?.data.client_id) || (clients.some((c) => c.id === preset) ? preset : "") || clients[0]?.id || "";
+  });
   const [date, setDate] = useState(text(record?.data.date) || today());
   const [dueDate, setDueDate] = useState(text(record?.data.due_date ?? record?.data.valid_until) || addDays(today(), paymentDays));
   const [lines, setLines] = useState<InvoiceLine[]>(() => (record ? linesOf(record) : [emptyLine()]).map((l) => ({ ...l })));

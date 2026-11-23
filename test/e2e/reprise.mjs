@@ -158,9 +158,14 @@ try {
   assert.match(await txt("clients-summary"), /clients? · Reste dû/);
   await page.getByRole("button", { name: "BETA", exact: true }).click();
   const sheet = page.getByTestId("client-sheet");
-  assert.match(await sheet.innerText(), /FBETA001/);
+  await sheet.getByRole("button", { name: "FBETA001" }).waitFor();
   await shot("reprise-fiche-client.png");
-  await sheet.getByRole("button", { name: "Toutes ses factures (1)" }).click();
+  assert.match(await sheet.locator(".kpis").innerText(), /Facturé TTC[\s\S]*Encaissé[\s\S]*1 000 000 FCFA[\s\S]*Reste dû/);
+  await sheet.getByRole("tab", { name: /Encaissements/ }).click();
+  assert.match(await sheet.innerText(), /Virement[\s\S]*1 000 000 FCFA/);
+  await sheet.getByRole("tab", { name: /Documents/ }).click();
+  await sheet.getByRole("button", { name: /^Factures · 1/ }).click();
+  await sheet.getByRole("button", { name: "Ouvrir dans la liste, avec les filtres" }).click();
   assert.match(await listSummary(), /^1 document sur 6/);
   assert.match(await page.locator("tbody tr").first().innerText(), /FBETA001/);
   await page.getByRole("button", { name: "Tout afficher" }).click();
