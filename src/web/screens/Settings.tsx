@@ -1,3 +1,4 @@
+import { ImportHistory } from "../ImportHistory.tsx";
 import { useEffect, useState, type FormEvent } from "react";
 import { can, COMING_SOON, ROLE_LABELS, TAB_LABELS, text, useApp, useSettings, useSyncStatus, type Tab } from "../context.ts";
 import { api, ApiError, getToken } from "../api.ts";
@@ -65,6 +66,7 @@ export function Settings() {
       {can.manageCompany(session.user.role) && <CurrencySettings />}
       {can.manageUsers(session.user.role) && <Users />}
       {can.manageCompany(session.user.role) && <DataExport />}
+      {can.manageCompany(session.user.role) && <ImportHistory />}
       {session.user.role === "admin" && <ApiKeys />}
     </section>
   );

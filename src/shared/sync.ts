@@ -93,6 +93,14 @@ export function isDocTable(tbl: string): tbl is DocTable {
   return tbl in NUMBERED_DOCS;
 }
 
+/**
+ * Document repris d'un autre logiciel (champ `imported`, ex. "vosfactures") : créé en une
+ * seule écriture, déjà numéroté. Réservé à la direction (voir checkPermission).
+ */
+export function isHistoryImport(patch: Fields): boolean {
+  return typeof patch.imported === "string" && patch.imported !== "";
+}
+
 /** Vrai si le document a déjà reçu son numéro définitif. */
 export function isNumbered(data: Fields | undefined): boolean {
   return typeof data?.number === "string" && data.number.length > 0;
@@ -118,6 +126,11 @@ export function checkChange(existing: SyncRecord | null, change: Change): string
         const fix = change.tbl === "invoices" ? " : passer par un avoir" : "";
         return `document numéroté non modifiable (${forbidden.join(", ")})${fix}`;
       }
+    } else if (isHistoryImport(change.patch)) {
+      // Reprise d'historique : le document garde son numéro d'origine, hors des séries de Gestia.
+      const n = change.patch.number;
+      if (typeof n !== "string" || n.trim() === "" || n.length > 60) return "un document repris doit garder son numéro d'origine";
+      return checkProjectChange(existing, change);
     } else if (change.patch.status === rule.numberedStatus) {
       const n = change.patch.number;
       // Les documents d'avant-vente ont chacun leur série (DV, PF, BC, BL).
@@ -166,6 +179,9 @@ export function checkPermission(actor: Actor, existing: SyncRecord | null, chang
   const writable = WRITABLE[actor.role] ?? [];
   if (writable !== "all" && !writable.includes(change.tbl)) return "votre rôle ne permet pas cette modification";
 
+  if (isDocTable(change.tbl) && isHistoryImport(change.patch) && !["admin", "director"].includes(actor.role)) {
+    return "reprise d'historique réservée à la direction";
+  }
   if (change.tbl === "journal_entries" && !["admin", "accountant"].includes(actor.role)) {
     return "écritures diverses réservées au comptable et à l'administrateur";
   }

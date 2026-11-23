@@ -9,13 +9,14 @@
  */
 import { lineNet, roundAmount, type InvoiceLine } from "./invoice.ts";
 
-export type QuoteType = "quote" | "proforma" | "order" | "delivery";
+export type QuoteType = "quote" | "proforma" | "order" | "delivery" | "intervention";
 
 export const QUOTE_TYPES: Record<QuoteType, { label: string; prefix: string; arrete: string; validate: string; newLabel: string }> = {
   quote: { label: "Devis", prefix: "DV", arrete: "Arrêté le présent devis", validate: "Finaliser le devis", newLabel: "Nouveau devis" },
   proforma: { label: "Facture pro forma", prefix: "PF", arrete: "Arrêtée la présente facture pro forma", validate: "Finaliser la pro forma", newLabel: "Nouvelle pro forma" },
   order: { label: "Bon de commande", prefix: "BC", arrete: "Arrêté le présent bon de commande", validate: "Finaliser le bon de commande", newLabel: "Nouveau bon de commande" },
   delivery: { label: "Bon de livraison", prefix: "BL", arrete: "", validate: "Finaliser le bon de livraison", newLabel: "Nouveau bon de livraison" },
+  intervention: { label: "Bon d'intervention", prefix: "BI", arrete: "Arrêté le présent bon d'intervention", validate: "Finaliser le bon d'intervention", newLabel: "Nouveau bon d'intervention" },
 };
 
 /** Séries admises pour la table des documents d'avant-vente. */

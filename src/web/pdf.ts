@@ -253,7 +253,9 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
       return;
     }
     const label = wrap(l.label || "", 9.5, delivery ? xr - M - 100 : labelW);
-    const h = Math.max(1, label.length) * 12 + 8;
+    // Détail sous la désignation (documents repris) : plus petit, en gris.
+    const detail = l.description ? wrap(l.description, 8, delivery ? xr - M - 100 : labelW) : [];
+    const h = Math.max(1, label.length) * 12 + detail.length * 10 + 8;
     if (y - h < M + FOOT) {
       newPage();
       header();
@@ -262,6 +264,10 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     for (const w of label) {
       text(w, M + 6, ly, 9.5);
       ly -= 12;
+    }
+    for (const w of detail) {
+      text(w, M + 6, ly + 1, 8, regular, GREY);
+      ly -= 10;
     }
     if (delivery) {
       right(`${l.qty}${l.unit ? ` ${l.unit}` : ""}`, xr - 6, y - 13, 9.5);
