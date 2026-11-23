@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { can, formatDate, normalize, text, today, useApp, useSettings, useTable } from "../context.ts";
 import { ImportHistory } from "../ImportHistory.tsx";
-import { PAGE_SIZE, Pager } from "../Pager.tsx";
+import { Pager, readPageSize } from "../Pager.tsx";
 import {
   addDays, computeTotals, DEFAULT_PAYMENT_DAYS, DEFAULT_VAT_RATE, formatXaf, lineNet, PAYMENT_METHODS, unfreezeLine, type InvoiceLine,
 } from "../../shared/invoice.ts";
@@ -106,6 +106,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
   const { situations } = useSalesData();
   const listSettings = useSettings();
   const [list, setList] = useState<ListState>(() => LIST_STATE.get(kind) ?? DEFAULT_LIST);
+  const [pageSize, setPageSize] = useState(readPageSize);
   // Tout changement de filtre ramène à la première page.
   const set = (patch: Partial<ListState>) => setList((l) => {
     const next = { ...l, page: 0, ...patch };
@@ -181,9 +182,9 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
   const rows = scope
     .filter((r) => matchesFilter(r, shownFilter))
     .sort((a, b) => (list.sort === "date" ? -list.dir * byDate(a, b) : list.dir * compare[list.sort](a, b)) || byDate(a, b));
-  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const pages = Math.max(1, Math.ceil(rows.length / pageSize));
   const page = Math.min(list.page, pages - 1);
-  const shown = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const shown = rows.slice(page * pageSize, (page + 1) * pageSize);
   const totalXaf = rows.reduce((s, r) => s + r.totalXaf, 0);
   const restXaf = rows.reduce((s, r) => s + r.restXaf, 0);
 
@@ -321,7 +322,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
               ))}
             </tbody>
           </table>
-          <Pager page={page} total={rows.length} onPage={(p) => set({ page: p })} />
+          <Pager page={page} total={rows.length} size={pageSize} onPage={(p) => set({ page: p })} onSize={(n) => { setPageSize(n); set({ page: 0 }); }} />
         </div>
       )}
     </section>

@@ -88,3 +88,24 @@ test("Excel : la première feuille d'un .xlsx se lit comme un CSV", async () => 
   assert.deepEqual(r.items[0], { label: "Audit & conseil", ref: "", price: 150000, vat_rate: 18, unit: "jour", kind: "service", description: "Diagnostic du parc" });
   assert.deepEqual(r.items[1], { label: "Routeur Wi-Fi", ref: "", price: 45000, vat_rate: 0, unit: "", kind: "service", description: "Double bande" });
 });
+
+import { mergeSheets } from "../src/shared/csv.ts";
+import { pageNumbers } from "../src/shared/paging.ts";
+
+test("plusieurs fichiers : colonnes alignées par intitulé, colonnes en plus ajoutées", () => {
+  const merged = mergeSheets([
+    [["Nom", "TVA", "PU H.T.", "TVA"], ["A", "", "100", "18"]],
+    [["PU H.T.", "Nom", "Unité"], ["200", "B", "h"]],
+    [],
+  ]);
+  assert.deepEqual(merged, [["Nom", "TVA", "PU H.T.", "TVA", "Unité"], ["A", "", "100", "18", ""], ["B", "", "200", "", "h"]]);
+  const r = rowsToArticles(merged);
+  assert.deepEqual(r.items.map((i) => [i.label, i.price, i.unit]), [["A", 100, ""], ["B", 200, "h"]]);
+});
+
+test("pages : première, dernière et voisines, avec des points de suspension", () => {
+  assert.deepEqual(pageNumbers(0, 3), [0, 1, 2]);
+  assert.deepEqual(pageNumbers(0, 30), [0, 1, "gap", 28, 29]);
+  assert.deepEqual(pageNumbers(9, 30), [0, 1, "gap", 8, 9, 10, "gap", 28, 29]);
+  assert.deepEqual(pageNumbers(3, 30), [0, 1, 2, 3, 4, "gap", 28, 29]);
+});

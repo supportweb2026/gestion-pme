@@ -34,6 +34,33 @@ export function parseCsv(text: string): string[][] {
 
 const norm = (s: string) => s.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/[^a-z0-9]/g, "");
 
+/**
+ * Réunit plusieurs fichiers en un seul tableau : les colonnes de même intitulé sont
+ * alignées, celles qu'un seul fichier possède sont ajoutées à la suite.
+ */
+export function mergeSheets(sheets: string[][][]): string[][] {
+  const filled = sheets.filter((s) => s.length > 0);
+  if (filled.length <= 1) return filled[0] ?? [];
+  const header = [...filled[0][0]];
+  const out: string[][] = [header, ...filled[0].slice(1)];
+  for (const sheet of filled.slice(1)) {
+    // Deux colonnes de même intitulé (deux « TVA ») gardent leur rang : la première avec la première.
+    const taken = new Set<number>();
+    const target = sheet[0].map((h) => {
+      let i = header.findIndex((x, k) => !taken.has(k) && norm(x) === norm(h));
+      if (i < 0) { header.push(h); i = header.length - 1; }
+      taken.add(i);
+      return i;
+    });
+    for (const r of sheet.slice(1)) {
+      const row: string[] = [];
+      r.forEach((v, k) => { if (target[k] !== undefined) row[target[k]] = v; });
+      out.push(row);
+    }
+  }
+  return out.map((r) => Array.from({ length: header.length }, (_, i) => r[i] ?? ""));
+}
+
 /** Un champ de Gestia qu'un fichier peut alimenter : son nom à l'écran et les intitulés de colonne reconnus. */
 export interface ImportField {
   key: string;
