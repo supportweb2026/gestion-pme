@@ -86,8 +86,13 @@ try {
   await preview.locator(".import-history-sellers label", { hasText: "AUTRE" }).locator("input").uncheck();
   await page.getByTestId("import-history-uptodate").waitFor();
 
-  step("Factures : numéros d'origine, statuts, annulée hors chiffres");
+  step("Factures : bouton Importer (même écran de reprise), numéros d'origine, statuts, annulée hors chiffres");
   await nav("Factures");
+  await page.getByRole("button", { name: "Importer", exact: true }).click();
+  await page.getByLabel("Exports CSV VosFactures").setInputFiles(FILE);
+  await page.getByTestId("import-history-preview").waitFor();
+  await page.getByRole("button", { name: "Importer", exact: true }).click();
+  assert.equal(await page.getByTestId("import-history-preview").count(), 0);
   const row = (n) => page.locator("tbody tr", { hasText: n }).first();
   assert.match(await row("FALPHA001").innerText(), /Payée/);
   assert.match(await row("FBETA001").innerText(), /Partiellement payée|En retard/);

@@ -1,6 +1,6 @@
 # Reprise d'historique VosFactures
 
-Écran : **Réglages › Reprise d'historique** (administrateur ou direction).
+Écran : bouton **Importer** des listes Factures et Devis, ou **Réglages › Reprise d'historique** (administrateur ou direction).
 
 ## Marche à suivre
 

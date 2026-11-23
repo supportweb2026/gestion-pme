@@ -4,7 +4,8 @@
  * la suite se fait par actions : accepter, convertir, encaisser, créer un avoir.
  */
 import { useEffect, useMemo, useState } from "react";
-import { formatDate, normalize, text, today, useApp, useSettings, useTable } from "../context.ts";
+import { can, formatDate, normalize, text, today, useApp, useSettings, useTable } from "../context.ts";
+import { ImportHistory } from "../ImportHistory.tsx";
 import {
   addDays, computeTotals, DEFAULT_PAYMENT_DAYS, DEFAULT_VAT_RATE, lineNet, PAYMENT_METHODS, unfreezeLine, type InvoiceLine,
 } from "../../shared/invoice.ts";
@@ -82,7 +83,9 @@ function useSalesData() {
 }
 
 export function Documents({ kind, open, setOpen }: { kind: DocTable; open: string | null; setOpen: (id: string | null) => void }) {
-  const { go } = useApp();
+  const { go, session } = useApp();
+  // Reprise d'historique (VosFactures) : ouverte depuis la liste, pour la direction.
+  const [importing, setImporting] = useState(false);
   const docs = useTable(kind);
   const clients = useTable("clients");
   const { situations } = useSalesData();
@@ -136,13 +139,19 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
         </div>
         {cfg.newLabel && (
           <div className="quick">
-            {noClient && <span className="muted small" id="need-client">Créez d'abord un client.</span>}
+            {noClient && !importing && <span className="muted small" id="need-client">Créez d'abord un client.</span>}
+            {can.manageCompany(session.user.role) && (
+              <button onClick={() => setImporting((v) => !v)} aria-expanded={importing} title="Reprendre les devis, factures, avoirs, clients et encaissements d'un autre logiciel (VosFactures)">
+                Importer
+              </button>
+            )}
             <button className="primary" onClick={() => setOpen("new")} disabled={noClient} aria-describedby={noClient ? "need-client" : undefined}>
               {cfg.newLabel}
             </button>
           </div>
         )}
       </div>
+      {importing && <ImportHistory />}
       <div className="toolbar">
         <label className="sr-only" htmlFor={`search-${kind}`}>Rechercher</label>
         <input id={`search-${kind}`} type="search" placeholder="Rechercher un numéro ou un client" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher" />
