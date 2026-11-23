@@ -203,3 +203,16 @@ export function relatedDocs(
   }
   return out;
 }
+
+/**
+ * Interlocuteur à afficher sur le document : le vendeur, sauf quand ce nom n'est
+ * autre que celui de l'entreprise (il figure déjà en tête).
+ */
+export function sellerOf(data: Record<string, unknown> | undefined, company: Record<string, unknown> | undefined): string {
+  const flat = (v: unknown) => (typeof v === "string" ? v : "").normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+  const seller = typeof data?.seller_name === "string" ? data.seller_name.trim() : "";
+  const a = flat(seller);
+  const b = flat(company?.name);
+  if (!a || (b && (a.includes(b) || b.includes(a)))) return "";
+  return seller;
+}

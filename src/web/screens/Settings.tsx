@@ -21,6 +21,7 @@ const COMPANY_FIELDS: { name: string; label: string; placeholder?: string; wide?
   { name: "rccm", label: "RCCM" },
   { name: "phone", label: "Téléphone" },
   { name: "email", label: "E-mail" },
+  { name: "website", label: "Site internet", placeholder: "www.exemple.ga" },
   { name: "address", label: "Adresse" },
   { name: "city", label: "Ville", placeholder: "Libreville" },
   { name: "bank", label: "Coordonnées bancaires", placeholder: "Banque, IBAN / RIB", wide: true },
