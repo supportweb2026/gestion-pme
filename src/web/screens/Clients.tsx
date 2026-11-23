@@ -1,4 +1,5 @@
 import { ImportCsv } from "../ImportCsv.tsx";
+import { contactsSearchText } from "../../shared/contacts.ts";
 import { useMemo, useState, type FormEvent } from "react";
 import { normalize, text, useApp, useTable } from "../context.ts";
 import { formatXaf } from "../../shared/invoice.ts";
@@ -51,7 +52,7 @@ export function Clients({ open, setOpen }: { open: string | null; setOpen: (id: 
   const q = normalize(query.trim());
   const withDue = clients.filter((c) => (dueByClient.get(c.id) ?? 0) > 0).length;
   const rows = clients
-    .filter((c) => !q || normalize(`${text(c.data.name)} ${text(c.data.city)} ${text(c.data.phone)} ${text(c.data.nif)}`).includes(q))
+    .filter((c) => !q || normalize(`${text(c.data.name)} ${text(c.data.city)} ${text(c.data.phone)} ${text(c.data.nif)} ${contactsSearchText(c.data)}`).includes(q))
     .filter((c) => !onlyDue || (dueByClient.get(c.id) ?? 0) > 0)
     // Avec le filtre « Reste dû », les plus gros montants d'abord : c'est la liste des relances.
     .sort((a, b) => (onlyDue ? (dueByClient.get(b.id) ?? 0) - (dueByClient.get(a.id) ?? 0) : 0) || text(a.data.name).localeCompare(text(b.data.name), "fr"));
@@ -127,7 +128,7 @@ export function Clients({ open, setOpen }: { open: string | null; setOpen: (id: 
       {form}
 
       <div className="toolbar">
-        <input type="search" placeholder="Nom, ville, téléphone ou NIF" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher un client" />
+        <input type="search" placeholder="Nom, contact, ville, téléphone ou NIF" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher un client" />
         {withDue > 0 && (
           <div className="segmented" role="group" aria-label="Filtrer">
             <button className={!onlyDue ? "active" : ""} aria-pressed={!onlyDue} onClick={() => setOnlyDue(false)}>Tous</button>

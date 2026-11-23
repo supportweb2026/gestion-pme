@@ -2314,3 +2314,22 @@ select.follow-up { width: auto; min-height: 40px; height: 40px; padding: 0 34px 
 
 /* Mode d'emploi d'un écran dont les documents se créent ailleurs (acomptes, avoirs, récurrentes). */
 .view-hint { margin: 0 0 14px; padding: 10px 14px; border-radius: var(--radius); background: #F6F7F9; color: var(--ink-2); font-size: 0.8125rem; }
+
+/* Page client : carnet de contacts. */
+.contacts-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 8px; }
+.contacts-head p { margin: 0; }
+.contact-list { list-style: none; margin: 0; padding: 0; }
+.contact-list li { display: flex; align-items: center; gap: 14px; padding: 14px 0; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+.contact-list li:last-child { border-bottom: none; }
+.client-avatar.small { width: 36px; height: 36px; font-size: 0.8125rem; flex: none; }
+.contact-id { flex: 1 1 180px; min-width: 0; }
+.contact-id strong { margin-right: 8px; }
+.contact-reach { flex: 1 1 150px; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 0.875rem; overflow-wrap: anywhere; }
+.contact-reach a { color: var(--accent); text-decoration: none; }
+.contact-reach a:hover { text-decoration: underline; }
+.contact-actions { display: flex; gap: 4px; flex-wrap: wrap; margin-left: auto; }
+.contact-form h3 { margin: 4px 0 14px; }
+.contact-fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; margin-bottom: 14px; }
+.contact-form label.check-inline { font-weight: 400; margin-bottom: 14px; }
+.contact-form .actions { display: flex; justify-content: flex-end; gap: 8px; }
+@media (max-width: 640px) { .contact-fields { grid-template-columns: 1fr; } .contact-actions { margin-left: 0; } }
