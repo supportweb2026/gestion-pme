@@ -126,6 +126,45 @@ try {
   await open("Devis", "BIALPHA001");
   assert.match(await page.locator("h2").first().innerText(), /Bon d'intervention BIALPHA001/);
 
+  step("Listes : filtres par client, période et type, tri, état gardé en revenant");
+  const listSummary = () => txt("list-summary");
+  await nav("Factures");
+  assert.match(await listSummary(), /^6 documents · Total TTC/);
+  await page.getByLabel("Filtrer par tiers").selectOption({ label: "BETA" });
+  assert.match(await listSummary(), /^1 document sur 6/);
+  assert.equal(await page.locator("tbody tr").count(), 1);
+  await page.getByRole("button", { name: "Tout afficher" }).click();
+  await page.getByLabel("Période").selectOption({ label: "Dates au choix" });
+  await page.getByLabel("Du", { exact: true }).fill("2022-01-01");
+  await page.getByLabel("Au", { exact: true }).fill("2022-12-31");
+  assert.match(await listSummary(), /^2 documents sur 6/);
+  await nav("Clients");
+  await nav("Factures");
+  assert.match(await listSummary(), /^2 documents sur 6/, "la liste garde ses filtres");
+  await page.getByRole("button", { name: "Tout afficher" }).click();
+  await page.getByRole("columnheader", { name: "Numéro" }).getByRole("button").click();
+  assert.match(await page.locator("tbody tr").first().innerText(), /FAGAMMA001/);
+  await page.getByRole("columnheader", { name: "Numéro" }).getByRole("button").click();
+  assert.match(await page.locator("tbody tr").first().innerText(), /FSGAMMA001/);
+  await nav("Devis");
+  await page.getByLabel("Type de document").selectOption({ label: "Bon d'intervention" });
+  assert.match(await listSummary(), /^1 document sur 2/);
+  assert.match(await page.locator("tbody tr").first().innerText(), /BIALPHA001/);
+  await page.getByRole("button", { name: "Tout afficher" }).click();
+
+  step("Clients : filtre « Reste dû » et fiche avec les documents du client");
+  await nav("Clients");
+  await page.getByRole("button", { name: /^Reste dû/ }).click();
+  assert.match(await txt("clients-summary"), /clients? · Reste dû/);
+  await page.getByRole("button", { name: "BETA", exact: true }).click();
+  const sheet = page.getByTestId("client-sheet");
+  assert.match(await sheet.innerText(), /FBETA001/);
+  await shot("reprise-fiche-client.png");
+  await sheet.getByRole("button", { name: "Toutes ses factures (1)" }).click();
+  assert.match(await listSummary(), /^1 document sur 6/);
+  assert.match(await page.locator("tbody tr").first().innerText(), /FBETA001/);
+  await page.getByRole("button", { name: "Tout afficher" }).click();
+
   step("La numérotation de Gestia n'est pas touchée");
   await nav("Factures");
   await page.getByRole("button", { name: "Nouvelle facture" }).first().click();

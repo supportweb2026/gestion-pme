@@ -6,8 +6,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { can, formatDate, normalize, text, today, useApp, useSettings, useTable } from "../context.ts";
 import { ImportHistory } from "../ImportHistory.tsx";
+import { PAGE_SIZE, Pager } from "../Pager.tsx";
 import {
-  addDays, computeTotals, DEFAULT_PAYMENT_DAYS, DEFAULT_VAT_RATE, lineNet, PAYMENT_METHODS, unfreezeLine, type InvoiceLine,
+  addDays, computeTotals, DEFAULT_PAYMENT_DAYS, DEFAULT_VAT_RATE, formatXaf, lineNet, PAYMENT_METHODS, unfreezeLine, type InvoiceLine,
 } from "../../shared/invoice.ts";
 import { CURRENCIES, decimalsOf, formatMoney, rateFor } from "../../shared/currency.ts";
 import { isNumbered, type DocTable, type SyncRecord } from "../../shared/sync.ts";
@@ -19,6 +20,7 @@ import {
   applyGlobalDiscount, deductionLines, depositLines, docRefs, docSearchText, docTitle, isDepositLine, isSection, percentForAmount,
   QUOTE_TYPES, quoteTypeOf, relatedDocs, sectionSubtotals, type QuoteType,
 } from "../../shared/documents.ts";
+import { inPeriod, PERIOD_LABELS, periodRange, type PeriodPreset } from "../../shared/periods.ts";
 import { QuoteProjectBanner } from "./projects/QuoteProjectBanner.tsx";
 import { useValidateOnOpen } from "../projectInvoices.ts";
 import { canShareFiles, downloadFile, makePdfFile, shareFile } from "../pdfActions.ts";
@@ -82,6 +84,19 @@ function useSalesData() {
   return { invoices, payments, credits, situations };
 }
 
+type SortKey = "date" | "number" | "client" | "due" | "rest" | "total";
+interface ListState {
+  query: string; filter: Filter; period: PeriodPreset; from: string; to: string;
+  client: string; type: "" | QuoteType; sort: SortKey; dir: 1 | -1; page: number;
+}
+const DEFAULT_LIST: ListState = { query: "", filter: "all", period: "all", from: "", to: "", client: "", type: "", sort: "date", dir: -1, page: 0 };
+/** État de chaque liste, gardé tant que l'application reste ouverte : on retrouve sa liste en revenant d'un document. */
+const LIST_STATE = new Map<DocTable, ListState>();
+/** Prépare une liste avant de l'ouvrir (depuis la fiche d'un client, par exemple). */
+export function presetList(kind: DocTable, patch: Partial<ListState>) {
+  LIST_STATE.set(kind, { ...DEFAULT_LIST, ...patch });
+}
+
 export function Documents({ kind, open, setOpen }: { kind: DocTable; open: string | null; setOpen: (id: string | null) => void }) {
   const { go, session } = useApp();
   // Reprise d'historique (VosFactures) : ouverte depuis la liste, pour la direction.
@@ -90,11 +105,37 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
   const clients = useTable("clients");
   const { situations } = useSalesData();
   const listSettings = useSettings();
-  const remindOf = (d: SyncRecord) => (kind === "invoices" ? invoiceReminder(d, situations.get(d.id), listSettings) : null);
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState<Filter>("all");
+  const [list, setList] = useState<ListState>(() => LIST_STATE.get(kind) ?? DEFAULT_LIST);
+  // Tout changement de filtre ramène à la première page.
+  const set = (patch: Partial<ListState>) => setList((l) => {
+    const next = { ...l, page: 0, ...patch };
+    LIST_STATE.set(kind, next);
+    return next;
+  });
   const cfg = DOCS[kind];
-  const clientName = (id: unknown) => text(clients.find((c) => c.id === id)?.data.name) || "—";
+
+  // Une ligne par document, calculée une fois : la recherche et les filtres restent fluides sur des milliers de documents.
+  const index = useMemo(() => {
+    const names = new Map(clients.map((c) => [c.id, text(c.data.name)]));
+    return docs.map((d) => {
+      const client = names.get(text(d.data.client_id)) || "—";
+      const st = docStatus(kind, d, situations);
+      const sit = situations.get(d.id);
+      const delivery = kind === "quotes" && quoteTypeOf(d.data) === "delivery";
+      const counted = st.key !== "cancelled" && !delivery;
+      return {
+        d, client, st,
+        search: normalize(`${docSearchText(d.data)} ${client}`),
+        remind: kind === "invoices" ? invoiceReminder(d, sit, listSettings) : null,
+        series: activeSeries(d),
+        type: quoteTypeOf(d.data),
+        dueDate: text(d.data.due_date ?? d.data.valid_until),
+        totalXaf: counted ? Math.round(totalsOf(d).gross * rateOf(d)) : 0,
+        restXaf: kind === "invoices" && st.key !== "draft" && st.key !== "cancelled" ? Math.round((sit?.due ?? 0) * (sit?.rate ?? 1)) : 0,
+      };
+    });
+  }, [docs, clients, situations, listSettings, kind]);
+  type Row = (typeof index)[number];
 
   if (open) {
     const record = open === "new" ? null : docs.find((d) => d.id === open) ?? null;
@@ -102,33 +143,67 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
     return <DocEditor key={open} kind={kind} record={record} clients={clients} onClose={() => setOpen(null)} onOpen={setOpen} />;
   }
 
-  const statusOf = (d: SyncRecord) => docStatus(kind, d, situations);
-
-  const q = normalize(query.trim());
-  const matchesFilter = (d: SyncRecord, f: Filter) => {
-    const k = statusOf(d).key;
+  const matchesFilter = (r: Row, f: Filter) => {
+    const k = r.st.key;
     if (f === "draft") return k === "draft";
     if (f === "open") return ["unpaid", "partial", "overdue", "sent"].includes(k);
     if (f === "overdue") return k === "overdue" || k === "expired";
-    if (f === "remind") return remindOf(d) !== null;
-    if (f === "recurring") return activeSeries(d);
+    if (f === "remind") return r.remind !== null;
+    if (f === "recurring") return r.series;
     return true;
   };
-  const rows = docs
-    .filter((d) => {
-      if (q && !normalize(`${docSearchText(d.data)} ${clientName(d.data.client_id)}`).includes(q)) return false;
-      return matchesFilter(d, filter === "recurring" && !docs.some(activeSeries) ? "all" : filter);
-    })
-    .sort((a, b) => text(b.data.date).localeCompare(text(a.data.date)) || text(b.data.number).localeCompare(text(a.data.number)));
+  const hasSeries = index.some((r) => r.series);
   const filters = ([["all", "Tous"], ["draft", "Brouillons"], ["open", kind === "quotes" ? "En attente" : "À encaisser"], ["overdue", kind === "quotes" ? "Expirés" : "En retard"], ["remind", "À relancer"], ["recurring", "Récurrentes"]] as [Filter, string][])
     .filter(([f]) => (kind !== "credit_notes" || f === "all" || f === "draft") && ((f !== "remind" && f !== "recurring") || kind === "invoices"))
     // « Récurrentes » n'apparaît qu'une fois une série créée.
-    .filter(([f]) => f !== "recurring" || docs.some(activeSeries));
-  const count = (f: Filter) => docs.filter((d) => matchesFilter(d, f)).length;
+    .filter(([f]) => f !== "recurring" || hasSeries);
   // Filtre devenu sans objet (dernière série arrêtée) : retour à « Tous ».
-  const shownFilter: Filter = filters.some(([f]) => f === filter) ? filter : "all";
+  const shownFilter: Filter = filters.some(([f]) => f === list.filter) ? list.filter : "all";
+
+  const q = normalize(list.query.trim());
+  const range = periodRange(list.period, today(), list.from, list.to);
+  // Recherche, période, client et type d'abord : les compteurs de statut portent sur ce périmètre.
+  const scope = index.filter((r) =>
+    (!q || r.search.includes(q))
+    && inPeriod(text(r.d.data.date), range)
+    && (!list.client || r.d.data.client_id === list.client)
+    && (!list.type || r.type === list.type));
+  const count = (f: Filter) => scope.filter((r) => matchesFilter(r, f)).length;
+  const byDate = (a: Row, b: Row) => text(b.d.data.date).localeCompare(text(a.d.data.date)) || text(b.d.data.number).localeCompare(text(a.d.data.number));
+  const compare: Record<SortKey, (a: Row, b: Row) => number> = {
+    date: () => 0,
+    number: (a, b) => text(a.d.data.number).localeCompare(text(b.d.data.number), "fr", { numeric: true }),
+    client: (a, b) => a.client.localeCompare(b.client, "fr"),
+    due: (a, b) => (a.dueDate || "9999").localeCompare(b.dueDate || "9999"),
+    rest: (a, b) => a.restXaf - b.restXaf,
+    total: (a, b) => a.totalXaf - b.totalXaf,
+  };
+  const rows = scope
+    .filter((r) => matchesFilter(r, shownFilter))
+    .sort((a, b) => (list.sort === "date" ? -list.dir * byDate(a, b) : list.dir * compare[list.sort](a, b)) || byDate(a, b));
+  const pages = Math.max(1, Math.ceil(rows.length / PAGE_SIZE));
+  const page = Math.min(list.page, pages - 1);
+  const shown = rows.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const totalXaf = rows.reduce((s, r) => s + r.totalXaf, 0);
+  const restXaf = rows.reduce((s, r) => s + r.restXaf, 0);
+
+  const clientOptions = [...new Map(index.map((r) => [text(r.d.data.client_id), r.client])).entries()]
+    .filter(([id]) => id)
+    .sort((a, b) => a[1].localeCompare(b[1], "fr"));
+  const typesPresent = kind === "quotes" ? (Object.keys(QUOTE_TYPES) as QuoteType[]).filter((t) => index.some((r) => r.type === t)) : [];
+  const narrowed = Boolean(q || list.period !== "all" || list.client || list.type || shownFilter !== "all");
   const noClient = clients.length === 0;
   const withDue = kind !== "credit_notes";
+  const plural = (n: number) => `${n.toLocaleString("fr-FR")} document${n > 1 ? "s" : ""}`;
+
+  const sortBy = (key: SortKey) => set(list.sort === key ? { dir: list.dir === 1 ? -1 : 1 } : { sort: key, dir: key === "number" || key === "client" || key === "due" ? 1 : -1 });
+  const th = (k: SortKey, label: string, right = false) => (
+    <th key={k} className={right ? "right" : undefined} aria-sort={list.sort === k ? (list.dir === 1 ? "ascending" : "descending") : undefined}>
+      <button type="button" className={`th-sort${list.sort === k ? " active" : ""}`} onClick={() => sortBy(k)} title="Trier">
+        {label}<span className="th-arrow" aria-hidden="true">{list.sort === k ? (list.dir === 1 ? "↑" : "↓") : "↕"}</span>
+      </button>
+    </th>
+  );
 
   return (
     <section>
@@ -154,13 +229,13 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
       {importing && <ImportHistory />}
       <div className="toolbar">
         <label className="sr-only" htmlFor={`search-${kind}`}>Rechercher</label>
-        <input id={`search-${kind}`} type="search" placeholder="Numéro, client, objet ou référence" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher" />
+        <input id={`search-${kind}`} type="search" placeholder="Numéro, client, objet ou référence" value={list.query} onChange={(e) => set({ query: e.target.value })} aria-label="Rechercher" />
         {docs.length > 0 && (
           <div className="segmented" role="group" aria-label="Filtrer">
             {filters.map(([f, label]) => {
               const n = f === "all" ? 0 : count(f);
               return (
-                <button key={f} className={shownFilter === f ? "active" : ""} aria-pressed={shownFilter === f} onClick={() => setFilter(f)}>
+                <button key={f} className={shownFilter === f ? "active" : ""} aria-pressed={shownFilter === f} onClick={() => set({ filter: f })}>
                   {label}{n > 0 && <span className="seg-count">{n}</span>}
                 </button>
               );
@@ -168,6 +243,38 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
           </div>
         )}
       </div>
+      {docs.length > 0 && (
+        <div className="toolbar list-filters">
+          <select aria-label="Période" value={list.period} onChange={(e) => set({ period: e.target.value as PeriodPreset })}>
+            {(Object.keys(PERIOD_LABELS) as PeriodPreset[]).map((p) => <option key={p} value={p}>{PERIOD_LABELS[p]}</option>)}
+          </select>
+          {list.period === "custom" && (
+            <span className="date-range">
+              <input type="date" aria-label="Du" value={list.from} onChange={(e) => set({ from: e.target.value })} />
+              <span className="muted small">au</span>
+              <input type="date" aria-label="Au" value={list.to} onChange={(e) => set({ to: e.target.value })} />
+            </span>
+          )}
+          {clientOptions.length > 1 && (
+            <select aria-label="Filtrer par tiers" value={list.client} onChange={(e) => set({ client: e.target.value })}>
+              <option value="">Tous les clients</option>
+              {clientOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+          )}
+          {typesPresent.length > 1 && (
+            <select aria-label="Type de document" value={list.type} onChange={(e) => set({ type: e.target.value as "" | QuoteType })}>
+              <option value="">Tous les types</option>
+              {typesPresent.map((t) => <option key={t} value={t}>{QUOTE_TYPES[t].label}</option>)}
+            </select>
+          )}
+          {narrowed && <button className="ghost small" onClick={() => set({ ...DEFAULT_LIST, sort: list.sort, dir: list.dir })}>Tout afficher</button>}
+          <p className="list-summary muted small" data-testid="list-summary" aria-live="polite">
+            <strong>{plural(rows.length)}</strong>{narrowed && rows.length !== docs.length ? ` sur ${docs.length.toLocaleString("fr-FR")}` : ""}
+            {rows.length > 0 && totalXaf !== 0 && <> · Total TTC <strong>{formatXaf(totalXaf)}</strong></>}
+            {kind === "invoices" && restXaf > 0 && <> · Reste dû <strong>{formatXaf(restXaf)}</strong></>}
+          </p>
+        </div>
+      )}
       {rows.length === 0 ? (
         <div className="card empty-state">
           <div className="empty-ico" aria-hidden="true">
@@ -183,10 +290,11 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
             {noClient ? "Un devis ou une facture est toujours adressé à un client."
               : kind === "credit_notes" && docs.length === 0 ? "Un avoir se crée depuis une facture validée, pour la corriger ou l'annuler."
               : docs.length === 0 ? `Créez votre premi${kind === "invoices" ? "ère" : "er"} ${cfg.one.toLowerCase()} : ${kind === "invoices" ? "elle sera numérotée" : "il sera numéroté"} automatiquement à la validation.`
-              : "Modifiez la recherche ou le filtre."}
+              : "Modifiez la recherche ou les filtres."}
           </p>
           {noClient ? <button className="primary" onClick={() => go("clients")}>Créer un client</button>
-            : docs.length === 0 && cfg.newLabel ? <button className="primary" onClick={() => setOpen("new")}>{cfg.newLabel}</button> : null}
+            : docs.length === 0 && cfg.newLabel ? <button className="primary" onClick={() => setOpen("new")}>{cfg.newLabel}</button>
+            : docs.length > 0 ? <button onClick={() => set({ ...DEFAULT_LIST })}>Tout afficher</button> : null}
         </div>
       ) : (
         <div className="card table-wrap">
@@ -194,32 +302,26 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
             <caption className="sr-only">{cfg.title}</caption>
             <thead>
               <tr>
-                <th>Numéro</th><th>Client</th><th>Date</th>{withDue && <th>{kind === "quotes" ? "Valable jusqu'au" : "Échéance"}</th>}<th>Statut</th>
-                {kind === "invoices" && <th className="right">Reste dû</th>}
-                <th className="right">Total TTC</th>
+                {th("number", "Numéro")}{th("client", "Client")}{th("date", "Date")}{withDue && th("due", kind === "quotes" ? "Valable jusqu'au" : "Échéance")}<th>Statut</th>
+                {kind === "invoices" && th("rest", "Reste dû", true)}
+                {th("total", "Total TTC", true)}
               </tr>
             </thead>
             <tbody>
-              {rows.map((d) => {
-                const st = statusOf(d);
-                const dueDate = text(d.data.due_date ?? d.data.valid_until);
-                return (
-                  <tr key={d.id} className="clickable">
-                    <td className="c-num mono"><button className="row-link" onClick={() => setOpen(d.id)}>{text(d.data.number) || <i className="draft-num">Brouillon</i>}</button>{(kind === "quotes" && quoteTypeOf(d.data) !== "quote") || d.data.deposit ? <span className="doc-type">{docTitle(kind, d.data)}</span> : null}{kind === "invoices" && (activeSeries(d) || d.data.recurrence_of) ? <span className="doc-type recur-tag" title={activeSeries(d) ? `Prochaine facture le ${formatDate(d.data.recurrence_next)}` : "Préparée automatiquement"}>{activeSeries(d) ? `Récurrente · ${RECURRENCE_FREQS[recurrenceOf(d.data)!.freq].adjective}` : "Récurrente"}</span> : null}</td>
-                    <td className="c-client">{clientName(d.data.client_id)}</td>
-                    <td className="c-date">{formatDate(d.data.date)}</td>
-                    {withDue && <td className={`c-due-date ${st.key === "overdue" || st.key === "expired" ? "danger-text" : "muted"}`}>{dueDate ? formatDate(dueDate) : "—"}</td>}
-                    <td className="c-status"><span className={`badge ${st.tone}`}>{st.label}</span>{(() => {
-                      const r = remindOf(d);
-                      return r ? <span className="remind-tag" title={TONE_LABELS[r.tone]}>À relancer · {r.label}</span> : null;
-                    })()}</td>
-                    {kind === "invoices" && <td className="c-due right mono">{st.key === "draft" || st.key === "cancelled" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
-                    <td className="c-total right mono">{kind === "quotes" && quoteTypeOf(d.data) === "delivery" ? "—" : formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
-                  </tr>
-                );
-              })}
+              {shown.map(({ d, client, st, remind, series, dueDate }) => (
+                <tr key={d.id} className="clickable">
+                  <td className="c-num mono"><button className="row-link" onClick={() => setOpen(d.id)}>{text(d.data.number) || <i className="draft-num">Brouillon</i>}</button>{(kind === "quotes" && quoteTypeOf(d.data) !== "quote") || d.data.deposit ? <span className="doc-type">{docTitle(kind, d.data)}</span> : null}{kind === "invoices" && (series || d.data.recurrence_of) ? <span className="doc-type recur-tag" title={series ? `Prochaine facture le ${formatDate(d.data.recurrence_next)}` : "Préparée automatiquement"}>{series ? `Récurrente · ${RECURRENCE_FREQS[recurrenceOf(d.data)!.freq].adjective}` : "Récurrente"}</span> : null}</td>
+                  <td className="c-client">{client}</td>
+                  <td className="c-date">{formatDate(d.data.date)}</td>
+                  {withDue && <td className={`c-due-date ${st.key === "overdue" || st.key === "expired" ? "danger-text" : "muted"}`}>{dueDate ? formatDate(dueDate) : "—"}</td>}
+                  <td className="c-status"><span className={`badge ${st.tone}`}>{st.label}</span>{remind ? <span className="remind-tag" title={TONE_LABELS[remind.tone]}>À relancer · {remind.label}</span> : null}</td>
+                  {kind === "invoices" && <td className="c-due right mono">{st.key === "draft" || st.key === "cancelled" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
+                  <td className="c-total right mono">{kind === "quotes" && quoteTypeOf(d.data) === "delivery" ? "—" : formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
+          <Pager page={page} total={rows.length} onPage={(p) => set({ page: p })} />
         </div>
       )}
     </section>
