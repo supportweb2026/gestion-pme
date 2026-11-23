@@ -127,3 +127,31 @@ test("interlocuteur : le vendeur, sauf s'il porte le nom de l'entreprise", async
   assert.equal(sellerOf({ seller_name: "ACME SARL" }, { name: "Acme" }), "");
   assert.equal(sellerOf({}, { name: "ACME" }), "");
 });
+
+test("facturer un bon : prêt, déjà facturé, acompte sur l'origine", async () => {
+  const { slipBilling, invoicesFromSlips } = await import("../src/shared/documents.ts");
+  const dv = { id: "dv-1", data: { doc_type: "quote", number: "DV-1" } };
+  const bc = { id: "bc-1", data: { doc_type: "order", number: "BC-1", source_id: "dv-1" } };
+  const bl1 = { id: "bl-1", data: { doc_type: "delivery", number: "BL-1", source_id: "bc-1" } };
+  const bl2 = { id: "bl-2", data: { doc_type: "delivery", number: "BL-2", source_id: "bc-1" } };
+  const quotes = [dv, bc, bl1, bl2];
+  // Rien de facturé : prêt, avec la commande comme document chiffré d'origine.
+  assert.deepEqual(slipBilling(bl1, { quotes, invoices: [] }), { state: "ready", priced: bc });
+  // Bon saisi seul : prêt, sans prix d'origine.
+  assert.deepEqual(slipBilling({ id: "bl-9", data: { doc_type: "delivery" } }, { quotes, invoices: [] }), { state: "ready", priced: null });
+  // Le bon a sa facture : l'autre bon de la même commande reste facturable.
+  const fa1 = { id: "fa-1", data: { quote_id: "bl-1", number: "FA-1" } };
+  assert.deepEqual(slipBilling(bl1, { quotes, invoices: [fa1] }), { state: "invoiced", invoice: fa1, via: "self" });
+  assert.equal(slipBilling(bl2, { quotes, invoices: [fa1] }).state, "ready");
+  // Le devis ne se convertit plus en entier : il est facturé au fil des bons.
+  assert.deepEqual(invoicesFromSlips(dv, { quotes, invoices: [fa1] }), [fa1]);
+  assert.deepEqual(invoicesFromSlips(dv, { quotes, invoices: [{ id: "fa-x", data: { quote_id: "bl-1", _deleted: true } }] }), []);
+  // Le devis d'origine est déjà facturé en entier : pas de seconde facture.
+  const faDv = { id: "fa-2", data: { quote_id: "dv-1" } };
+  assert.deepEqual(slipBilling(bl2, { quotes, invoices: [faDv] }), { state: "invoiced", invoice: faDv, via: "origin" });
+  // Un acompte sur le devis : la facture de solde se fait depuis lui.
+  assert.deepEqual(slipBilling(bl2, { quotes, invoices: [{ id: "fa-3", data: { quote_id: "dv-1", deposit: true } }] }), { state: "deposit", origin: dv });
+  // Bon tiré d'une facture : elle existe déjà.
+  const fa4 = { id: "fa-4", data: {} };
+  assert.equal(slipBilling({ id: "bl-5", data: { doc_type: "delivery", source_id: "fa-4" } }, { quotes, invoices: [fa4] }).state, "invoiced");
+});

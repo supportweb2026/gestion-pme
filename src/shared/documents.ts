@@ -47,6 +47,62 @@ export function followUps(kind: "quotes" | "invoices" | "credit_notes", data: Re
   return t === "quote" || t === "proforma" ? ["order", "delivery", "service"] : ["delivery", "service"];
 }
 
+type ChainRec = { id: string; data: Record<string, unknown> };
+const liveRec = (r: ChainRec) => !r.data._deleted;
+
+/** Documents d'où vient un document de vente, du plus proche au plus lointain (bon, commande, devis). */
+export function ancestorsOf(doc: ChainRec, quotes: ChainRec[]): ChainRec[] {
+  const out: ChainRec[] = [];
+  const seen = new Set([doc.id]);
+  let cur: ChainRec | undefined = doc;
+  while (cur) {
+    const sid: unknown = cur.data.source_id;
+    cur = typeof sid === "string" && sid && !seen.has(sid) ? quotes.find((q) => q.id === sid) : undefined;
+    if (cur) { seen.add(cur.id); out.push(cur); }
+  }
+  return out;
+}
+
+/**
+ * Où en est la facturation d'un bon de livraison ou de prestation :
+ *  - « ready » : on peut créer la facture (les taxes et conditions viennent de `priced`, le document chiffré d'origine) ;
+ *  - « invoiced » : une facture existe déjà, pour ce bon (« self ») ou pour le document d'origine (« origin ») ;
+ *  - « deposit » : un acompte a été facturé sur l'origine, la facture de solde se fait depuis elle.
+ */
+export type SlipBilling =
+  | { state: "ready"; priced: ChainRec | null }
+  | { state: "invoiced"; invoice: ChainRec; via: "self" | "origin" }
+  | { state: "deposit"; origin: ChainRec };
+export function slipBilling(slip: ChainRec, all: { quotes: ChainRec[]; invoices: ChainRec[] }): SlipBilling {
+  const invoices = all.invoices.filter(liveRec);
+  const own = invoices.find((i) => i.data.quote_id === slip.id || i.id === slip.data.invoice_id);
+  if (own) return { state: "invoiced", invoice: own, via: "self" };
+  // Bon établi d'après une facture : elle existe déjà.
+  const fromInvoice = invoices.find((i) => i.id === slip.data.source_id);
+  if (fromInvoice) return { state: "invoiced", invoice: fromInvoice, via: "origin" };
+  const ancestors = ancestorsOf(slip, all.quotes.filter(liveRec));
+  for (const a of ancestors) {
+    const linked = invoices.filter((i) => i.data.quote_id === a.id || i.id === a.data.invoice_id || i.id === a.data.source_id);
+    const full = linked.find((i) => !i.data.deposit);
+    if (full) return { state: "invoiced", invoice: full, via: "origin" };
+    if (linked.length) return { state: "deposit", origin: a };
+  }
+  return { state: "ready", priced: ancestors.find((a) => !isSlip(a.data)) ?? null };
+}
+
+/** Factures déjà établies depuis les bons tirés d'un document : le facturer en entier compterait deux fois. */
+export function invoicesFromSlips(doc: ChainRec, all: { quotes: ChainRec[]; invoices: ChainRec[] }): ChainRec[] {
+  const quotes = all.quotes.filter(liveRec);
+  const ids = new Set<string>();
+  let layer = [doc.id];
+  while (layer.length) {
+    const next = quotes.filter((q) => typeof q.data.source_id === "string" && layer.includes(q.data.source_id) && !ids.has(q.id)).map((q) => q.id);
+    next.forEach((n) => ids.add(n));
+    layer = next;
+  }
+  return all.invoices.filter((i) => liveRec(i) && typeof i.data.quote_id === "string" && ids.has(i.data.quote_id) && !i.data.deposit);
+}
+
 /** Séries admises pour la table des documents d'avant-vente. */
 export const QUOTE_SERIES = Object.values(QUOTE_TYPES).map((t) => t.prefix);
 

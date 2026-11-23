@@ -71,3 +71,16 @@ test("commandes fournisseurs : quantité proposée, en commande, message", async
   assert.match(msg, /commande CF-221126-1/);
   assert.match(msg, /- 8 sac × Ciment/);
 });
+
+test("stock : une facture tirée d'un bon livré, ou de son devis d'origine, ne sort pas le stock deux fois", () => {
+  const l = [{ label: "Câble", qty: 3, unitPrice: 1000, vatRate: 18, articleId: "art-1" }];
+  const quotes = [
+    { id: "dv-1", data: { doc_type: "quote", number: "DV-1", lines: l } },
+    { id: "bc-1", data: { doc_type: "order", number: "BC-1", source_id: "dv-1", lines: l } },
+    { id: "bl-1", data: { doc_type: "delivery", number: "BL-1", date: "2026-11-02", source_id: "bc-1", lines: l } },
+  ];
+  for (const quote_id of ["bl-1", "bc-1", "dv-1"]) {
+    const moves = salesMoves([{ id: "fa-1", data: { status: "validated", number: "FA-1", date: "2026-11-03", quote_id, lines: l } }], quotes);
+    assert.deepEqual(moves.map((m) => [m.kind, m.qty]), [["delivery", -3]], quote_id);
+  }
+});

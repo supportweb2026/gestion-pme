@@ -173,6 +173,25 @@ try {
   assert.ok(!bp.text.includes("354 000"), "aucun prix sur le bon de prestation");
   await page.getByRole("button", { name: "Marquer réalisé" }).click();
   await page.getByText("Prestation constatée par le client.").waitFor();
+
+  step("Facture depuis le bon réalisé : quantités du bon, prix de la commande, pas de double facturation");
+  await page.getByTestId("next-steps").getByRole("button", { name: "Créer la facture" }).waitFor();
+  await shot("bon-a-facturer.png");
+  await page.getByTestId("next-steps").getByRole("button", { name: "Créer la facture" }).click();
+  await heading("Facture (brouillon)");
+  await page.getByText("Issue du bon de prestation").waitFor();
+  assert.equal(await ttc(), "354 000 FCFA", "la facture reprend les prix de la commande");
+  await page.getByRole("button", { name: "Valider la facture" }).click();
+  await heading(`Facture FA-${YEAR}-00004`);
+  await page.getByTestId("related-docs").getByRole("button", { name: new RegExp(`BP-${YEAR}-00001`) }).click();
+  await heading(`Bon de prestation BP-${YEAR}-00001`);
+  await page.getByRole("button", { name: "Voir la facture" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Créer la facture" }).count(), 0, "un bon ne se facture qu'une fois");
+  await page.getByTestId("related-docs").getByRole("button", { name: new RegExp(`BC-${YEAR}-00001`) }).click();
+  await heading(`Bon de commande BC-${YEAR}-00001`);
+  await page.getByTestId("billed-by-slips").getByText(`FA-${YEAR}-00004`).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Convertir en facture" }).count(), 0, "la commande déjà facturée par son bon ne se convertit plus");
+  await shot("commande-facturee.png");
   // Le devis d'origine est accepté, et un bon se crée aussi directement depuis la liste.
   await nav("Devis");
   await page.getByRole("row", { name: new RegExp(`DV-${YEAR}-00002`) }).getByText("Accepté", { exact: true }).waitFor();
