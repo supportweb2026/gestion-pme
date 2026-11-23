@@ -142,12 +142,12 @@ export function ImportHistory() {
       <div className="section-head">
         <h3>Reprise d'historique</h3>
         <label className="button">
-          Choisir les fichiers VosFactures
-          <input type="file" accept=".csv,text/csv,text/plain" multiple hidden disabled={busy} onChange={(e) => { choose(e.target.files); e.target.value = ""; }} aria-label="Exports CSV VosFactures" />
+          Choisir les fichiers
+          <input type="file" accept=".csv,text/csv,text/plain" multiple hidden disabled={busy} onChange={(e) => { choose(e.target.files); e.target.value = ""; }} aria-label="Fichiers d'historique à importer" />
         </label>
       </div>
       <p className="muted small">
-        Reprenez vos devis, factures, avoirs, clients et encaissements depuis les exports CSV de VosFactures (plusieurs fichiers à la fois, un par année par exemple).
+        Reprenez vos devis, factures, avoirs, clients et encaissements depuis les exports CSV de votre ancien logiciel de facturation (plusieurs fichiers à la fois, un par année par exemple). Le format est reconnu automatiquement.
         Chaque document garde son numéro et ses montants d'origine ; la numérotation de vos nouvelles factures n'est pas touchée.
       </p>
       {error && <p className="error" role="alert">{error}</p>}
@@ -177,7 +177,7 @@ export function ImportHistory() {
           )}
           <div className="table-wrap">
             <table className="import-history-years">
-              <caption className="muted small">Contrôle par année, à comparer avec VosFactures (montants en francs CFA)</caption>
+              <caption className="muted small">Contrôle par année, à comparer avec votre ancien logiciel (montants en francs CFA)</caption>
               <thead>
                 <tr><th>Année</th><th className="right">Factures</th><th className="right">Total HT</th><th className="right">Net à payer</th><th className="right">Encaissé</th><th className="right">Reste dû</th><th className="right">Avoirs</th><th className="right">Devis</th><th className="right">Bons</th></tr>
               </thead>

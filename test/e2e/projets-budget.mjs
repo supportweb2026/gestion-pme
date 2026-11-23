@@ -123,7 +123,7 @@ try {
     await a.getByRole("button", { name: "Nouvel article" }).click();
     await a.getByLabel("Désignation").fill(label);
     await a.getByLabel("Type").selectOption(kind);
-    await a.getByLabel("Unité").selectOption(unit);
+    await a.getByLabel("Unité").fill(unit);
     await a.getByLabel("Prix unitaire HT (FCFA)").fill(String(price));
     if (cost) await a.getByLabel("Prix d'achat HT (FCFA)").fill(String(cost));
     await a.getByRole("button", { name: "Enregistrer" }).click();

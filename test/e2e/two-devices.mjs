@@ -253,13 +253,26 @@ try {
 
   step("Import CSV de clients (export Excel, point-virgule)");
   await nav(A.page, "Clients");
-  await A.page.getByLabel("Fichier CSV à importer").setInputFiles({
+  await A.page.getByLabel("Fichier à importer (CSV ou Excel)").setInputFiles({
     name: "clients.csv", mimeType: "text/csv",
     buffer: Buffer.from("Raison sociale;Ville;Téléphone\r\nTotal Gabon;Port-Gentil;\r\nAssala Energy;Port-Gentil;+241 01 00 00 01\r\nComilog;Moanda;\r\n"),
   });
-  await A.page.getByText("1 déjà présent(s)").waitFor();
-  await A.page.getByRole("button", { name: "Importer 2" }).click();
+  await A.page.getByTestId("import-summary").filter({ hasText: /2 à ajouter/ }).waitFor();
+  await A.page.getByRole("button", { name: /^Importer 2/ }).click();
   await A.page.getByRole("cell", { name: "Comilog" }).waitFor();
+
+  step("Import d'articles exportés d'un autre logiciel : prix, description et unité reconnus");
+  await nav(A.page, "Articles");
+  await A.page.getByLabel("Fichier à importer (CSV ou Excel)").setInputFiles({
+    name: "produits.csv", mimeType: "text/csv",
+    buffer: Buffer.from("ID,Nom,TVA,Prix d'achat HT,TVA,PU H.T.,PU T.T.C.,Description,Unité\r\n9,Audit réseau complet,,,18,150000.0,177000.0,\"Diagnostic\n'- Rapport\",FORFAIT\r\n"),
+  });
+  await A.page.getByTestId("import-summary").filter({ hasText: /1 à ajouter/ }).waitFor();
+  assert.equal(await A.page.getByLabel("Colonne pour Prix de vente HT").evaluate((el) => el.selectedOptions[0].textContent.startsWith("PU H.T.")), true);
+  await A.page.getByRole("button", { name: /^Importer 1/ }).click();
+  const artRow = A.page.locator("tbody tr", { hasText: "Audit réseau complet" });
+  await artRow.waitFor();
+  assert.match(await artRow.innerText(), /forfait[\s\S]*Diagnostic[\s\S]*150\s000\sFCFA/);
 
   step("Justificatif photographié, envoyé, puis consulté depuis l'autre appareil");
   const next = new Date(new Date().getFullYear(), new Date().getMonth() + 1, 2);

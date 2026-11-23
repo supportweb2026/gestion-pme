@@ -35,7 +35,7 @@ export function Articles() {
 
   const q = normalize(query.trim());
   const rows = articles
-    .filter((a) => !q || normalize(`${text(a.data.ref)} ${text(a.data.label)}`).includes(q))
+    .filter((a) => !q || normalize(`${text(a.data.ref)} ${text(a.data.label)} ${text(a.data.description)}`).includes(q))
     .filter((a) => !lowOnly || levels.get(a.id)?.low)
     .sort((a, b) => text(a.data.label).localeCompare(text(b.data.label), "fr"));
   const { shown, pager } = usePaged(rows, `${q}|${lowOnly}`);
@@ -47,7 +47,8 @@ export function Articles() {
       ref: f.ref.trim(),
       label: f.label.trim(),
       kind: f.kind,
-      unit: f.unit,
+      unit: f.unit.trim(),
+      description: String(f.description ?? "").trim(),
       price: Math.round(Number(f.price) || 0),
       // Prix d'achat facultatif : vide = inconnu (la marge n'est pas calculée).
       cost: String(f.cost ?? "").trim() === "" ? null : Math.round(Number(f.cost) || 0),
@@ -101,13 +102,16 @@ export function Articles() {
           </label>
           <label>
             Unité
-            <select name="unit" defaultValue={v("unit")}>
-              {UNITS.map((u) => <option key={u} value={u}>{u || "—"}</option>)}
-            </select>
+            <input name="unit" list="units-list" placeholder="h, jour, forfait, u…" defaultValue={v("unit")} />
+            <datalist id="units-list">{UNITS.filter(Boolean).map((u) => <option key={u} value={u} />)}</datalist>
           </label>
           <label>Prix unitaire HT (FCFA)<input name="price" type="number" min="0" step="1" required defaultValue={v("price", "0")} /></label>
           <label>Prix d'achat HT (FCFA)<input name="cost" type="number" min="0" step="1" placeholder="Facultatif, pour la marge" defaultValue={v("cost")} /></label>
           <label>TVA %<input name="vat_rate" type="number" min="0" step="any" defaultValue={v("vat_rate", String(DEFAULT_VAT_RATE))} /></label>
+          <label className="wide">
+            Description
+            <textarea name="description" rows={3} placeholder="Facultatif. Reprise comme détail de la ligne sur les devis et les factures." defaultValue={v("description")} />
+          </label>
           {kind === "product" && <StockFields editing={editing} />}
           <div className="form-actions">
             {editing !== "new" && (
@@ -132,7 +136,7 @@ export function Articles() {
       )}
 
       <div className="toolbar">
-        <input type="search" placeholder="Rechercher un article" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher un article" />
+        <input type="search" placeholder="Désignation, référence ou description" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher un article" />
         {levels.size > 0 && (
           <div className="segmented" role="group" aria-label="Filtrer les articles">
             <button className={!lowOnly ? "active" : ""} aria-pressed={!lowOnly} onClick={() => setLowOnly(false)}>Tous</button>
@@ -153,7 +157,7 @@ export function Articles() {
               {shown.map((a) => (
                 <tr key={a.id}>
                   <td className="mono">{text(a.data.ref)}</td>
-                  <td>{text(a.data.label)}{a.data.unit ? <span className="muted"> / {text(a.data.unit)}</span> : null}</td>
+                  <td>{text(a.data.label)}{a.data.unit ? <span className="muted"> / {text(a.data.unit)}</span> : null}{a.data.description ? <div className="art-desc muted small">{text(a.data.description)}</div> : null}</td>
                   <td>{a.data.kind === "product" ? "Produit" : "Service"}</td>
                   <td className="right mono">{formatXaf(Number(a.data.price ?? 0))}</td>
                   <td className="right mono">{marginLabel(a)}</td>

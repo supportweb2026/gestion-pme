@@ -64,7 +64,7 @@ try {
   step("Réglages › Reprise d'historique : aperçu et contrôle par année");
   await nav("Réglages");
   await page.getByRole("tab", { name: "Données" }).click();
-  await page.getByLabel("Exports CSV VosFactures").setInputFiles(FILE);
+  await page.getByLabel("Fichiers d'historique à importer").setInputFiles(FILE);
   const preview = page.getByTestId("import-history-preview");
   await preview.waitFor();
   const summary = (await preview.innerText()).replace(/\s/g, " ");
@@ -83,14 +83,14 @@ try {
   await pill().filter({ hasText: "À jour" }).waitFor({ timeout: 10_000 });
 
   step("Relance avec le même fichier : rien à ajouter");
-  await page.getByLabel("Exports CSV VosFactures").setInputFiles(FILE);
+  await page.getByLabel("Fichiers d'historique à importer").setInputFiles(FILE);
   await preview.locator(".import-history-sellers label", { hasText: "AUTRE" }).locator("input").uncheck();
   await page.getByTestId("import-history-uptodate").waitFor();
 
   step("Factures : bouton Importer (même écran de reprise), numéros d'origine, statuts, annulée hors chiffres");
   await nav("Factures");
   await page.getByRole("button", { name: "Importer", exact: true }).click();
-  await page.getByLabel("Exports CSV VosFactures").setInputFiles(FILE);
+  await page.getByLabel("Fichiers d'historique à importer").setInputFiles(FILE);
   await page.getByTestId("import-history-preview").waitFor();
   await page.getByRole("button", { name: "Importer", exact: true }).click();
   assert.equal(await page.getByTestId("import-history-preview").count(), 0);

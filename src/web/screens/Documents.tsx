@@ -99,7 +99,7 @@ export function presetList(kind: DocTable, patch: Partial<ListState>) {
 
 export function Documents({ kind, open, setOpen }: { kind: DocTable; open: string | null; setOpen: (id: string | null) => void }) {
   const { go, session } = useApp();
-  // Reprise d'historique (VosFactures) : ouverte depuis la liste, pour la direction.
+  // Reprise d'historique d'un autre logiciel : ouverte depuis la liste, pour la direction.
   const [importing, setImporting] = useState(false);
   const docs = useTable(kind);
   const clients = useTable("clients");
@@ -216,7 +216,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
           <div className="quick">
             {noClient && !importing && <span className="muted small" id="need-client">Créez d'abord un client.</span>}
             {can.manageCompany(session.user.role) && (
-              <button onClick={() => setImporting((v) => !v)} aria-expanded={importing} title="Reprendre les devis, factures, avoirs, clients et encaissements d'un autre logiciel (VosFactures)">
+              <button onClick={() => setImporting((v) => !v)} aria-expanded={importing} title="Reprendre les devis, factures, avoirs, clients et encaissements d'un autre logiciel de facturation">
                 Importer
               </button>
             )}
@@ -448,6 +448,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       unitPrice: Number(a.data.price ?? 0),
       vatRate: Number(a.data.vat_rate ?? DEFAULT_VAT_RATE),
       unit: text(a.data.unit) || undefined,
+      // La description de l'article devient le détail de la ligne, sans écraser un détail déjà saisi.
+      ...(text(a.data.description) && !lines[i]?.description ? { description: text(a.data.description) } : {}),
       // Prix d'achat du moment, figé sur la ligne pour la marge (converti dans la devise du document).
       cost: a.data.cost === undefined || a.data.cost === null || a.data.cost === ""
         ? undefined
@@ -718,7 +720,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
           {originPhrase(text(record.data.quote_number))} <button className="link" onClick={() => go("quotes", text(record.data.quote_id))}>{text(record.data.quote_number)}</button>
         </p>
       ) : null}
-      {record?.data.imported ? <p className="muted small" data-testid="doc-imported">Document repris de VosFactures, tel qu'il a été émis.</p> : null}
+      {record?.data.imported ? <p className="muted small" data-testid="doc-imported">Document repris de votre historique, tel qu'il a été émis.</p> : null}
       {kind === "invoices" && record?.data.recurrence_of && !numbered ? (
         <p className="muted small recur-origin">
           {numbered ? "Facture récurrente, d'après" : "Préparée automatiquement d'après la facture récurrente"} <button className="link" onClick={() => go("invoices", text(record.data.recurrence_of))}>{text(record.data.recurrence_number)}</button>
@@ -1043,6 +1045,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                 <tr key={i}>
                   <td>
                     <input aria-label="Désignation" list="articles-list" placeholder="Article du catalogue ou désignation libre" value={l.label} onChange={(e) => pickArticle(i, e.target.value)} />
+                    {l.description !== undefined
+                      ? <textarea className="line-desc" autoFocus={l.description === ""} aria-label="Détail de la ligne" rows={Math.min(8, Math.max(2, l.description.split("\n").length))} placeholder="Détail affiché sous la désignation" value={l.description} onChange={(e) => update(i, { description: e.target.value })} onBlur={() => l.description === "" && update(i, { description: undefined })} />
+                      : <button type="button" className="link small add-detail" onClick={() => update(i, { description: "" })}>+ Détail</button>}
                     {kind !== "credit_notes" && l.articleId && stock.has(l.articleId) ? (() => {
                       const left = stock.get(l.articleId)!.qty;
                       return <span className={`stock-hint${l.qty > left ? " danger-text" : ""}`} data-testid="stock-hint">{l.qty > left ? `Stock insuffisant : ${qtyFr(left)} disponible${left > 1 ? "s" : ""}` : `${qtyFr(left)} en stock`}</span>;

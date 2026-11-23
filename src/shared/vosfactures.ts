@@ -187,7 +187,7 @@ export function buildVfImport(files: string[], options: VfOptions = {}): VfImpor
     const rows = parseCsv(content.normalize("NFC"));
     if (rows.length === 0) return;
     const bad = checkVfHeader(rows[0]);
-    if (bad) throw new Error(`Fichier ${f + 1} non reconnu comme un export de documents VosFactures (${bad}).`);
+    if (bad) throw new Error(`Fichier ${f + 1} non reconnu comme un export de documents (${bad}).`);
     for (const row of rows.slice(1)) {
       // Le même document exporté dans deux fichiers n'est repris qu'une fois.
       const signature = row.slice(1).join("\u0001");
@@ -352,7 +352,7 @@ export function buildVfImport(files: string[], options: VfOptions = {}): VfImpor
       lines, currency: "XAF", rate: 1, notes, subject, client_ref: clientRef, payment_terms: terms, import_info: info,
       seller_name: (r[C.sellerName] ?? "").trim(), project_id: "",
       imported: VF_SOURCE, import_v: 2, import_type: (r[C.type] ?? "").trim(), import_seller: d.seller,
-      created_by_name: "Reprise VosFactures",
+      created_by_name: "Reprise d'historique",
     };
     const sent = vfDate(r[C.sentAt]);
     if (sent) data.sent_at = `${sent}T12:00:00.000Z`;
@@ -412,7 +412,7 @@ export function buildVfImport(files: string[], options: VfOptions = {}): VfImpor
             tbl: "payments", id: `pay-vf-${d.id.slice(7)}`,
             data: {
               invoice_id: d.id, client_id: data.client_id, date: vfDate(r[C.paidOn]) || d.date, amount: paid, currency: "XAF", rate: 1,
-              method: METHODS[plain(r[C.method] ?? "")] ?? "transfer", reference: "", imported: VF_SOURCE, created_by_name: "Reprise VosFactures",
+              method: METHODS[plain(r[C.method] ?? "")] ?? "transfer", reference: "", imported: VF_SOURCE, created_by_name: "Reprise d'historique",
             },
           });
           counts.payments++;
