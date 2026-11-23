@@ -8,17 +8,37 @@ import { formatDate, text, useApp, useSettings } from "./context.ts";
 import { formatAmount } from "../shared/invoice.ts";
 import { buildVfImport, VF_COMPLEMENT_FIELDS, type VfImport, type VfRecord } from "../shared/vosfactures.ts";
 import type { SyncTable } from "../shared/sync.ts";
+import { parseCsv } from "../shared/csv.ts";
+import { readXlsx } from "../shared/xlsx.ts";
+import { DOC_TEMPLATE, historyRows } from "../shared/docImport.ts";
 
 const TABLES = ["clients", "quotes", "invoices", "credit_notes", "payments"] as const;
 const amount = (n: number) => formatAmount(n, false);
 
-async function readText(file: File): Promise<string> {
+/** Lignes d'un fichier CSV ou Excel, dans la disposition que lit la reprise (format reconnu automatiquement). */
+async function readRows(file: File): Promise<string[][]> {
   const raw = await file.arrayBuffer();
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(raw);
-  } catch {
-    return new TextDecoder("windows-1252").decode(raw);
+  if (/\.xls$/i.test(file.name)) throw new Error(`${file.name} : ancien format Excel (.xls). Enregistrez le fichier en .xlsx ou en CSV.`);
+  let sheet: string[][];
+  if (/\.xlsx$/i.test(file.name)) sheet = await readXlsx(raw);
+  else {
+    let content: string;
+    try {
+      content = new TextDecoder("utf-8", { fatal: true }).decode(raw);
+    } catch {
+      content = new TextDecoder("windows-1252").decode(raw);
+    }
+    // Accents recomposés (NFC) : certains exports les donnent en deux caractères, illisibles dans le PDF.
+    sheet = parseCsv(content.normalize("NFC"));
   }
+  return historyRows(sheet, file.name);
+}
+
+function saveTemplate() {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob(["\uFEFF", DOC_TEMPLATE], { type: "text/csv;charset=utf-8" }));
+  a.download = "modele-documents.csv";
+  a.click();
 }
 
 type Phase = { step: "idle" } | { step: "writing" | "sending"; done: number; total: number } | { step: "done"; added: number; completed: number; refused: number };
@@ -26,7 +46,7 @@ type Phase = { step: "idle" } | { step: "writing" | "sending"; done: number; tot
 export function ImportHistory() {
   const { db, sync } = useApp();
   const settings = useSettings();
-  const [contents, setContents] = useState<string[] | null>(null);
+  const [contents, setContents] = useState<string[][][] | null>(null);
   const [fileCount, setFileCount] = useState(0);
   const [sellers, setSellers] = useState<string[] | null>(null);
   const [known, setKnown] = useState<{ ids: Set<string>; clients: { id: string; name: string }[]; filled: Map<string, Record<string, unknown>> }>({ ids: new Set(), clients: [], filled: new Map() });
@@ -91,12 +111,12 @@ export function ImportHistory() {
     const picked = files ? [...files] : [];
     if (picked.length === 0) return;
     try {
-      const texts = await Promise.all(picked.map(readText));
+      const texts = await Promise.all(picked.map(readRows));
       await loadKnown();
       setFileCount(picked.length);
       setContents(texts);
-    } catch {
-      setError("Fichier illisible.");
+    } catch (e) {
+      setError(e instanceof Error && e.message ? e.message : "Fichier illisible.");
     }
   }
 
@@ -141,13 +161,16 @@ export function ImportHistory() {
     <div className="card section-card import-history" aria-label="Reprise d'historique">
       <div className="section-head">
         <h3>Reprise d'historique</h3>
-        <label className="button">
-          Choisir les fichiers
-          <input type="file" accept=".csv,text/csv,text/plain" multiple hidden disabled={busy} onChange={(e) => { choose(e.target.files); e.target.value = ""; }} aria-label="Fichiers d'historique à importer" />
-        </label>
+<div className="quick">
+                  <button className="ghost" onClick={saveTemplate} title="Télécharger un fichier modèle à remplir : une ligne par ligne de document">Modèle</button>
+          <label className="button">
+            Choisir les fichiers
+            <input type="file" accept=".csv,.xlsx,.txt,text/csv,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" multiple hidden disabled={busy} onChange={(e) => { choose(e.target.files); e.target.value = ""; }} aria-label="Fichiers d'historique à importer" />
+          </label>
+        </div>
       </div>
       <p className="muted small">
-        Reprenez vos devis, factures, avoirs, clients et encaissements depuis les exports CSV de votre ancien logiciel de facturation (plusieurs fichiers à la fois, un par année par exemple). Le format est reconnu automatiquement.
+        Reprenez vos devis, factures, avoirs, bons, clients et encaissements depuis un tableau CSV ou Excel : l'export de votre ancien logiciel de facturation, ou le modèle rempli (une ligne par ligne de document, les lignes d'un même numéro forment un document). Plusieurs fichiers à la fois, un par année par exemple ; les colonnes sont reconnues automatiquement.
         Chaque document garde son numéro et ses montants d'origine ; la numérotation de vos nouvelles factures n'est pas touchée.
       </p>
       {error && <p className="error" role="alert">{error}</p>}

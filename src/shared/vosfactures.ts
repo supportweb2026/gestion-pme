@@ -22,7 +22,7 @@ import type { QuoteType } from "./documents.ts";
 export const VF_SOURCE = "vosfactures";
 
 /** Positions des colonnes du document. */
-const C = {
+export const C = {
   number: 1, type: 2, seller: 4, state: 6, date: 7, saleDate: 8, due: 9,
   client: 10, nif: 11, street: 13, zip: 14, city: 15, country: 16, extra: 17, email: 18, phone: 19, mobile: 20,
   net: 21, vat: 22, gross: 23, method: 27, paidOn: 28, paid: 29, currency: 31, subject: 32,
@@ -30,10 +30,10 @@ const C = {
   lines: 54,
 } as const;
 /** Positions dans un bloc de ligne de produit. */
-const L = { label: 0, qty: 1, unitPrice: 2, rate: 4, vat: 5, net: 6, kind: 8, unit: 10, description: 11, linked: 16, width: 18 } as const;
+export const L = { label: 0, qty: 1, unitPrice: 2, rate: 4, vat: 5, net: 6, kind: 8, unit: 10, description: 11, linked: 16, width: 18 } as const;
 
 /** Intitulés repères : position → début attendu (sans accents, en minuscules). */
-const EXPECTED: [number, string][] = [
+export const EXPECTED: [number, string][] = [
   [C.type, "type"], [C.state, "etat"], [C.date, "date de creation"], [C.net, "total ht"], [C.gross, "total ttc"],
   [C.paid, "montant paye"], [C.cancelled, "document annule"], [C.lines, "produit"], [C.lines + L.rate, "taux de tva"],
 ];
@@ -80,6 +80,7 @@ const TYPES: Record<string, TypeRule> = {
   "bon de commande": { tbl: "quotes", docType: "order", label: "Bons de commande" },
   "bon de livraison": { tbl: "quotes", docType: "delivery", label: "Bons de livraison" },
   "bon d'intervention": { tbl: "quotes", docType: "intervention", label: "Bons d'intervention" },
+  "bon de prestation": { tbl: "quotes", docType: "service", label: "Bons de prestation" },
 };
 
 const METHODS: Record<string, string> = { "virement bancaire": "transfer", "virement": "transfer", "cheque": "cheque", "especes": "cash", "carte bancaire": "card" };
@@ -171,9 +172,9 @@ function readLines(row: string[]): RawLine[] {
 
 /**
  * Lit un ou plusieurs exports et prépare les enregistrements Gestia.
- * `files` : contenu texte de chaque fichier CSV.
+ * `files` : contenu texte de chaque fichier CSV, ou ses lignes déjà lues (fichier au format standard converti).
  */
-export function buildVfImport(files: string[], options: VfOptions = {}): VfImport {
+export function buildVfImport(files: (string | string[][])[], options: VfOptions = {}): VfImport {
   const warnings: string[] = [];
   const sellers: Record<string, number> = {};
   const docs: RawDoc[] = [];
@@ -184,7 +185,7 @@ export function buildVfImport(files: string[], options: VfOptions = {}): VfImpor
 
   files.forEach((content, f) => {
     // Accents recomposés (NFC) : certains exports les donnent en deux caractères, illisibles dans le PDF.
-    const rows = parseCsv(content.normalize("NFC"));
+    const rows = typeof content === "string" ? parseCsv(content.normalize("NFC")) : content;
     if (rows.length === 0) return;
     const bad = checkVfHeader(rows[0]);
     if (bad) throw new Error(`Fichier ${f + 1} non reconnu comme un export de documents (${bad}).`);

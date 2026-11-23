@@ -1,0 +1,5 @@
+Type de document;Numéro;Date;Échéance;Client;NIF du client;Adresse du client;Ville;E-mail du client;Téléphone du client;Objet;Référence de commande;Facture corrigée (avoir);Désignation;Description de la ligne;Quantité;Unité;Prix unitaire HT;Remise %;Taux de TVA;Statut;Montant payé;Date de paiement;Mode de paiement
+Devis;D-0001;05/01/2026;04/02/2026;Exemple SARL;;Boulevard Triomphal;Libreville;contact@exemple.ga;+241 01 00 00 00;Site internet;;;Création du site;Maquette et intégration;1;forfait;1500000;;18;Accepté;;;
+Facture;F-0001;20/01/2026;19/02/2026;Exemple SARL;;;;;;Site internet;BC 2026-014;;Création du site;Maquette et intégration;1;forfait;1500000;;18;Payée;1961160;15/02/2026;Virement
+Facture;F-0001;;;;;;;;;;;;Hébergement;Un an;12;mois;15000;10;18;;;;
+Avoir;A-0001;01/03/2026;;Exemple SARL;;;;;;;;F-0001;Hébergement;Deux mois remboursés;2;mois;13500;;18;;;;
