@@ -13,6 +13,7 @@ import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../shared/cu
 import type { DocTable } from "../shared/sync.ts";
 import { docArrete, docRefs, docTitle, isSection, isSlip, quoteTypeOf, sectionSubtotals, sellerOf, SLIP_TEXTS } from "../shared/documents.ts";
 import { fiscalMentions, pct } from "../shared/taxes.ts";
+import { signatureLine, signatureOf } from "../shared/signature.ts";
 import { docColor, rgb01, softOf, stampFor, termsFor, tooLight } from "../shared/branding.ts";
 
 export interface PdfInput {
@@ -130,6 +131,27 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
       logo = null; // logo illisible : le document sort quand même
     }
   }
+
+  // Signature du client (devis, commande, bon), tracée à l'écran.
+  const sig = kind === "quotes" ? signatureOf(doc) : null;
+  let sigImage: PDFImage | null = null;
+  if (sig) {
+    try {
+      sigImage = await pdf.embedPng(Uint8Array.from(atob(sig.image.split(",")[1] ?? ""), (c) => c.charCodeAt(0)));
+    } catch {
+      sigImage = null;
+    }
+  }
+  /** Dessine la signature dans un cadre de 85 pt de haut dont le coin haut gauche est (x, top). */
+  const drawSignature = (x: number, top: number, w: number) => {
+    if (!sig) return false;
+    if (sigImage) {
+      const sc = Math.min((w - 20) / sigImage.width, 44 / sigImage.height);
+      page.drawImage(sigImage, { x: x + 10, y: top - 20 - sigImage.height * sc, width: sigImage.width * sc, height: sigImage.height * sc });
+    }
+    text(signatureLine(sig, frDate).slice(0, 70), x + 10, top - 77, 7.5, regular, GREY);
+    return true;
+  };
 
   let stamp: PDFImage | null = null;
   const stampData = stampFor(s, kind, delivery);
@@ -327,7 +349,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
       const x = M + i * (w + 20);
       page.drawRectangle({ x, y: y - 85, width: w, height: 85, borderColor: GREY, borderWidth: 0.8, borderDashArray: [3, 3] });
       text(label, x + 10, y - 14, 7.5, regular, GREY);
-      text(i === 0 ? "Nom et signature" : "Nom, date, signature et cachet", x + 10, y - 27, 9, regular, GREY);
+      if (i === 0 || !drawSignature(x, y, w)) text(i === 0 ? "Nom et signature" : "Nom, date, signature et cachet", x + 10, y - 27, 9, regular, GREY);
     }
     y -= 100;
   } else {
@@ -439,7 +461,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     if (kind === "quotes") {
       page.drawRectangle({ x: boxX, y: y - 85, width: boxW, height: 85, borderColor: GREY, borderWidth: 0.8, borderDashArray: [3, 3] });
       text("BON POUR ACCORD", boxX + 10, y - 14, 7.5, regular, GREY);
-      text("Date, signature et cachet du client", boxX + 10, y - 27, 9, regular, GREY);
+      if (!drawSignature(boxX, y, boxW)) text("Date, signature et cachet du client", boxX + 10, y - 27, 9, regular, GREY);
     }
     y -= 95;
   }

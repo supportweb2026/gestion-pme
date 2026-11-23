@@ -1,6 +1,7 @@
 import { isValidHlc, type Hlc } from "./hlc.ts";
 import type { SubscriptionInfo } from "./plans.ts";
 import { QUOTE_SERIES } from "./documents.ts";
+import { checkSignature } from "./signature.ts";
 import { checkProjectChange, checkProjectPermission, COMPANY_COST_ID, type ProjectContext } from "./projectRules.ts";
 
 /** Tables synchronisées entre appareils. */
@@ -84,7 +85,7 @@ export const NUMBERED_DOCS = {
   credit_notes: { numberedStatus: "validated", series: "AV", afterNumbering: ["sent_at"] },
   // `project_id` : rattachement analytique d'un devis envoyé au projet qu'il lance (RG3.2) ;
   // ni imprimé ni comptable, il ne passe que de vide à une valeur (voir projectRules.ts).
-  quotes: { numberedStatus: "sent", series: "DV", afterNumbering: ["status", "invoice_id", "sent_at", "decided_at", "project_id"] },
+  quotes: { numberedStatus: "sent", series: "DV", afterNumbering: ["status", "invoice_id", "sent_at", "decided_at", "project_id", "signature"] },
 } as const;
 
 /** Références qu'une nouvelle reprise d'historique peut ajouter à un document déjà repris (jamais remplacer). */
@@ -144,6 +145,13 @@ export function checkChange(existing: SyncRecord | null, change: Change): string
       if (typeof n !== "string" || !series.some((s) => n.startsWith(`${s}-`))) {
         return "un document validé doit recevoir un numéro de sa série";
       }
+    }
+    // Signature du client : sur un document finalisé seulement, bien formée, et posée une seule fois.
+    if ("signature" in change.patch) {
+      if (change.tbl !== "quotes" || !isNumbered(existing?.data)) return "seul un document finalisé peut être signé";
+      if (existing?.data.signature) return "document déjà signé";
+      const bad = checkSignature(change.patch.signature);
+      if (bad) return bad;
     }
     if ("number" in change.patch && !(change.patch.status === rule.numberedStatus) && !isNumbered(existing?.data)) {
       return "le numéro n'est attribué qu'à la validation";

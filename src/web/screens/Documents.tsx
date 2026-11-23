@@ -16,6 +16,9 @@ import { reminderDue, reminderSettings, TONE_LABELS, type ReminderDue, type Remi
 import { CASH_LIMIT_XAF, fiscalSettings, newDocTaxFields, pct } from "../../shared/taxes.ts";
 import { currencyOf, invoiceSituations, linesOf, QUOTE_LABELS, quoteStatus, rateOf, SITUATION_LABELS, totalsOf, type Situation } from "../ledger.ts";
 import { PrintView } from "./PrintView.tsx";
+import { SignDialog } from "./SignDialog.tsx";
+import { signatureLine, signatureOf, type Signature } from "../../shared/signature.ts";
+import { contactsOf } from "../../shared/contacts.ts";
 import {
   applyGlobalDiscount, deductionLines, depositLines, docRefs, docSearchText, docTitle, followUps, invoicesFromSlips, isDepositLine, isSection, isSlip, isSlipType, slipBilling, percentForAmount, SLIP_TEXTS,
   QUOTE_TYPES, quoteTypeOf, relatedDocs, sectionSubtotals, type QuoteType,
@@ -614,6 +617,16 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
   // Facture de jalon avec « Valider la facture tout de suite » (Projets, lot 3) : même validation, même confirmation.
   useValidateOnOpen(kind === "invoices" && !numbered ? record?.id : undefined, validate);
 
+  /** Signature du client, recueillie sur cet appareil : elle vaut accord (ou réception pour un bon). */
+  const [signing, setSigning] = useState(false);
+  const signature = kind === "quotes" ? signatureOf(record?.data) : null;
+  async function sign(name: string, image: string) {
+    const at = new Date().toISOString();
+    const sig: Signature = { name, at, image, via: "screen" };
+    await db.write("quotes", id, { signature: sig, status: "accepted", decided_at: at });
+    setSigning(false);
+  }
+
   async function setQuoteStatus(status: "accepted" | "refused") {
     await db.write("quotes", id, { status, decided_at: new Date().toISOString() });
   }
@@ -994,7 +1007,10 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                     {kind === "quotes" && isDelivery && (
                       <div className="aside-actions" style={{ marginTop: 16 }}>
                         {record!.data.status === "sent" ? (
-                          <button className="primary" onClick={() => setQuoteStatus("accepted")}>{slip?.mark}</button>
+                          <>
+                            <button className="primary" onClick={() => setQuoteStatus("accepted")}>{slip?.mark}</button>
+                            <button onClick={() => setSigning(true)}>Faire signer sur cet écran</button>
+                          </>
                         ) : <p className="status-line ok">{slip?.confirmed}</p>}
                         {slipBill?.state === "invoiced" && (
                           <button onClick={() => go("invoices", slipBill.invoice.id)}>Voir la facture</button>
@@ -1018,6 +1034,7 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                         {!stageBilled && !slipInvoices.length && ["sent", "accepted"].includes(text(record!.data.status)) && <DepositForm onCreate={createDeposit} currency={currency} />}
                         {record!.data.status === "sent" && (
                           <>
+                            <button onClick={() => setSigning(true)}>Faire signer sur cet écran</button>
                             <button onClick={() => setQuoteStatus("accepted")}>Marquer accepté</button>
                             <button className="ghost" onClick={() => setQuoteStatus("refused")}>Marquer refusé</button>
                           </>
@@ -1030,6 +1047,14 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                   </>
                 )}
               </div>
+              {signature && (
+                <div className="card signed-card" data-testid="signed-card">
+                  <h3>{isDelivery ? slip?.received : "Bon pour accord"}</h3>
+                  <img src={signature.image} alt={`Signature de ${signature.name}`} />
+                  <p>{signatureLine(signature, formatDate)}</p>
+                  <p className="signed-via">{signature.via === "link" ? "Signature en ligne, par le lien envoyé au client." : "Signature recueillie sur place, sur l'écran."}</p>
+                </div>
+              )}
               {related.length > 0 && (
                 <div className="card related-card" data-testid="related-docs">
                   <h3>Documents liés</h3>
@@ -1098,6 +1123,18 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
             </aside>
           )}
         </div>
+        {signing && record && (
+          <SignDialog
+            doc={`${docTitle(kind, record.data)} ${text(record.data.number)}`}
+            client={text(client?.data.name)}
+            amount={isDelivery ? undefined : `${fm(totals.gross)} TTC`}
+            mode={isDelivery ? "receive" : "accept"}
+            defaultName={contactsOf(client?.data)[0]?.name ?? ""}
+            confirmText={isDelivery ? `En signant, le client confirme : « ${slip?.received} ».` : "En signant, le client donne son bon pour accord sur ce document et son montant."}
+            onSign={sign}
+            onClose={() => setSigning(false)}
+          />
+        )}
         {printing && record && (
           <PrintView kind={kind} record={{ ...record, data: { ...record.data, lines } }} client={client} situation={situation} onClose={() => setPrinting(false)} />
         )}

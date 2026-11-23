@@ -155,3 +155,24 @@ test("facturer un bon : prêt, déjà facturé, acompte sur l'origine", async ()
   const fa4 = { id: "fa-4", data: {} };
   assert.equal(slipBilling({ id: "bl-5", data: { doc_type: "delivery", source_id: "fa-4" } }, { quotes, invoices: [fa4] }).state, "invoiced");
 });
+
+test("signature du client : sur un document finalisé, bien formée, une seule fois", async () => {
+  const { checkSignature, signatureLine, signatureOf } = await import("../src/shared/signature.ts");
+  const sig = { name: "Awa Ndong", at: "2026-11-23T14:05:00.000Z", image: "data:image/png;base64,iVBORw0KGgo=", via: "screen" };
+  const change = (patch: Record<string, unknown>, tbl = "quotes"): Change => ({ id: "op-1", tbl: tbl as Change["tbl"], row: "dv-1", patch, hlc: encodeHlc(Date.now(), 0, "device-1"), device: "device-1" });
+  const sent = { tbl: "quotes", id: "dv-1", data: { status: "sent", number: "DV-2026-00001" }, clocks: {} };
+  assert.equal(checkSignature(sig), null);
+  assert.equal(checkChange(sent, change({ signature: sig, status: "accepted", decided_at: sig.at })), null);
+  // Brouillon, facture, document déjà signé : refusés.
+  assert.match(checkChange({ ...sent, data: { status: "draft" } }, change({ signature: sig }))!, /finalisé/);
+  assert.notEqual(checkChange({ ...sent, tbl: "invoices", data: { status: "validated", number: "FA-2026-00001" } }, change({ signature: sig }, "invoices")), null);
+  assert.match(checkChange({ ...sent, data: { ...sent.data, signature: sig } }, change({ signature: { ...sig, name: "Autre" } }))!, /déjà signé/);
+  // Signature mal formée : nom absent, image d'un autre type ou trop lourde, champ inconnu.
+  assert.notEqual(checkChange(sent, change({ signature: { ...sig, name: " " } })), null);
+  assert.notEqual(checkChange(sent, change({ signature: { ...sig, image: "data:image/svg+xml;base64,AAAA" } })), null);
+  assert.notEqual(checkChange(sent, change({ signature: { ...sig, image: `data:image/png;base64,${"A".repeat(130_000)}` } })), null);
+  assert.notEqual(checkChange(sent, change({ signature: { ...sig, html: "<b>x</b>" } })), null);
+  assert.equal(signatureOf({ signature: sig })?.name, "Awa Ndong");
+  assert.equal(signatureOf({ signature: { name: "x" } }), null);
+  assert.match(signatureLine(sig as never, (d) => d.split("-").reverse().join("/")), /^Signé par Awa Ndong le 23\/11\/2026 à \d\d:05$/);
+});
