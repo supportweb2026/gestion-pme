@@ -10,9 +10,9 @@ import { computeTotals, docTaxes, lineDiscount, lineNet, lineVat, type InvoiceLi
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../../shared/currency.ts";
 import type { DocTable, SyncRecord } from "../../shared/sync.ts";
 import type { Situation } from "../ledger.ts";
-import { docArrete, docRefs, docTitle, isSection, quoteTypeOf } from "../../shared/documents.ts";
+import { docArrete, docRefs, docTitle, isSection, quoteTypeOf, sellerOf } from "../../shared/documents.ts";
 import { fiscalMentions, pct } from "../../shared/taxes.ts";
-import { docColor, softOf, stampFor, termsFor } from "../../shared/branding.ts";
+import { docColor, softOf, stampFor, termsFor, tooLight } from "../../shared/branding.ts";
 
 function Lines({ children }: { children: (string | false | undefined)[] }) {
   return <>{children.filter(Boolean).map((l, i) => <div key={i}>{l}</div>)}</>;
@@ -41,6 +41,18 @@ export function PrintView({ kind, record, client, situation, onClose }: {
     const cur = vatByRate.get(l.vatRate) ?? { base: 0, vat: 0 };
     vatByRate.set(l.vatRate, { base: cur.base + lineNet(l, decimals), vat: cur.vat + lineVat(l, decimals) });
   }
+
+  // Des cases, pour que le client trouve d'un coup d'œil quand et comment payer.
+  const pay = ([
+    ["Échéance", kind === "invoices" && record.data.due_date ? formatDate(record.data.due_date) : ""],
+    ["Conditions de règlement", refs.paymentTerms],
+    ["Virement bancaire", text(s.bank)],
+    ["Mobile money", text(s.mobile_money)],
+  ] as [string, string][]).filter(([, v]) => v);
+  // Le montant que le client doit retenir : le dernier total, en couleur pleine.
+  const withheld = totals.withholding !== 0;
+  const settled = Boolean(situation && situation.status !== "draft" && situation.paid + situation.credited > 0);
+  const finalRow = settled ? "rest" : withheld ? "payable" : "gross";
 
   const [busy, setBusy] = useState(false);
   async function downloadPdf() {
@@ -71,12 +83,12 @@ export function PrintView({ kind, record, client, situation, onClose }: {
         <button onClick={() => window.print()}>Imprimer</button>
         <button onClick={onClose}>Fermer</button>
       </div>
-      <article className="print-sheet" style={{ "--doc": docColor(s), "--doc-soft": softOf(docColor(s)) } as React.CSSProperties}>
+      <article className="print-sheet" style={{ "--doc": docColor(s), "--doc-soft": softOf(docColor(s)), "--doc-on": tooLight(docColor(s)) ? "#101D36" : "#fff" } as React.CSSProperties}>
         <header className="ps-head">
           <div className="ps-company">
             {typeof s.logo === "string" && s.logo && <img src={s.logo} alt="" className="ps-logo" />}
             <div className="ps-company-name">{text(s.name)}</div>
-            <Lines>{[text(s.address), text(s.city), text(s.phone) && `Tél. ${text(s.phone)}`, text(s.email)]}</Lines>
+            <Lines>{[text(s.address), text(s.city), text(s.phone) && `Tél. ${text(s.phone)}`, text(s.email), text(s.website), text(s.nif) && `NIF : ${text(s.nif)}`]}</Lines>
           </div>
           <div className="ps-title">
             <div className="ps-doc">{title}</div>
@@ -86,6 +98,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
             {kind === "quotes" && record.data.valid_until ? <div>Valable jusqu'au {formatDate(record.data.valid_until)}</div> : null}
             {kind === "credit_notes" && record.data.invoice_number ? <div>Sur facture {text(record.data.invoice_number)}</div> : null}
             {kind === "invoices" && record.data.quote_number ? <div>Réf. devis {text(record.data.quote_number)}</div> : null}
+            {sellerOf(record.data, s) ? <div>Votre interlocuteur : {sellerOf(record.data, s)}</div> : null}
           </div>
         </header>
 
@@ -111,13 +124,13 @@ export function PrintView({ kind, record, client, situation, onClose }: {
             {lines.map((l, i) => isSection(l) ? (
               <tr key={i} className="ps-section"><td colSpan={delivery ? 2 : hasDiscount ? 6 : 5}><strong>{l.label}</strong></td></tr>
             ) : delivery ? (
-              <tr key={i}><td>{l.label}{l.description && <div className="ps-line-detail">{l.description}</div>}</td><td className="r">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td></tr>
+              <tr key={i}><td><span className="ps-line-label">{l.label}</span>{l.description && <div className="ps-line-detail">{l.description}</div>}</td><td className="r">{l.qty}{l.unit ? <div className="ps-sub">{l.unit}</div> : null}</td></tr>
             ) : (
               <tr key={i}>
-                <td>{l.label}{l.description && <div className="ps-line-detail">{l.description}</div>}</td>
-                <td className="r">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td>
+                <td><span className="ps-line-label">{l.label}</span>{l.description && <div className="ps-line-detail">{l.description}</div>}</td>
+                <td className="r">{l.qty}{l.unit ? <div className="ps-sub">{l.unit}</div> : null}</td>
                 <td className="r">{formatXaf(l.unitPrice)}</td>
-                {hasDiscount && <td className="r">{lineDiscount(l) ? `${lineDiscount(l)} %` : ""}</td>}
+                {hasDiscount && <td className="r">{lineDiscount(l) ? <>{lineDiscount(l)} %<div className="ps-sub">-{formatXaf(l.qty * l.unitPrice - lineNet(l, decimals))}</div></> : ""}</td>}
                 <td className="r">{l.vatRate} %</td>
                 <td className="r">{formatXaf(lineNet(l, decimals))}</td>
               </tr>
@@ -148,17 +161,17 @@ export function PrintView({ kind, record, client, situation, onClose }: {
                 <tr key={rate}><td>TVA {rate} % sur {formatXaf(v.base)}</td><td className="r">{formatXaf(v.vat)}</td></tr>
               ))}
               {totals.css !== 0 && <tr><td>CSS {pct(Number(record.data.css_rate))}</td><td className="r">{formatXaf(totals.css)}</td></tr>}
-              <tr className="ps-strong"><td>Total TTC</td><td className="r">{formatXaf(totals.gross)}</td></tr>
+              <tr className={`ps-strong${finalRow === "gross" ? " ps-final" : ""}`}><td>Total TTC</td><td className="r">{formatXaf(totals.gross)}</td></tr>
               {totals.withholding !== 0 && (
                 <>
                   <tr><td>Retenue à la source {pct(Number(record.data.withholding_rate))}</td><td className="r">-{formatXaf(totals.withholding)}</td></tr>
-                  <tr className="ps-strong"><td>Net à payer</td><td className="r">{formatXaf(totals.payable)}</td></tr>
+                  <tr className={`ps-strong${finalRow === "payable" ? " ps-final" : ""}`}><td>Net à payer</td><td className="r">{formatXaf(totals.payable)}</td></tr>
                 </>
               )}
               {situation && situation.status !== "draft" && situation.paid + situation.credited > 0 && (
                 <>
                   <tr><td>Déjà réglé</td><td className="r">{formatXaf(situation.paid + situation.credited)}</td></tr>
-                  <tr className="ps-strong"><td>Reste à payer</td><td className="r">{formatXaf(situation.due)}</td></tr>
+                  <tr className="ps-strong ps-final"><td>Reste à payer</td><td className="r">{formatXaf(situation.due)}</td></tr>
                 </>
               )}
             </tbody>
@@ -172,10 +185,11 @@ export function PrintView({ kind, record, client, situation, onClose }: {
           </section>
         )}
 
-        {!delivery && kind !== "credit_notes" && (refs.paymentTerms || text(s.bank) || text(s.mobile_money)) && (
+        {!delivery && kind !== "credit_notes" && pay.length > 0 && (
           <section className="ps-pay">
-            <div className="ps-label">Règlement</div>
-            <Lines>{[refs.paymentTerms && `Conditions : ${refs.paymentTerms}`, text(s.bank) && `Virement : ${text(s.bank)}`, text(s.mobile_money) && `Mobile money : ${text(s.mobile_money)}`]}</Lines>
+            {pay.map(([label, value]) => (
+              <div key={label} className="ps-pay-cell"><div className="ps-label">{label}</div><strong>{value}</strong></div>
+            ))}
           </section>
         )}
 

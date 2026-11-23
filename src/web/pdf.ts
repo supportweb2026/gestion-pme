@@ -11,9 +11,9 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFP
 import { computeTotals, docTaxes, lineDiscount, lineNet, lineVat, type InvoiceLine } from "../shared/invoice.ts";
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../shared/currency.ts";
 import type { DocTable } from "../shared/sync.ts";
-import { docArrete, docRefs, docTitle, isSection, quoteTypeOf, sectionSubtotals } from "../shared/documents.ts";
+import { docArrete, docRefs, docTitle, isSection, quoteTypeOf, sectionSubtotals, sellerOf } from "../shared/documents.ts";
 import { fiscalMentions, pct } from "../shared/taxes.ts";
-import { docColor, rgb01, softOf, stampFor, termsFor } from "../shared/branding.ts";
+import { docColor, rgb01, softOf, stampFor, termsFor, tooLight } from "../shared/branding.ts";
 
 export interface PdfInput {
   kind: DocTable;
@@ -167,7 +167,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   }
   text(str(s.name), M, leftY - 11, 12.5, bold);
   leftY -= 16;
-  for (const l of [str(s.address), str(s.city), str(s.phone) && `Tél. ${str(s.phone)}`, str(s.email)].filter(Boolean)) {
+  for (const l of [str(s.address), str(s.city), str(s.phone) && `Tél. ${str(s.phone)}`, str(s.email), str(s.website), str(s.nif) && `NIF : ${str(s.nif)}`].filter(Boolean)) {
     for (const w of wrap(l, 9, 250)) {
       text(w, M, leftY - 10, 9, regular, GREY);
       leftY -= 12;
@@ -187,6 +187,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     kind === "credit_notes" && doc.invoice_number ? `Sur facture ${str(doc.invoice_number)}` : "",
     kind === "invoices" && doc.quote_number ? `Réf. ${str(doc.quote_number)}` : "",
     kind === "quotes" && doc.source_number ? `Réf. ${str(doc.source_number)}` : "",
+    sellerOf(doc, s) ? `Votre interlocuteur : ${sellerOf(doc, s)}` : "",
   ].filter(Boolean);
   for (const l of meta) {
     right(l, xr, rightY - 10, 9.5);
@@ -236,9 +237,10 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   // ── Lignes ───────────────────────────────────────────────────────────────
   // Colonnes numériques alignées à droite (bord droit de chaque colonne).
   const cols = hasDiscount
-    ? { qty: 300, pu: 378, disc: 418, vat: 452, net: xr - 6 }
-    : { qty: 318, pu: 410, disc: 0, vat: 452, net: xr - 6 };
-  const labelW = (hasDiscount ? 236 : 256) - 6;
+    ? { qty: 284, pu: 370, disc: 440, vat: 470, net: xr - 6 }
+    : { qty: 312, pu: 410, disc: 0, vat: 456, net: xr - 6 };
+  // La désignation s'arrête avant la colonne des quantités (l'unité s'écrit sous la quantité).
+  const labelW = hasDiscount ? 200 : 228;
   const subtotals = sectionSubtotals(lines, decimals);
   const header = () => {
     page.drawRectangle({ x: M, y: y - 20, width: xr - M, height: 20, color: SOFT });
@@ -258,27 +260,30 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   header();
   lines.forEach((l, idx) => {
     if (isSection(l)) {
-      if (y - 26 < M + FOOT) {
+      // Un titre ne reste jamais seul en bas de page : il lui faut la place de la ligne qui suit.
+      if (y - 70 < M + FOOT) {
         newPage();
         header();
       }
-      text(l.label, M + 6, y - 15, 9.5, bold);
+      text(l.label, M + 6, y - 15, 9.5, bold, BLUE);
       if (!delivery) right(`Sous-total ${money(subtotals.get(idx) ?? 0)}`, xr - 6, y - 15, 9, regular, GREY);
       y -= 22;
       page.drawLine({ start: { x: M, y }, end: { x: xr, y }, thickness: 0.6, color: LINE });
       return;
     }
-    const label = wrap(l.label || "", 9.5, delivery ? xr - M - 100 : labelW);
+    const label = wrap(l.label || "", 9.5, delivery ? xr - M - 100 : labelW, bold);
     // Détail sous la désignation (documents repris) : plus petit, en gris.
     const detail = l.description ? wrap(l.description, 8, delivery ? xr - M - 100 : labelW) : [];
-    const h = Math.max(1, label.length) * 12 + detail.length * 10 + 8;
+    const discounted = !delivery && lineDiscount(l) > 0;
+    // Hauteur : le texte, ou les deux lignes d'une cellule chiffrée (quantité et unité, remise et montant).
+    const h = Math.max(Math.max(1, label.length) * 12 + detail.length * 10, l.unit || discounted ? 23 : 0) + 8;
     if (y - h < M + FOOT) {
       newPage();
       header();
     }
     let ly = y - 13;
     for (const w of label) {
-      text(w, M + 6, ly, 9.5);
+      text(w, M + 6, ly, 9.5, bold);
       ly -= 12;
     }
     for (const w of detail) {
@@ -286,14 +291,20 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
       ly -= 10;
     }
     if (delivery) {
-      right(`${l.qty}${l.unit ? ` ${l.unit}` : ""}`, xr - 6, y - 13, 9.5);
+      right(String(l.qty).replace(".", ","), xr - 6, y - 13, 9.5);
+      if (l.unit) right(l.unit, xr - 6, y - 23, 8, regular, GREY);
       y -= h;
       page.drawLine({ start: { x: M, y }, end: { x: xr, y }, thickness: 0.6, color: LINE });
       return;
     }
-    right(`${l.qty}${l.unit ? ` ${l.unit}` : ""}`, cols.qty, y - 13, 9.5);
+    right(String(l.qty).replace(".", ","), cols.qty, y - 13, 9.5);
+    if (l.unit) right(l.unit, cols.qty, y - 23, 8, regular, GREY);
     right(money(l.unitPrice), cols.pu, y - 13, 9.5);
-    if (hasDiscount) right(lineDiscount(l) ? `${lineDiscount(l)} %` : "", cols.disc, y - 13, 9.5);
+    if (discounted) {
+      right(`${String(lineDiscount(l)).replace(".", ",")} %`, cols.disc, y - 13, 9.5);
+      // Ce que la remise représente, pour que le client voie ce qu'il gagne.
+      right(`-${money(Math.round((l.qty * l.unitPrice - lineNet(l, decimals)) * 10 ** decimals) / 10 ** decimals)}`, cols.disc, y - 23, 8, regular, GREY);
+    }
     right(`${l.vatRate} %`, cols.vat, y - 13, 9.5);
     right(money(lineNet(l, decimals)), cols.net, y - 13, 9.5);
     y -= h;
@@ -355,15 +366,20 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     payableXaf: Math.round(totals.payable * (currency === "XAF" ? 1 : Number(doc.rate) || 1)),
   });
   const notes = [refs.notes, ...mentions].filter(Boolean).flatMap((n) => wrap(n, 9, totX - M - 20));
-  const blockH = Math.max(rows.length * 18, words.length * 12 + (notes.length ? notes.length * 11 + 10 : 0));
+  const blockH = Math.max(rows.length * 18 + 4, words.length * 12 + (notes.length ? notes.length * 11 + 10 : 0));
   if (y - blockH < M + FOOT) newPage();
   let ty = y;
-  for (const [label, value, strong] of rows) {
-    if (strong) page.drawRectangle({ x: totX, y: ty - 18, width: totW, height: 18, color: SOFT });
+  // Le montant que le client doit retenir (dernier total) ressort en couleur pleine.
+  const finalRow = rows.map((r) => r[2]).lastIndexOf(true);
+  const onAccent = tooLight(accent) ? INK : rgb(1, 1, 1);
+  for (const [i, [label, value, strong]] of rows.entries()) {
+    const final = i === finalRow;
+    const rh = final ? 22 : 18;
+    if (strong) page.drawRectangle({ x: totX, y: ty - rh, width: totW, height: rh, color: final ? BLUE : SOFT });
     const f = strong ? bold : regular;
-    text(label, totX + 8, ty - 12.5, 9.5, f);
-    right(value, xr - 8, ty - 12.5, 9.5, f);
-    ty -= 18;
+    text(label, totX + 8, ty - (final ? 15 : 12.5), final ? 10.5 : 9.5, f, final ? onAccent : INK);
+    right(value, xr - 8, ty - (final ? 15 : 12.5), final ? 10.5 : 9.5, f, final ? onAccent : INK);
+    ty -= rh;
     page.drawLine({ start: { x: totX, y: ty }, end: { x: xr, y: ty }, thickness: 0.6, color: LINE });
   }
   let wy = y - 10;
@@ -381,19 +397,35 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   y = Math.min(ty, wy) - 18;
 
   // ── Règlement, bon pour accord ───────────────────────────────────────────
-  const pay = kind !== "credit_notes"
-    ? [refs.paymentTerms && `Conditions : ${refs.paymentTerms}`, str(s.bank) && `Virement : ${str(s.bank)}`, str(s.mobile_money) && `Mobile money : ${str(s.mobile_money)}`].filter(Boolean)
+  // Des cases, pour que le client trouve d'un coup d'œil quand et comment payer.
+  const pay: [string, string][] = kind !== "credit_notes"
+    ? ([
+      ["Échéance", kind === "invoices" ? frDate(doc.due_date) : ""],
+      ["Conditions de règlement", refs.paymentTerms],
+      ["Virement bancaire", str(s.bank)],
+      ["Mobile money", str(s.mobile_money)],
+    ] as [string, string][]).filter(([, v]) => v)
     : [];
   if (pay.length) {
-    const payLines = pay.flatMap((p) => wrap(p, 9.5, xr - M));
-    if (y - (16 + payLines.length * 12) < M + FOOT) newPage();
-    text("RÈGLEMENT", M, y - 8, 7.5, regular, GREY);
-    y -= 22;
-    for (const p of payLines) {
-      text(p, M, y, 9.5);
-      y -= 12;
+    const gap = 8;
+    const per = pay.length === 1 ? 1 : 2;
+    const cellW = (xr - M - gap * (per - 1)) / per;
+    const cells = pay.map(([label, value]) => ({ label, lines: wrap(value, 9.5, cellW - 20, bold).slice(0, 6) }));
+    for (let i = 0; i < cells.length; i += per) {
+      const row = cells.slice(i, i + per);
+      const ch = 24 + Math.max(...row.map((c) => c.lines.length)) * 12;
+      if (y - ch < M + FOOT) newPage();
+      row.forEach((c, k) => {
+        const x = M + k * (cellW + gap);
+        // Dernière case seule sur sa rangée : elle prend toute la largeur.
+        const w = row.length < per ? xr - M : cellW;
+        page.drawRectangle({ x, y: y - ch, width: w, height: ch, borderColor: LINE, borderWidth: 1 });
+        text(c.label.toUpperCase(), x + 10, y - 13, 7.5, regular, GREY);
+        c.lines.forEach((l, n) => text(l, x + 10, y - 27 - n * 12, 9.5, bold));
+      });
+      y -= ch + gap;
     }
-    y -= 10;
+    y -= 6;
   }
   // Cachet et signature de l'entreprise (à gauche), bon pour accord du client (à droite, devis).
   if (stamp || kind === "quotes") {

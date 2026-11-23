@@ -120,3 +120,10 @@ test("Documents liés : la chaîne se lit dans les deux sens", () => {
   assert.deepEqual(relatedDocs("credit_notes", credit_notes[0], all).map((r) => r.id), ["fa2"]);
   assert.deepEqual(relatedDocs("quotes", quotes[1], all).map((r) => `${r.relation} ${r.id}`), ["Établi d'après dv1"]);
 });
+
+test("interlocuteur : le vendeur, sauf s'il porte le nom de l'entreprise", async () => {
+  const { sellerOf } = await import("../src/shared/documents.ts");
+  assert.equal(sellerOf({ seller_name: "Awa Ndong" }, { name: "ACME" }), "Awa Ndong");
+  assert.equal(sellerOf({ seller_name: "ACME SARL" }, { name: "Acme" }), "");
+  assert.equal(sellerOf({}, { name: "ACME" }), "");
+});

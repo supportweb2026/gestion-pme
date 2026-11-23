@@ -623,6 +623,14 @@ tr.clickable:has(.row-link:focus-visible) td:first-child { box-shadow: inset 3px
 .ps-totals td { padding: 1.5mm 3mm; border-bottom: 1px solid #e6e4dc; font-size: 10pt; }
 .ps-strong td { font-weight: 700; background: var(--doc-soft, #EAF1FC); }
 .ps-pay, .ps-sign { margin-top: 8mm; font-size: 9.5pt; }
+.ps-pay { display: grid; grid-template-columns: 1fr 1fr; gap: 3mm; }
+.ps-pay-cell { border: 1px solid #d8d6ce; border-radius: 2mm; padding: 3mm 4mm; white-space: pre-line; }
+.ps-pay-cell:last-child:nth-child(odd) { grid-column: 1 / -1; }
+.ps-line-label { font-weight: 600; }
+.ps-sub { font-size: 0.8em; color: #6b7068; font-weight: 400; }
+.ps-section td { color: var(--doc, #0255C6); }
+.ps-final td { background: var(--doc, #0255C6); color: var(--doc-on, #fff); font-size: 11pt; padding-top: 2mm; padding-bottom: 2mm; }
+.ps-lines td { vertical-align: top; }
 .ps-sign { margin-left: auto; width: 85mm; height: 30mm; border: 1px dashed #b9b6ab; border-radius: 2mm; padding: 3mm 4mm; }
 .ps-foot { margin-top: auto; padding-top: 8mm; border-top: 1px solid #e6e4dc; font-size: 8pt; color: #6b7068; text-align: center; }
 
