@@ -74,7 +74,7 @@ try {
   await page.getByRole("button", { name: "Enregistrer" }).click();
 
   step("Devis avec un titre de section, deux lignes et 10 % de remise sur toutes les lignes");
-  await nav("Devis et bons");
+  await nav("Devis");
   await page.getByRole("button", { name: "Nouveau devis" }).first().click();
   await page.getByRole("button", { name: "+ Ajouter un titre" }).click();
   // Le titre s'ajoute en fin de tableau : on le saisit puis on remplit les lignes.
@@ -130,7 +130,7 @@ try {
   await page.getByText("Livraison confirmée.").waitFor();
 
   step("Facture pro forma (série PF) convertie en facture");
-  await nav("Devis et bons");
+  await nav("Devis");
   await page.getByRole("button", { name: "Nouveau devis" }).first().click();
   await page.getByLabel("Type de document").selectOption("proforma");
   await line(0, "Audit réseau", 1, 500_000);
@@ -142,14 +142,18 @@ try {
   await heading(`Facture FA-${YEAR}-00003`);
 
   step("Liste des devis : le type de chaque document est affiché");
-  await nav("Devis et bons");
-  for (const t of ["Facture pro forma", "Bon de livraison"]) await page.locator(".doc-type", { hasText: t }).first().waitFor();
+  await nav("Devis");
+  await page.locator(".doc-type", { hasText: "Facture pro forma" }).first().waitFor();
+  assert.equal(await page.getByRole("row", { name: new RegExp(`BL-${YEAR}-00001`) }).count(), 0, "les bons ont leur propre entrée de menu");
+  await nav("Livraisons et prestations");
+  await page.locator(".doc-type", { hasText: "Bon de livraison" }).first().waitFor();
   const blRow = page.getByRole("row", { name: new RegExp(`BL-${YEAR}-00001`) });
   await blRow.getByText("Livré", { exact: true }).waitFor();
-  assert.equal((await blRow.locator(".c-total").textContent()).trim(), "—", "pas de montant pour un bon de livraison");
+  assert.equal(await blRow.locator(".c-total").count(), 0, "pas de montant pour un bon de livraison");
   await shot("liste-devis.png");
 
   step("Chaîne : devis, bon de commande, bon de prestation signé par le client");
+  await nav("Devis");
   await page.getByRole("button", { name: "Nouveau devis" }).first().click();
   await line(0, "Formation des équipes", 2, 150_000);
   await page.getByRole("button", { name: "Finaliser le devis" }).click();
@@ -171,11 +175,30 @@ try {
   await page.getByRole("button", { name: "Marquer réalisé" }).click();
   await page.getByText("Prestation constatée par le client.").waitFor();
   // Le devis d'origine est accepté, et un bon se crée aussi directement depuis la liste.
-  await nav("Devis et bons");
+  await nav("Devis");
   await page.getByRole("row", { name: new RegExp(`DV-${YEAR}-00002`) }).getByText("Accepté", { exact: true }).waitFor();
-  await page.getByLabel("Créer un autre document").selectOption({ label: "Bon de prestation" });
+
+  step("Menu Ventes : une entrée par étape de la vente");
+  await nav("Commandes");
+  await page.getByRole("row", { name: new RegExp(`BC-${YEAR}-00001`) }).waitFor();
+  assert.equal(await page.locator("tbody tr").count(), 1, "seuls les bons de commande");
+  await nav("Livraisons et prestations");
+  await page.getByRole("row", { name: new RegExp(`BP-${YEAR}-00001`) }).waitFor();
+  await page.getByRole("button", { name: "Nouveau bon de prestation" }).click();
   await heading("Nouveau bon de prestation");
-  await page.getByRole("button", { name: /← Devis et bons/ }).click();
+  await page.getByRole("button", { name: /← Livraisons et prestations/ }).click();
+  await nav("Acomptes");
+  await page.getByRole("row", { name: new RegExp(`FA-${YEAR}-00001`) }).waitFor();
+  assert.equal(await page.locator("tbody tr").count(), 1, "seules les factures d'acompte");
+  await nav("Factures récurrentes");
+  await page.getByText("Aucune facture récurrente pour l'instant").waitFor();
+  await nav("Encaissements");
+  await page.getByText("Aucun encaissement pour l'instant").waitFor();
+  await nav("Relances");
+  await page.getByRole("row", { name: new RegExp(`FA-${YEAR}-00002`) }).waitFor();
+  const lateRows = await page.locator("tbody tr").count();
+  assert.ok(lateRows >= 3, `les factures à encaisser sont listées (${lateRows})`);
+  await shot("relances.png");
 
   assert.deepEqual(errors, [], "aucune erreur JavaScript");
   console.log("\nRecette du cycle de vente réussie.");

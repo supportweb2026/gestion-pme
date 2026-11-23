@@ -97,15 +97,16 @@ try {
   assert.ok(!status.includes(new Date().toLocaleDateString("fr-FR")), `la prochaine date a avancé : ${status}`);
   await shot("serie-active.png");
 
-  step("Factures : tag « Récurrente », filtre « Récurrentes », un seul brouillon même après rechargement");
+  step("Factures : tag « Récurrente », entrée « Factures récurrentes », un seul brouillon même après rechargement");
   await page.reload();
   await nav("Factures");
   await page.waitForTimeout(6000);
   await page.getByRole("button", { name: /^Brouillons/ }).click();
   assert.equal(await page.locator("tbody tr").count(), 1, "un seul brouillon préparé");
   await page.locator("tbody tr").first().getByText("Récurrente", { exact: true }).waitFor();
-  await page.getByRole("button", { name: /^Récurrentes/ }).click();
+  await nav("Factures récurrentes");
   await page.getByRole("row", { name: new RegExp(`FA-${YEAR}-00001`) }).getByText("Récurrente · mensuelle").waitFor();
+  assert.equal(await page.locator("tbody tr").count(), 2, "le modèle et la facture préparée");
   await shot("liste.png");
 
   step("Le brouillon reprend la facture modèle et se valide normalement");
@@ -119,7 +120,7 @@ try {
   await page.getByText("Facture récurrente, d'après").waitFor();
   await shot("occurrence-validee.png");
 
-  step("Arrêt de la série : le filtre disparaît, les factures restent");
+  step("Arrêt de la série : les factures restent");
   await page.getByRole("button", { name: `FA-${YEAR}-00001` }).click();
   await heading(`Facture FA-${YEAR}-00001`);
   await card.getByRole("button", { name: "Arrêter la répétition" }).click();
@@ -127,7 +128,6 @@ try {
   await nav("Factures");
   await page.getByRole("button", { name: "Tous", exact: true }).click();
   await page.getByRole("row", { name: new RegExp(`FA-${YEAR}-00002`) }).waitFor();
-  assert.equal(await page.getByRole("button", { name: /^Récurrentes/ }).count(), 0);
   assert.equal(await page.locator("tbody tr").count(), 2);
 
   assert.deepEqual(errors, [], "aucune erreur JavaScript");

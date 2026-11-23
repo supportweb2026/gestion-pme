@@ -3,9 +3,10 @@ import { preloadPdf } from "./pdfActions.ts";
 import { LocalDb } from "./local/db.ts";
 import { SyncEngine } from "./local/sync.ts";
 import { api, ApiError, setToken } from "./api.ts";
-import { COMING_SOON, Ctx, ROLE_LABELS, TAB_LABELS, TABS_BY_ROLE, text, useApp, useSettings, useSyncStatus, type Session, type Tab } from "./context.ts";
+import { COMING_SOON, Ctx, ROLE_LABELS, SALES_TABS, TAB_LABELS, tabsFor, text, useApp, useSettings, useSyncStatus, type Session, type Tab } from "./context.ts";
 import { Dashboard } from "./screens/Dashboard.tsx";
-import { Documents } from "./screens/Documents.tsx";
+import { Documents, VIEWS, type DocView } from "./screens/Documents.tsx";
+import { Payments, Reminders } from "./screens/Sales.tsx";
 import { Clients } from "./screens/Clients.tsx";
 import { Articles } from "./screens/Articles.tsx";
 import { Expenses } from "./screens/Expenses.tsx";
@@ -323,7 +324,7 @@ function ForcePasswordScreen({ session, onDone, onLogout }: { session: Session; 
 
 function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLogout: (wipe: boolean) => Promise<void> }) {
   const sync = useMemo(() => new SyncEngine(db), [db]);
-  const allowed: Tab[] = [...(TABS_BY_ROLE[session.user.role] ?? ["expenses"]), ...(session.user.platformAdmin ? (["platform"] as Tab[]) : [])];
+  const allowed: Tab[] = [...tabsFor(session.user.role), ...(session.user.platformAdmin ? (["platform"] as Tab[]) : [])];
   // Modules finalisés d'abord, puis ceux qui arrivent (pastille « Bientôt »).
   const ready = allowed.filter((t) => !COMING_SOON[t]);
   const soon = allowed.filter((t) => COMING_SOON[t]);
@@ -380,7 +381,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
     const el = side.current;
     if (!el || collapsed || getComputedStyle(el).display === "none") return;
     if (el.scrollHeight <= el.clientHeight + 1) return;
-    const order = ["soon", "admin", "other", "files", "sales"];
+    const order = ["soon", "other", "files", "sales"];
     const victim = order.find((k) => {
       const g = groups.find((x) => x.key === k);
       return g && k !== lastToggled.current && !g.tabs.includes(tab) && sectionOpen(g);
@@ -466,7 +467,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
             {groups.map((g) => {
               const isOpen = collapsed || sectionOpen(g);
               return (
-                <div className={`nav-group${isOpen ? "" : " closed"}`} key={g.key}>
+                <div className={`nav-group${isOpen ? "" : " closed"}${g.key === "admin" ? " pinned" : ""}`} key={g.key}>
                   {g.label && (
                     <button className="nav-group-toggle" id={`grp-${g.key}`} aria-expanded={isOpen} aria-controls={`grp-list-${g.key}`} onClick={() => toggleSection(g)}>
                       <span>{g.label}</span>
@@ -526,7 +527,7 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
                 const items = g.tabs.filter((t) => mobileMore.includes(t));
                 if (items.length === 0) return null;
                 return (
-                  <div className="nav-group" key={g.label}>
+                  <div className="nav-group" key={g.key}>
                     {g.label && <div className="nav-group-label">{g.label}</div>}
                     {items.map((t) => <NavItem key={t} tab={t} active={tab === t} onClick={() => { setMoreOpen(false); go(t); }} />)}
                   </div>
@@ -550,9 +551,9 @@ function Shell({ db, session, onLogout }: { db: LocalDb; session: Session; onLog
         <main className="content">
           {/* L'ancien onglet « Gains » fait désormais partie du tableau de bord. */}
           {(tab === "dashboard" || tab === "gains") && <Dashboard />}
-          {(tab === "quotes" || tab === "invoices" || tab === "credit_notes") && (
-            <Documents key={tab} kind={tab} open={open} setOpen={setOpen} />
-          )}
+          {tab in VIEWS && <Documents key={tab} view={tab as DocView} open={open} setOpen={setOpen} />}
+          {tab === "payments" && <Payments />}
+          {tab === "reminders" && <Reminders />}
           {COMING_SOON[tab] && <ComingSoon tab={tab} onBack={() => go(ready[0] ?? "settings")} />}
           {tab === "expenses" && !COMING_SOON.expenses && <Expenses />}
           {tab === "clients" && <Clients open={open} setOpen={setOpen} />}
@@ -619,20 +620,22 @@ type NavGroup = { key: string; label: string | null; tabs: Tab[] };
 /** Menu groupé par usage : accueil, ventes, fichiers, modules à venir, puis administration. */
 function navGroups(ready: Tab[], soon: Tab[]): NavGroup[] {
   const pick = (list: Tab[]) => list.filter((t) => ready.includes(t));
-  const used = new Set<Tab>(["dashboard", "gains", "quotes", "invoices", "credit_notes", "clients", "articles", "settings", "platform"]);
+  const used = new Set<Tab>(["dashboard", "gains", ...SALES_TABS, "clients", "articles", "settings", "platform"]);
   const groups: NavGroup[] = [
     { key: "home", label: null, tabs: pick(["dashboard"]) },
-    { key: "sales", label: "Ventes", tabs: pick(["quotes", "invoices", "credit_notes"]) },
+    { key: "sales", label: "Ventes", tabs: pick(SALES_TABS) },
     { key: "files", label: "Répertoire", tabs: pick(["clients", "articles"]) },
     { key: "other", label: "Gestion", tabs: ready.filter((t) => !used.has(t)) },
     { key: "soon", label: "Bientôt disponible", tabs: soon },
-    { key: "admin", label: "Administration", tabs: pick(["settings", "platform"]) },
+    // Réglages : toujours visibles en bas du menu, sans section à déplier.
+    { key: "admin", label: null, tabs: pick(["settings", "platform"]) },
   ];
   return groups.filter((g) => g.tabs.length > 0);
 }
 
 const TAB_ICONS: Record<Tab, IconName> = {
-  dashboard: "home", gains: "chart", quotes: "quote", invoices: "invoice", credit_notes: "credit", expenses: "wallet",
+  dashboard: "home", gains: "chart", quotes: "quote", orders: "order", deliveries: "truck", invoices: "invoice", deposits: "deposit",
+  recurring: "repeat", credit_notes: "credit", payments: "cash", reminders: "bell", expenses: "wallet",
   clients: "users", articles: "box", my_day: "today", projects: "folder", accounting: "ledger", settings: "gear", platform: "shield",
 };
 
@@ -654,10 +657,16 @@ function NavItem({ tab, active, onClick, short = false, tip = false }: { tab: Ta
   );
 }
 
-type IconName = "today" | "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more" | "close" | "clock" | "chart" | "collapse" | "expand";
+type IconName = "today" | "home" | "quote" | "invoice" | "credit" | "wallet" | "users" | "box" | "folder" | "ledger" | "gear" | "shield" | "logout" | "more" | "close" | "clock" | "chart" | "collapse" | "expand" | "order" | "truck" | "deposit" | "repeat" | "cash" | "bell";
 const ICON_PATHS: Record<IconName, string[]> = {
   today: ["M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z", "M12 7v5l3 2", "M12 3V1.5", "M9.5 1.5h5"],
   home: ["M3 10.5 12 3l9 7.5", "M5 9.5V20h14V9.5", "M10 20v-6h4v6"],
+  order: ["M9 4h6v3H9z", "M9 5.5H6a1 1 0 0 0-1 1V20a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V6.5a1 1 0 0 0-1-1h-3", "M9 13l2 2 4-4"],
+  truck: ["M3 6h11v10H3z", "M14 9h4l3 3.5V16h-7z", "M7.5 19a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z", "M17.5 19a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3z"],
+  deposit: ["M6 3h12v18l-3-2-3 2-3-2-3 2z", "M9.5 14.5l5-5", "M9.75 9.75h.01", "M14.25 14.25h.01"],
+  repeat: ["M17 3l3 3-3 3", "M4 11V9a3 3 0 0 1 3-3h13", "M7 21l-3-3 3-3", "M20 13v2a3 3 0 0 1-3 3H4"],
+  cash: ["M3 7h18v10H3z", "M12 14.5a2.5 2.5 0 1 0 0-5 2.5 2.5 0 0 0 0 5z", "M6.5 10v.01", "M17.5 14v.01"],
+  bell: ["M6 16V11a6 6 0 1 1 12 0v5l1.5 2h-15z", "M10 20.5h4"],
   quote: ["M14 3H6a1 1 0 0 0-1 1v16a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8z", "M14 3v5h5", "M8.5 13h7", "M8.5 17h4"],
   invoice: ["M6 3h12v18l-3-2-3 2-3-2-3 2z", "M9 8h6", "M9 12h6", "M9 16h3"],
   credit: ["M6 3h12v18l-3-2-3 2-3-2-3 2z", "M9 12h6"],

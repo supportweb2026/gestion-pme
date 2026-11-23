@@ -2272,3 +2272,42 @@ table.lines .add-detail:hover { color: var(--accent); }
 /* Menu « créer un bon » : une liste déroulante qui se présente comme un bouton */
 select.follow-up { width: auto; min-height: 40px; height: 40px; padding: 0 34px 0 14px; font-weight: 600; font-size: 0.875rem; color: var(--ink); cursor: pointer; }
 @media (max-width: 720px) { .page-head .quick select.follow-up { flex: 1; } }
+
+/* Encaissements : répartition par moyen de paiement sous les filtres. */
+.method-split { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: -4px 0 12px; }
+.method-split strong { color: var(--ink); font-weight: 600; }
+
+/* Menu latéral : les réglages restent en bas, séparés par un filet ; lignes plus serrées sur les écrans peu hauts. */
+.nav-group.pinned { margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--line); }
+@media (max-height: 920px) {
+  .sidebar .nav-item { min-height: 30px; }
+  .sidebar .nav-group ul { gap: 0; }
+  .sidebar .nav-group + .nav-group { margin-top: 4px; }
+  .sidebar .nav-group-toggle { min-height: 26px; }
+  .sidebar .nav-group.pinned { margin-top: 6px; padding-top: 6px; }
+}
+
+/* Parcours d'une vente : cinq étapes en tête des écrans de vente, l'étape en cours en couleur. */
+.sales-flow { list-style: none; margin: 0 0 16px; padding: 0; display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.sales-flow::-webkit-scrollbar { display: none; }
+.sales-flow li { flex: 1 1 0; min-width: 150px; position: relative; }
+.sales-flow button { width: 100%; height: 100%; min-height: 52px; display: flex; align-items: center; gap: 10px; padding: 8px 12px; text-align: left; border: 1px solid var(--line); border-radius: var(--radius); background: var(--surface); color: var(--ink-2); }
+.sales-flow button:hover { border-color: var(--accent); color: var(--ink); }
+.sales-flow .flow-num { flex: none; width: 22px; height: 22px; display: grid; place-items: center; border-radius: 50%; background: #EFF1F5; color: var(--ink-3); font-size: 0.75rem; font-weight: 700; }
+.sales-flow .flow-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.25; }
+.sales-flow .flow-text strong { font-size: 0.8125rem; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sales-flow .flow-text span { font-size: 0.75rem; color: var(--ink-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sales-flow li.current button { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+.sales-flow li.current .flow-num { background: var(--accent); color: #fff; }
+.sales-flow li.current .flow-text span { color: var(--accent); }
+@media (max-width: 720px) { .sales-flow li { flex: none; } }
+
+/* Tableaux dont une ligne mène à plusieurs endroits (client, facture, action) : chaque lien garde sa propre zone. */
+.multi-link .row-link::after { content: none; }
+.multi-link .row-link:hover { color: var(--accent); text-decoration: underline; }
+.multi-link .row-link:focus-visible { box-shadow: var(--ring); border-radius: 4px; }
+@media (max-height: 880px) {
+  .sidebar .nav-item { min-height: 28px; }
+  .sidebar .side-brand { padding-bottom: 8px; gap: 8px; }
+  .sidebar .side-foot { padding-top: 8px; }
+}
