@@ -13,8 +13,10 @@ import { docRefs, docTitle, isSection, isSlip } from "../../shared/documents.ts"
 import { PROJECT_STATUS } from "../../shared/projects.ts";
 import { docStatus, presetList, presetNewDoc } from "./Documents.tsx";
 import { usePaged } from "../Pager.tsx";
+import { contactsOf } from "../../shared/contacts.ts";
+import { ClientContacts } from "./ClientContacts.tsx";
 
-type View = "documents" | "payments" | "projects" | "history";
+type View = "documents" | "contacts" | "payments" | "projects" | "history";
 type DocFilter = "all" | DocTable;
 const DOC_FILTERS: [DocFilter, string][] = [["all", "Tous"], ["invoices", "Factures"], ["quotes", "Devis et bons"], ["credit_notes", "Avoirs"]];
 
@@ -88,8 +90,10 @@ export function ClientPage({ client, onBack, onEdit }: { client: SyncRecord; onB
 
   const canSell = can.manageCompany(session.user.role) || ["sales", "accountant", "project_manager"].includes(session.user.role);
   const create = (tbl: "quotes" | "invoices") => { presetNewDoc(client.id); go(tbl, "new"); };
+  const contacts = contactsOf(c);
+  const mainContact = contacts.find((x) => x.main);
   const views: [View, string, number][] = [
-    ["documents", "Documents", data.docs.length], ["payments", "Encaissements", data.pays.length],
+    ["documents", "Documents", data.docs.length], ["contacts", "Contacts", contacts.length], ["payments", "Encaissements", data.pays.length],
     ["projects", "Projets", data.projects.length], ["history", "Historique", history.length],
   ];
   const contact: [string, string][] = ([
@@ -189,6 +193,8 @@ export function ClientPage({ client, onBack, onEdit }: { client: SyncRecord; onB
             </>
           ))}
 
+          {view === "contacts" && <ClientContacts client={client} />}
+
           {view === "payments" && (data.pays.length === 0 ? <p className="empty">Aucun encaissement enregistré pour ce client.</p> : (
             <div className="table-wrap">
               <table className="client-table">
@@ -250,6 +256,17 @@ export function ClientPage({ client, onBack, onEdit }: { client: SyncRecord; onB
               ))}
             </dl>
             {contact.some(([, v]) => !v) && <button className="link small" onClick={onEdit}>Compléter la fiche</button>}
+          </div>
+          <div className="card">
+            <div className="aside-label">Contact principal</div>
+            {mainContact ? (
+              <dl className="client-contact">
+                <div><dt>{mainContact.role || "Contact"}</dt><dd>{mainContact.name}</dd></div>
+                {mainContact.phone && <div><dt>Téléphone</dt><dd>{mainContact.phone}</dd></div>}
+                {mainContact.email && <div><dt>E-mail</dt><dd>{mainContact.email}</dd></div>}
+              </dl>
+            ) : <p className="muted small">Aucun contact enregistré.</p>}
+            <button className="link small" onClick={() => setView("contacts")}>{contacts.length > 1 ? `Voir les ${contacts.length} contacts` : "Ouvrir le carnet de contacts"}</button>
           </div>
           {(data.thisYear > 0 || data.lastYear > 0) && (
             <div className="card">

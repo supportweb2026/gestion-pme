@@ -171,6 +171,27 @@ try {
   await sheet.getByRole("button", { name: "FBETA001" }).waitFor();
   await shot("reprise-fiche-client.png");
   assert.match(await sheet.locator(".kpis").innerText(), /Facturé TTC[\s\S]*Encaissé[\s\S]*1 000 000 FCFA[\s\S]*Reste dû/);
+  // Carnet de contacts : deux personnes, la seconde devient le contact principal.
+  await sheet.getByRole("tab", { name: /Contacts/ }).click();
+  await sheet.getByRole("button", { name: "Ajouter un contact" }).click();
+  await sheet.getByLabel("Nom et prénom").fill("Awa Ndong");
+  await sheet.getByLabel("Fonction").fill("Achats");
+  await sheet.getByLabel("Téléphone").fill("+241 077 11 22 33");
+  await sheet.getByRole("button", { name: "Enregistrer le contact" }).click();
+  await sheet.getByRole("button", { name: "Ajouter un contact" }).click();
+  await sheet.getByLabel("Nom et prénom").fill("Marc Obiang");
+  await sheet.getByLabel("Fonction").fill("Comptabilité");
+  await sheet.getByLabel("E-mail").fill("pas-une-adresse");
+  await sheet.getByRole("button", { name: "Enregistrer le contact" }).click();
+  await sheet.getByLabel("E-mail").fill("compta@beta.example");
+  await sheet.getByLabel(/Contact principal/).check();
+  await sheet.getByRole("button", { name: "Enregistrer le contact" }).click();
+  const people = sheet.getByTestId("client-contacts").locator("li");
+  await people.nth(1).waitFor();
+  assert.equal(await people.count(), 2);
+  assert.match(await people.first().innerText(), /Marc Obiang[\s\S]*Contact principal[\s\S]*Comptabilité/);
+  assert.match(await sheet.locator(".doc-aside").innerText(), /Contact principal[\s\S]*Marc Obiang[\s\S]*compta@beta\.example/);
+  await shot("reprise-contacts.png");
   await sheet.getByRole("tab", { name: /Encaissements/ }).click();
   assert.match(await sheet.innerText(), /Virement[\s\S]*1 000 000 FCFA/);
   await sheet.getByRole("tab", { name: /Documents/ }).click();
@@ -179,6 +200,12 @@ try {
   assert.match(await listSummary(), /^1 document sur 6/);
   assert.match(await page.locator("tbody tr").first().innerText(), /FBETA001/);
   await page.getByRole("button", { name: "Tout afficher" }).click();
+
+  step("Clients : la recherche trouve un client par le nom d'un contact");
+  await nav("Clients");
+  await page.getByLabel("Rechercher un client").fill("obiang");
+  assert.equal(await page.locator("tbody tr").count(), 1);
+  assert.match(await page.locator("tbody tr").first().innerText(), /BETA/);
 
   step("La numérotation de Gestia n'est pas touchée");
   await nav("Factures");
