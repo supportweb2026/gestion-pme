@@ -121,6 +121,11 @@ export function checkChange(existing: SyncRecord | null, change: Change): string
   if (!change.patch || typeof change.patch !== "object" || Array.isArray(change.patch)) return "contenu invalide";
   if (Object.keys(change.patch).length === 0) return "modification vide";
 
+  // Jeton de l'espace client en ligne : forme imposée, pour qu'il ne soit jamais devinable.
+  if (change.tbl === "clients" && "portal_token" in change.patch && change.patch.portal_token !== "" && !/^[A-Za-z0-9_-]{32}$/.test(String(change.patch.portal_token))) {
+    return "lien de l'espace client invalide";
+  }
+
   if (isDocTable(change.tbl)) {
     const rule = NUMBERED_DOCS[change.tbl];
     const allowed = new Set<string>(rule.afterNumbering);

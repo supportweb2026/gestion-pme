@@ -18,3 +18,8 @@
   X-Robots-Tag: noindex, nofollow
   Referrer-Policy: no-referrer
   Cache-Control: no-store
+
+/espace/*
+  X-Robots-Tag: noindex, nofollow
+  Referrer-Policy: no-referrer
+  Cache-Control: no-store

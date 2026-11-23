@@ -17,6 +17,7 @@ import { hashRecoveryCode, newRecoveryCodes, newTotpSecret, otpauthUri, verifyTo
 import { handleConnections, handleConnector } from "./oauth.ts";
 import { isSignToken, parseSignPath, publicDoc, sameToken, shareable, signLock } from "../shared/publicDoc.ts";
 import { checkSignature } from "../shared/signature.ts";
+import { buildPortal, INVOICE_EXTRA_FIELDS, parsePortalPath, portalDocAllowed } from "../shared/portal.ts";
 
 /** Taille d'un bloc de numéros de facture réservé par un appareil. */
 const NUMBER_BLOCK_SIZE = 50;
@@ -988,6 +989,57 @@ async function handlePublicSign(req: Request, env: Env, path: string) {
   return write({ signature, status: "accepted", decided_at: at });
 }
 
+/**
+ * Espace client en ligne, sans compte : le client ouvre le lien de sa fiche
+ * (/espace/{entreprise}/{client}/{jeton}) et retrouve ses devis, ses factures et son solde.
+ *   GET /api/public/portal/{entreprise}/{client}/{jeton}                    : résumé de l'espace
+ *   GET /api/public/portal/{entreprise}/{client}/{jeton}/{table}/{document} : un document, pour son PDF
+ * Lecture seule. Un lien inconnu, retiré ou faux reçoit la même réponse 404.
+ */
+async function handlePublicPortal(req: Request, env: Env, path: string) {
+  const gone = () => new HttpError(404, "ce lien n'est plus valable");
+  if (req.method !== "GET") throw new HttpError(405, "méthode non autorisée");
+  const parts = path.split("/").filter(Boolean);
+  const link = parsePortalPath(`/espace/${parts.slice(0, 3).join("/")}`);
+  if (!link || (parts.length !== 3 && parts.length !== 5)) throw gone();
+  type Row = { tbl: string; id: string; data: string; clocks: string };
+  const load = (tbl: string, id: string) => env.DB.prepare(`SELECT tbl, id, data, clocks FROM records WHERE company_id = ? AND tbl = ? AND id = ?`)
+    .bind(link.companyId, tbl, id).first<Row>().then((r) => parseRecord(r ?? undefined));
+  const client = await load("clients", link.clientId);
+  const token = client?.data.portal_token;
+  if (!client || client.data._deleted || !isSignToken(token) || !sameToken(token, link.token)) throw gone();
+  const company = await env.DB.prepare(`SELECT id, name, status, plan, trial_ends_at, paid_until FROM companies WHERE id = ?`).bind(link.companyId).first<Company>();
+  if (!company || company.status === "suspended") throw gone();
+  const settings = await load("settings", "company");
+  const companyData = { name: company.name, ...settings?.data };
+
+  if (parts.length === 5) {
+    const [tbl, docId] = parts.slice(3);
+    if ((tbl !== "quotes" && tbl !== "invoices") || docId.length < 3 || docId.length > 96) throw gone();
+    const doc = await load(tbl, docId);
+    if (!portalDocAllowed(tbl, doc, link.clientId)) throw gone();
+    let situation: { paid: number; credited: number; due: number; status: string } | undefined;
+    if (tbl === "invoices") {
+      const linked = (t: string) => env.DB.prepare(`SELECT tbl, id, data, clocks FROM records WHERE company_id = ? AND tbl = ? AND json_extract(data, '$.invoice_id') = ?`)
+        .bind(link.companyId, t, docId).all<Row>().then((r) => r.results.map((x) => parseRecord(x)!));
+      const [payments, credits] = await Promise.all([linked("payments"), linked("credit_notes")]);
+      const inv = buildPortal({ companyId: link.companyId, quotes: [], invoices: [doc!], payments, credits, today: today() }).invoices[0];
+      if (inv) situation = { paid: inv.paid, credited: 0, due: inv.due, status: inv.state };
+    }
+    return json({ ...publicDoc(doc!.data, client.data, companyData, today(), tbl === "invoices" ? INVOICE_EXTRA_FIELDS : []), situation });
+  }
+
+  const ofClient = (tbl: string) => env.DB.prepare(`SELECT tbl, id, data, clocks FROM records WHERE company_id = ? AND tbl = ? AND json_extract(data, '$.client_id') = ?`)
+    .bind(link.companyId, tbl, link.clientId).all<Row>().then((r) => r.results.map((x) => parseRecord(x)!));
+  const [quotes, invoices, credits] = await Promise.all([ofClient("quotes"), ofClient("invoices"), ofClient("credit_notes")]);
+  const ids = JSON.stringify(invoices.map((i) => i.id));
+  const payments = (await env.DB.prepare(
+    `SELECT tbl, id, data, clocks FROM records WHERE company_id = ? AND tbl = 'payments' AND json_extract(data, '$.invoice_id') IN (SELECT value FROM json_each(?))`,
+  ).bind(link.companyId, ids).all<Row>()).results.map((x) => parseRecord(x)!);
+  const view = publicDoc({}, client.data, companyData, today());
+  return json({ company: view.company, client: view.client, ...buildPortal({ companyId: link.companyId, quotes, invoices, payments, credits, today: today() }) });
+}
+
 async function route(req: Request, env: Env): Promise<Response> {
   const url = new URL(req.url);
   const p = url.pathname;
@@ -1016,6 +1068,7 @@ async function route(req: Request, env: Env): Promise<Response> {
   if (p === "/api/login" && m === "POST") return handleLogin(req, env);
   if (p === "/api/errors" && m === "POST") return handleClientError(req, env);
   if (p.startsWith("/api/public/sign/")) return handlePublicSign(req, env, p.slice("/api/public".length));
+  if (p.startsWith("/api/public/portal/")) return handlePublicPortal(req, env, p.slice("/api/public/portal".length));
   if (p.startsWith("/api/v1/")) return handlePublicApi(req, env, p.slice("/api/v1/".length));
   const { s: session, company } = await authenticate(req, env);
   if (company.status === "suspended" && p !== "/api/export") throw new HttpError(403, "compte de l'entreprise suspendu : contactez l'équipe Gestia");

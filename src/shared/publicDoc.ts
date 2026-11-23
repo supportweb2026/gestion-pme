@@ -67,11 +67,11 @@ export function signLock(data: Record<string, unknown>, today: string): string {
 }
 
 /** Ce que le client voit d'un document partagé : uniquement ce qui est imprimé dessus. */
-export function publicDoc(doc: Record<string, unknown>, client: Record<string, unknown> | undefined, company: Record<string, unknown> | undefined, today: string): PublicDoc {
+export function publicDoc(doc: Record<string, unknown>, client: Record<string, unknown> | undefined, company: Record<string, unknown> | undefined, today: string, extra: readonly string[] = []): PublicDoc {
   const sig = signatureOf(doc);
   return {
     doc: {
-      ...pick(doc, DOC_PUBLIC_FIELDS),
+      ...pick(doc, [...DOC_PUBLIC_FIELDS, ...extra]),
       // La preuve technique (adresse, navigateur) reste chez l'entreprise.
       ...(sig ? { signature: { name: sig.name, at: sig.at, image: sig.image, via: sig.via } } : {}),
     },
