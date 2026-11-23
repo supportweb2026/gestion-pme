@@ -99,6 +99,7 @@ try {
 
   step("Réglages : objectif mensuel de 200 000 FCFA HT");
   await nav("Réglages");
+  await page.getByRole("tab", { name: "Entreprise" }).click();
   await page.getByLabel("Objectif de chiffre d'affaires HT (FCFA)").fill("200000");
   await page.getByRole("form", { name: "Objectif mensuel" }).getByRole("button", { name: "Enregistrer" }).click();
   await page.getByRole("form", { name: "Objectif mensuel" }).getByText("Enregistré").waitFor();

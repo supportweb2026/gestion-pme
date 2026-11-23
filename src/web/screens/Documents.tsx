@@ -763,7 +763,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
               </div>
               <div className="card aside-actions">
                 <h3>{share.reminder ? "Relancer le client" : "Envoyer au client"}</h3>
-                {nextReminder && <p className="remind-step"><span className="remind-tag">{nextReminder.label}</span> {TONE_LABELS[nextReminder.tone]} prévue aujourd'hui (Réglages, Relances).</p>}
+                {nextReminder && <p className="remind-step"><span className="remind-tag">{nextReminder.label}</span> {TONE_LABELS[nextReminder.tone]} prévue aujourd'hui (Réglages, Documents).</p>}
                 <a className="button" href={share.wa} target="_blank" rel="noopener noreferrer" onClick={share.markSent}>
                   <SendIco name="wa" />{share.reminder ? "Relancer par WhatsApp" : "WhatsApp"}
                 </a>

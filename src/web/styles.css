@@ -2106,3 +2106,11 @@ button.primary.danger:hover { background: #962017; border-color: #962017; }
   .ready-note button { width: 100%; }
   .stages-head-actions { width: 100%; }
 }
+
+/* ---------- Réglages : un onglet par sujet ---------- */
+.settings > .page-head { margin-bottom: 14px; }
+.settings-tabs { display: flex; width: fit-content; max-width: 100%; margin-bottom: 20px; }
+.settings-tabs button { display: inline-flex; align-items: center; gap: 8px; white-space: nowrap; padding: 0 14px; min-height: 36px; font-weight: 600; }
+.settings-tabs .tab-flag { font-size: 0.6875rem; font-weight: 700; color: var(--warn); background: var(--warn-soft); border-radius: 99px; padding: 1px 8px; }
+.settings-panel > .card:last-child { margin-bottom: 0; }
+.settings-panel label > .hint { display: block; font-size: 0.75rem; color: var(--ink-3); font-weight: 500; margin-top: 4px; }

@@ -77,6 +77,7 @@ try {
 
   step("Comptes : un employé et une cheffe de projet ; l'annuaire se remplit tout seul");
   await nav("Réglages");
+  await a.getByRole("tab", { name: "Équipe" }).click();
   for (const [name, email, role] of [["Junior Mintsa", "junior@ido.ga", "employee"], ["Ornella Mba", "ornella@ido.ga", "project_manager"]]) {
     await a.getByRole("button", { name: "Ajouter un utilisateur" }).click();
     await a.getByLabel("Nom", { exact: true }).fill(name);

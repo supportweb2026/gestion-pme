@@ -76,6 +76,7 @@ try {
 
   step("Réglages > Apparence : vert, cachet, note par défaut, conditions générales");
   await nav("Réglages");
+  await page.getByRole("tab", { name: "Documents" }).click();
   const card = page.locator("form.doc-look-card");
   await card.getByRole("button", { name: "Vert" }).click();
   // Cachet : petite image PNG générée dans la page.

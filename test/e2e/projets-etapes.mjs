@@ -74,6 +74,7 @@ try {
   await a.getByRole("button", { name: "Démarrer l'essai gratuit" }).click();
   await waitSynced();
   await nav("Réglages");
+  await a.getByRole("tab", { name: "Équipe" }).click();
   await a.getByRole("button", { name: "Ajouter un utilisateur" }).click();
   await a.getByLabel("Nom", { exact: true }).fill("Junior Mintsa");
   await a.locator("form.form-grid").getByLabel("E-mail").fill("junior@ido.ga");

@@ -72,6 +72,7 @@ try {
   await waitSynced(A.page);
 
   await nav(A.page, "Réglages");
+  await A.page.getByRole("tab", { name: "Entreprise" }).click();
   await A.page.getByLabel("Raison sociale").fill("Sodepsi SARL");
   await A.page.getByLabel("NIF").fill("2026 0001 G");
   await A.page.getByLabel("Ville").fill("Libreville");
@@ -310,6 +311,7 @@ try {
 
   step("Utilisateurs : mot de passe provisoire imposé puis remplacé, réinitialisation par l'administrateur");
   await nav(A.page, "Réglages");
+  await A.page.getByRole("tab", { name: "Équipe" }).click();
   await A.page.getByRole("button", { name: "Ajouter un utilisateur" }).click();
   await A.page.getByLabel("Nom", { exact: true }).fill("Awa");
   await A.page.locator("form.form-grid").getByLabel("E-mail").fill("awa@sodepsi.ga");
@@ -349,6 +351,7 @@ try {
   await D.page.getByText(/Aucun client/).waitFor();
   assert.equal(await D.page.getByText("Total Gabon").count(), 0, "aucune donnée de Sodepsi");
   await nav(D.page, "Réglages");
+  await D.page.getByRole("tab", { name: "Entreprise" }).click();
   await D.page.getByText("Formule Essai gratuit").waitFor();
 
   step("Console Plateforme (éditeur) : paiement enregistré pour la nouvelle entreprise");

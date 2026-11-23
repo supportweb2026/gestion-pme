@@ -113,6 +113,7 @@ try {
 
   step("Réglages > Relances : calendrier modifiable");
   await nav("Réglages");
+  await page.getByRole("tab", { name: "Documents" }).click();
   const card = page.locator("form", { hasText: "Relances des factures" });
   await card.getByLabel("Étapes, par rapport à l'échéance").fill("J+1 ; j+30 ; J-5");
   await card.getByRole("button", { name: "Enregistrer les relances" }).click();

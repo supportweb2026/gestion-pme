@@ -233,7 +233,7 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
           <label>Code de vérification<input name="otp" required autoFocus inputMode="numeric" autoComplete="one-time-code" maxLength={12} placeholder="123 456" /></label>
           {error && <p className="error" role="alert">{error}</p>}
           <button className="primary" disabled={busy}>{busy ? "Patientez…" : "Vérifier"}</button>
-          <p className="muted small">Téléphone perdu ? Saisissez un de vos codes de secours (format abcd-efgh). Sans code de secours, un mot de passe provisoire créé dans Réglages › Utilisateurs désactive la double authentification.</p>
+          <p className="muted small">Téléphone perdu ? Saisissez un de vos codes de secours (format abcd-efgh). Sans code de secours, un mot de passe provisoire créé dans Réglages › Équipe désactive la double authentification.</p>
           <p className="auth-switch"><button type="button" className="link" onClick={() => { setOtpFor(null); setError(null); }}>Revenir à la connexion</button></p>
         </form>
       ) : (
@@ -264,7 +264,7 @@ function AuthScreen({ db, onSession }: { db: LocalDb; onSession: (s: Session) =>
             <p className="auth-switch">Nouvelle entreprise ? <button type="button" className="link" onClick={() => switchTo("signup")}>Créer mon entreprise</button></p>
             <details className="small muted">
               <summary>Mot de passe oublié ?</summary>
-              <p>Un mot de passe provisoire se crée dans Réglages › Utilisateurs. Si personne dans votre espace ne peut le faire, écrivez à l'équipe Gestia.</p>
+              <p>Un mot de passe provisoire se crée dans Réglages › Équipe. Si personne dans votre espace ne peut le faire, écrivez à l'équipe Gestia.</p>
               <SupportLine support={support} prefix="Équipe Gestia :" />
             </details>
           </>
