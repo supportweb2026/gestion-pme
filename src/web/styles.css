@@ -2167,8 +2167,15 @@ table.lines.readonly th:first-child, table.lines.readonly td:first-child { width
 .th-arrow { font-size: 0.75rem; opacity: 0.35; }
 .th-sort.active .th-arrow, .th-sort:hover .th-arrow { opacity: 1; }
 .th-sort.active .th-arrow { color: var(--accent); }
-.pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px; padding: 10px 16px; border-top: 1px solid var(--line); }
-.pager span { margin-right: auto; }
+.pager { display: flex; align-items: center; justify-content: flex-end; gap: 8px 16px; padding: 10px 16px; border-top: 1px solid var(--line); flex-wrap: wrap; }
+.pager > span:first-child { margin-right: auto; }
+.pager label { display: inline-flex; flex-direction: row; align-items: center; gap: 8px; white-space: nowrap; margin: 0; }
+.pager select, .pager input { width: auto; min-height: 32px; height: 32px; padding-top: 0; padding-bottom: 0; font-size: 0.8125rem; }
+.pager input { width: 84px; }
+.pager-pages, .pager-jump { display: inline-flex; align-items: center; gap: 4px; }
+.pager-pages button { min-width: 32px; padding: 0 8px; }
+.pager-pages button.current { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (max-width: 720px) { .pager { justify-content: flex-start; } .pager > span:first-child { width: 100%; } }
 @media (max-width: 720px) {
   .list-filters select { flex: 1 1 140px; max-width: none; }
   .list-summary { margin-left: 0; width: 100%; text-align: left; }
