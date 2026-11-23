@@ -16,8 +16,8 @@ import { CASH_LIMIT_XAF, fiscalSettings, newDocTaxFields, pct } from "../../shar
 import { currencyOf, invoiceSituations, linesOf, QUOTE_LABELS, quoteStatus, rateOf, SITUATION_LABELS, totalsOf, type Situation } from "../ledger.ts";
 import { PrintView } from "./PrintView.tsx";
 import {
-  applyGlobalDiscount, deductionLines, depositLines, docTitle, isDepositLine, isSection, percentForAmount,
-  QUOTE_TYPES, quoteTypeOf, sectionSubtotals, type QuoteType,
+  applyGlobalDiscount, deductionLines, depositLines, docRefs, docSearchText, docTitle, isDepositLine, isSection, percentForAmount,
+  QUOTE_TYPES, quoteTypeOf, relatedDocs, sectionSubtotals, type QuoteType,
 } from "../../shared/documents.ts";
 import { QuoteProjectBanner } from "./projects/QuoteProjectBanner.tsx";
 import { useValidateOnOpen } from "../projectInvoices.ts";
@@ -116,7 +116,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
   };
   const rows = docs
     .filter((d) => {
-      if (q && !normalize(`${text(d.data.number)} ${clientName(d.data.client_id)}`).includes(q)) return false;
+      if (q && !normalize(`${docSearchText(d.data)} ${clientName(d.data.client_id)}`).includes(q)) return false;
       return matchesFilter(d, filter === "recurring" && !docs.some(activeSeries) ? "all" : filter);
     })
     .sort((a, b) => text(b.data.date).localeCompare(text(a.data.date)) || text(b.data.number).localeCompare(text(a.data.number)));
@@ -154,7 +154,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
       {importing && <ImportHistory />}
       <div className="toolbar">
         <label className="sr-only" htmlFor={`search-${kind}`}>Rechercher</label>
-        <input id={`search-${kind}`} type="search" placeholder="Rechercher un numéro ou un client" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher" />
+        <input id={`search-${kind}`} type="search" placeholder="Numéro, client, objet ou référence" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Rechercher" />
         {docs.length > 0 && (
           <div className="segmented" role="group" aria-label="Filtrer">
             {filters.map(([f, label]) => {
@@ -281,6 +281,13 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   useEffect(() => {
     if (presetNote) setNotes((n) => n || presetNote);
   }, [presetNote]);
+  // Références imprimées en tête du document.
+  const refs = docRefs(record?.data);
+  const [subject, setSubject] = useState(refs.subject);
+  const [clientRef, setClientRef] = useState(refs.clientRef);
+  const [paymentTerms, setPaymentTerms] = useState(refs.paymentTerms);
+  const [showDetail, setShowDetail] = useState(false);
+  const allQuotes = useTable("quotes");
   const [currency, setCurrency] = useState(currencyOf(record));
   const [rate, setRate] = useState<number>(() => (record ? rateOf(record) : 1));
   const [projectId, setProjectId] = useState(text(record?.data.project_id));
@@ -351,7 +358,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   function contentPatch(): Record<string, unknown> {
     const p: Record<string, unknown> = {
       client_id: clientId, date, lines: cleanLines(), notes: notes.trim(), currency, rate: currency === "XAF" ? 1 : rate, project_id: projectId,
+      subject: subject.trim(), client_ref: clientRef.trim(),
     };
+    if (kind !== "credit_notes") p.payment_terms = isDelivery ? "" : paymentTerms.trim();
     if (kind === "invoices") p.due_date = dueDate;
     if (kind !== "credit_notes") Object.assign(p, taxFields, { withholding_rate: withholdingRate, withholding_label: withholdingRate ? withholding.label : "" });
     if (kind === "quotes") {
@@ -435,7 +444,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       ...(deposits.length ? { final_invoice: true } : {}),
       withholding_rate: Number(record!.data.withholding_rate) || 0,
       withholding_label: text(record!.data.withholding_label),
-      notes: text(record!.data.notes),
+      notes: refs.notes,
+      subject: refs.subject, client_ref: refs.clientRef, payment_terms: refs.paymentTerms,
       currency: currencyOf(record),
       rate: rateOf(record),
       project_id: text(record!.data.project_id),
@@ -463,7 +473,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       lines: depositLines(source, pct, `${one.toLowerCase()} ${text(record!.data.number)}`, decimals),
       withholding_rate: Number(record!.data.withholding_rate) || 0,
       withholding_label: text(record!.data.withholding_label),
-      notes: text(record!.data.notes),
+      notes: refs.notes,
+      subject: refs.subject, client_ref: refs.clientRef, payment_terms: refs.paymentTerms,
       currency: currencyOf(record),
       rate: rateOf(record),
       project_id: text(record!.data.project_id),
@@ -491,6 +502,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       project_id: text(record!.data.project_id),
       source_id: id,
       source_number: record!.data.number,
+      subject: refs.subject, client_ref: refs.clientRef,
       notes: `Livraison${record!.data.number ? ` selon ${docTitle(kind, record!.data).toLowerCase()} ${text(record!.data.number)}` : ""}`,
       created_by: session.user.id,
       created_by_name: session.user.name,
@@ -510,6 +522,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       project_id: text(record!.data.project_id),
       invoice_id: id,
       invoice_number: record!.data.number,
+      subject: refs.subject, client_ref: refs.clientRef,
       ...taxCopy(record),
       notes: `Avoir sur la facture ${text(record!.data.number)}`,
       created_by: session.user.id,
@@ -526,7 +539,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       client_id: clientId,
       date: today(),
       lines: cleanLines().map(unfreezeLine),
-      notes: notes.trim(),
+      notes: (numbered ? refs.notes : notes).trim(),
+      subject: subject.trim(), client_ref: clientRef.trim(), payment_terms: paymentTerms.trim(),
       currency,
       rate: currency === "XAF" ? 1 : rate,
       project_id: projectId,
@@ -559,6 +573,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const dueLabel = kind === "quotes" ? "Valable jusqu'au" : "Échéance";
   const showDue = kind === "invoices" || (kind === "quotes" && !isDelivery);
   const subtotals = sectionSubtotals(lines, decimals);
+  const related = record && numbered ? relatedDocs(kind, record, { quotes: allQuotes, invoices, credit_notes: credits }) : [];
 
   const head = (
     <div className="page-head doc-head">
@@ -588,26 +603,27 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     </div>
   );
 
+  // Liens en phrase sur un brouillon ; un document numéroté les montre dans « Documents liés ».
   const links = (
     <>
-      {kind === "credit_notes" && sourceInvoice && (
+      {kind === "credit_notes" && sourceInvoice && !numbered && (
         <p className="muted small">
           Sur la facture <button className="link" onClick={() => go("invoices", sourceInvoice.id)}>{text(sourceInvoice.data.number)}</button>
         </p>
       )}
-      {kind === "invoices" && record?.data.quote_id ? (
+      {kind === "invoices" && record?.data.quote_id && !numbered ? (
         <p className="muted small">
           {originPhrase(text(record.data.quote_number))} <button className="link" onClick={() => go("quotes", text(record.data.quote_id))}>{text(record.data.quote_number)}</button>
         </p>
       ) : null}
       {record?.data.imported ? <p className="muted small" data-testid="doc-imported">Document repris de VosFactures, tel qu'il a été émis.</p> : null}
-      {kind === "invoices" && record?.data.recurrence_of ? (
+      {kind === "invoices" && record?.data.recurrence_of && !numbered ? (
         <p className="muted small recur-origin">
           {numbered ? "Facture récurrente, d'après" : "Préparée automatiquement d'après la facture récurrente"} <button className="link" onClick={() => go("invoices", text(record.data.recurrence_of))}>{text(record.data.recurrence_number)}</button>
           {numbered ? "" : ". Vérifiez les quantités et les mentions de période, puis validez-la."}
         </p>
       ) : null}
-      {kind === "quotes" && record?.data.source_id ? (
+      {kind === "quotes" && record?.data.source_id && !numbered ? (
         <p className="muted small">
           Établi d'après <button className="link" onClick={() => go(invoices.some((i) => i.id === record.data.source_id) ? "invoices" : "quotes", text(record.data.source_id))}>{text(record.data.source_number)}</button>
         </p>
@@ -662,9 +678,17 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                 {showDue && <div><dt>{dueLabel}</dt><dd>{dueDate ? formatDate(dueDate) : "—"}</dd></div>}
                 {!isDelivery && <div><dt>Devise</dt><dd>{currency === "XAF" ? "Franc CFA (XAF)" : `${currency} · 1 ${currency} = ${rate} FCFA`}</dd></div>}
                 {project && <div><dt>Projet</dt><dd>{text(project.data.name)}</dd></div>}
+                {refs.subject && <div className="fact-wide" data-testid="doc-subject"><dt>Objet</dt><dd>{refs.subject}</dd></div>}
+                {refs.clientRef && <div className="fact-wide" data-testid="doc-client-ref"><dt>Référence de commande</dt><dd className="pre-line">{refs.clientRef}</dd></div>}
+                {refs.paymentTerms && <div className="fact-wide" data-testid="doc-terms"><dt>Conditions de règlement</dt><dd>{refs.paymentTerms}</dd></div>}
               </dl>
+              {lines.some((l) => l.description && l.description.split("\n").length > 3) && (
+                <button className="link small detail-toggle" onClick={() => setShowDetail((v) => !v)} aria-expanded={showDetail}>
+                  {showDetail ? "Réduire le détail des lignes" : "Afficher tout le détail des lignes"}
+                </button>
+              )}
               <div className="lines-wrap">
-                <table className="lines readonly">
+                <table className={`lines readonly${showDetail ? " full-detail" : ""}`}>
                   <thead>
                     <tr>
                       <th>Désignation</th><th className="num right">Qté</th>
@@ -696,7 +720,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
               </div>
               <div className="doc-bottom">
                 <div className="notes">
-                  {notes && (<><div className="aside-label">Note imprimée sur le document</div><p className="pre-line">{notes}</p></>)}
+                  {(numbered ? refs.notes : notes) && (<><div className="aside-label">Note imprimée sur le document</div><p className="pre-line">{numbered ? refs.notes : notes}</p></>)}
                 </div>
                 {!isDelivery && totalsList}
               </div>
@@ -761,6 +785,23 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                   </>
                 )}
               </div>
+              {related.length > 0 && (
+                <div className="card related-card" data-testid="related-docs">
+                  <h3>Documents liés</h3>
+                  <ul className="related-list">
+                    {related.map((r) => {
+                      const d = (r.tbl === "quotes" ? allQuotes : r.tbl === "invoices" ? invoices : credits).find((x) => x.id === r.id)!;
+                      return (
+                        <li key={`${r.tbl}/${r.id}`}>
+                          <span className="rel-kind">{r.relation}</span>
+                          <button className="link" onClick={() => go(r.tbl, r.id)}>{docTitle(r.tbl, d.data)} {text(d.data.number) || "(brouillon)"}</button>
+                          <span className="rel-meta">{formatDate(d.data.date)}{r.tbl === "quotes" && quoteTypeOf(d.data) === "delivery" ? "" : <> · <span className="mono">{formatMoney(totalsOf(d).gross, currencyOf(d))}</span></>}</span>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </div>
+              )}
               <div className="card aside-actions">
                 <h3>{share.reminder ? "Relancer le client" : "Envoyer au client"}</h3>
                 {nextReminder && <p className="remind-step"><span className="remind-tag">{nextReminder.label}</span> {TONE_LABELS[nextReminder.tone]} prévue aujourd'hui (Réglages, Documents).</p>}
@@ -842,6 +883,19 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
           )}
         </div>
 
+        <div className="doc-fields doc-fields-refs">
+          <label className="wide">Objet
+            <input value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={200} placeholder="Ex. Maintenance du site, 2ᵉ trimestre" />
+          </label>
+          <label>Référence de commande
+            <input value={clientRef} onChange={(e) => setClientRef(e.target.value)} maxLength={300} placeholder="Bon de commande, ordre d'achat ou lettre de commande reçu" />
+          </label>
+          {kind !== "credit_notes" && !isDelivery && (
+            <label>Conditions de règlement
+              <input value={paymentTerms} onChange={(e) => setPaymentTerms(e.target.value)} maxLength={200} placeholder="Ex. 50 % à la commande, solde à la livraison" />
+            </label>
+          )}
+        </div>
         {kind !== "credit_notes" && !isDelivery && (
           <div className="doc-fields doc-fields-tax">
             <label>
@@ -930,7 +984,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
         <div className="doc-bottom">
           <label className="notes">
             Note imprimée sur le document
-            <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Conditions, références de commande, coordonnées bancaires…" />
+            <textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Précisions imprimées en bas du document" />
           </label>
           {!isDelivery && totalsList}
         </div>

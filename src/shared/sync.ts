@@ -87,6 +87,9 @@ export const NUMBERED_DOCS = {
   quotes: { numberedStatus: "sent", series: "DV", afterNumbering: ["status", "invoice_id", "sent_at", "decided_at", "project_id"] },
 } as const;
 
+/** Références qu'une nouvelle reprise d'historique peut ajouter à un document déjà repris (jamais remplacer). */
+export const IMPORT_COMPLEMENT_FIELDS = ["client_ref", "payment_terms", "import_info", "seller_name"] as const;
+
 export type DocTable = keyof typeof NUMBERED_DOCS;
 
 export function isDocTable(tbl: string): tbl is DocTable {
@@ -121,7 +124,10 @@ export function checkChange(existing: SyncRecord | null, change: Change): string
     const rule = NUMBERED_DOCS[change.tbl];
     const allowed = new Set<string>(rule.afterNumbering);
     if (isNumbered(existing?.data)) {
-      const forbidden = Object.keys(change.patch).filter((f) => !allowed.has(f));
+      // Document repris : une nouvelle reprise peut compléter ses références restées vides, jamais les changer.
+      const complement = (f: string) => Boolean(existing?.data.imported) && (IMPORT_COMPLEMENT_FIELDS as readonly string[]).includes(f)
+        && (existing?.data[f] === undefined || existing?.data[f] === "") && typeof change.patch[f] === "string" && (change.patch[f] as string).length <= 4000;
+      const forbidden = Object.keys(change.patch).filter((f) => !allowed.has(f) && !complement(f));
       if (forbidden.length > 0) {
         const fix = change.tbl === "invoices" ? " : passer par un avoir" : "";
         return `document numéroté non modifiable (${forbidden.join(", ")})${fix}`;
@@ -182,6 +188,10 @@ export function checkPermission(actor: Actor, existing: SyncRecord | null, chang
   if (isDocTable(change.tbl) && isHistoryImport(change.patch) && !["admin", "director"].includes(actor.role)) {
     return "reprise d'historique réservée à la direction";
   }
+  if (isDocTable(change.tbl) && isNumbered(existing?.data) && Object.keys(change.patch).some((k) => (IMPORT_COMPLEMENT_FIELDS as readonly string[]).includes(k))
+    && !["admin", "director"].includes(actor.role)) {
+    return "reprise d'historique réservée à la direction";
+  }
   if (change.tbl === "journal_entries" && !["admin", "accountant"].includes(actor.role)) {
     return "écritures diverses réservées au comptable et à l'administrateur";
   }
@@ -204,7 +214,7 @@ export function checkPermission(actor: Actor, existing: SyncRecord | null, chang
   }
 
   if (closedUntil && DATED_TABLES.has(change.tbl)) {
-    const onlyTracking = Object.keys(change.patch).every((k) => k === "sent_at");
+    const onlyTracking = Object.keys(change.patch).every((k) => k === "sent_at" || (IMPORT_COMPLEMENT_FIELDS as readonly string[]).includes(k));
     const before = typeof existing?.data.date === "string" ? existing.data.date : "";
     const after = typeof change.patch.date === "string" ? change.patch.date : before;
     if (!onlyTracking && ((before && before <= closedUntil) || (after && after <= closedUntil))) {

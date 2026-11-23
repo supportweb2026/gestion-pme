@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  applyGlobalDiscount, baseByRate, deductionLines, depositLines, docArrete, docTitle, percentForAmount, quoteTypeOf, sectionSubtotals,
+  applyGlobalDiscount, baseByRate, deductionLines, depositLines, docArrete, docRefs, docSearchText, docTitle, percentForAmount, quoteTypeOf, relatedDocs, sectionSubtotals,
 } from "../src/shared/documents.ts";
 import { generateEntries, isBalanced } from "../src/shared/accounting.ts";
 import { checkChange, type Change } from "../src/shared/sync.ts";
@@ -77,4 +77,46 @@ test("synchronisation : séries admises pour les documents d'avant-vente", () =>
   const send = (number: string): Change => ({ id: "x", tbl: "quotes", row: "quote-1", patch: { status: "sent", number }, hlc: encodeHlc(1, 0, "A"), device: "A" });
   for (const n of ["PF-2026-00001", "BC-2026-00001", "BL-2026-00001", "DV-2026-00001"]) assert.equal(checkChange(null, send(n)), null, n);
   assert.notEqual(checkChange(null, send("FA-2026-00001")), null);
+});
+
+test("Références : un document saisi dans Gestia garde chaque référence dans son champ", () => {
+  const r = docRefs({ subject: "Maintenance", client_ref: "BC 4521", payment_terms: "30 jours", notes: "Merci." });
+  assert.deepEqual(r, { subject: "Maintenance", clientRef: "BC 4521", paymentTerms: "30 jours", notes: "Merci." });
+  assert.match(docSearchText({ number: "FA-2026-00001", subject: "Maintenance", client_ref: "BC 4521" }), /FA-2026-00001 Maintenance BC 4521/);
+});
+
+test("Références : un document repris avant la version 2 est relu depuis sa note, sans être modifié", () => {
+  const old = {
+    imported: "vosfactures", subject: "Campagne médias",
+    notes: "Objet : Campagne médias\nORDRE D'ACHAT N°2035609\nFL : 1436\nRèglement : 50% à la commande",
+  };
+  assert.deepEqual(docRefs(old), { subject: "Campagne médias", clientRef: "ORDRE D'ACHAT N°2035609\nFL : 1436", paymentTerms: "50% à la commande", notes: "" });
+  // Complété par une nouvelle reprise : la référence complétée l'emporte, les informations imprimées rejoignent la note.
+  const done = docRefs({ ...old, client_ref: "ORDRE D'ACHAT N°2035609 FL : 1436", import_info: "Acompte 50 %" });
+  assert.equal(done.clientRef, "ORDRE D'ACHAT N°2035609 FL : 1436");
+  assert.equal(done.notes, "Acompte 50 %");
+  // Avoir repris : le motif reste dans la note.
+  assert.equal(docRefs({ imported: "vosfactures", subject: "", notes: "Motif : erreur de prix" }).notes, "Motif : erreur de prix");
+  // Version 2 : rien à relire.
+  assert.deepEqual(docRefs({ imported: "vosfactures", import_v: 2, subject: "S", client_ref: "BC 1", payment_terms: "", notes: "", import_info: "Info" }),
+    { subject: "S", clientRef: "BC 1", paymentTerms: "", notes: "Info" });
+});
+
+test("Documents liés : la chaîne se lit dans les deux sens", () => {
+  const quotes = [
+    { id: "dv1", data: { number: "DV-1", invoice_id: "fa2" } },
+    { id: "bl1", data: { number: "BL-1", doc_type: "delivery", source_id: "dv1" } },
+  ];
+  const invoices = [
+    { id: "fa1", data: { number: "FA-1", quote_id: "dv1", deposit: true } },
+    { id: "fa2", data: { number: "FA-2" } },
+  ];
+  const credit_notes = [{ id: "av1", data: { number: "AV-1", invoice_id: "fa2" } }];
+  const all = { quotes, invoices, credit_notes };
+  assert.deepEqual(relatedDocs("quotes", quotes[0], all).map((r) => `${r.relation} ${r.id}`), ["A donné bl1", "Acompte fa1", "Facturé par fa2"]);
+  // La facture reprise ne porte pas le lien : il est retrouvé depuis le devis.
+  assert.deepEqual(relatedDocs("invoices", invoices[1], all).map((r) => `${r.relation} ${r.id}`), ["Issue de dv1", "Corrigée par av1"]);
+  assert.deepEqual(relatedDocs("invoices", invoices[0], all).map((r) => r.id), ["dv1"]);
+  assert.deepEqual(relatedDocs("credit_notes", credit_notes[0], all).map((r) => r.id), ["fa2"]);
+  assert.deepEqual(relatedDocs("quotes", quotes[1], all).map((r) => `${r.relation} ${r.id}`), ["Établi d'après dv1"]);
 });
