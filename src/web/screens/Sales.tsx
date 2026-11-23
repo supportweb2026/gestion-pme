@@ -11,7 +11,7 @@ import { formatMoney } from "../../shared/currency.ts";
 import { inPeriod, PERIOD_LABELS, periodRange, type PeriodPreset } from "../../shared/periods.ts";
 import { AGE_BUCKETS, ageBucket, daysLate, TONE_LABELS, type AgeBucket } from "../../shared/reminders.ts";
 import { currencyOf, invoiceSituations, rateOf } from "../ledger.ts";
-import { invoiceReminder, SalesFlow } from "./Documents.tsx";
+import { invoiceReminder, presetList, SalesFlow } from "./Documents.tsx";
 import { usePaged } from "../Pager.tsx";
 
 const plural = (n: number, one: string, many: string) => `${n.toLocaleString("fr-FR")} ${n > 1 ? many : one}`;
@@ -68,7 +68,10 @@ export function Payments() {
           <h2>Encaissements</h2>
           <p className="muted small">{payments.length === 0 ? "Tous les paiements reçus de vos clients" : plural(payments.length, "encaissement", "encaissements")}</p>
         </div>
-        <div className="quick"><button onClick={() => go("reminders")}>Voir les relances</button></div>
+        <div className="quick">
+          <button onClick={() => go("reminders")}>Voir les relances</button>
+          <button className="primary" onClick={() => { presetList("invoices", { filter: "open" }); go("invoices"); }} title="Choisissez la facture payée : l'encaissement s'enregistre sur sa page">Enregistrer un encaissement</button>
+        </div>
       </div>
       <SalesFlow current="payments" />
       {payments.length === 0 ? (
@@ -217,7 +220,7 @@ export function Reminders() {
           <div className="kpis">
             <div className={`kpi${todo.length ? " danger" : ""}`}>
               <div className="kpi-label">À relancer aujourd'hui</div>
-              <div className="kpi-value" data-testid="reminders-today">{todo.length}</div>
+              <div className="kpi-value" data-testid="reminders-today">{plural(todo.length, "facture", "factures")}</div>
               <div className="kpi-sub">{todo.length ? formatXaf(sum(todo)) : "Aucune relance prévue aujourd'hui"}</div>
             </div>
             <div className={`kpi${lateRows.length ? " danger" : ""}`}>

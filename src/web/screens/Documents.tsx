@@ -67,14 +67,16 @@ interface ViewConfig {
   types?: QuoteType[];
   /** Bons sans prix : ni montant ni date de validité dans la liste. */
   slips?: boolean;
+  /** Documents sans date de validité ni d'échéance. */
+  noDue?: boolean;
   match?: (d: SyncRecord) => boolean;
   /** Vue sans bouton « Nouveau » : où se crée ce document. */
   origin?: { text: string; label: string; to: DocView };
 }
 export const VIEWS: Record<DocView, ViewConfig> = {
   quotes: { kind: "quotes", title: "Devis", intro: "Devis et factures pro forma", noun: ["devis", "devis"], types: ["quote", "proforma"] },
-  orders: { kind: "quotes", title: "Commandes", intro: "Bons de commande et bons d'intervention confirmés par vos clients", noun: ["commande", "commandes"], feminine: true, types: ["order", "intervention"] },
-  deliveries: { kind: "quotes", title: "Livraisons et prestations", intro: "Bons de livraison et de prestation, signés par le client à la réception", noun: ["bon", "bons"], types: ["delivery", "service"], slips: true },
+  orders: { kind: "quotes", title: "Commandes", intro: "Bons de commande et bons d'intervention confirmés par vos clients", noun: ["commande", "commandes"], feminine: true, types: ["order", "intervention"], noDue: true },
+  deliveries: { kind: "quotes", title: "Livraisons et prestations", intro: "Bons de livraison et de prestation, signés par le client à la réception", noun: ["bon", "bons"], types: ["delivery", "service"], slips: true, noDue: true },
   invoices: { kind: "invoices", title: "Factures", intro: "Factures émises et suivi des encaissements", noun: ["facture", "factures"], feminine: true },
   deposits: {
     kind: "invoices", title: "Acomptes", intro: "Factures d'acompte demandées avant la facture de solde", noun: ["facture d'acompte", "factures d'acompte"], feminine: true,
@@ -86,7 +88,10 @@ export const VIEWS: Record<DocView, ViewConfig> = {
     match: (d) => Boolean(recurrenceOf(d.data)) || Boolean(d.data.recurrence_of),
     origin: { text: "Pour répéter une facture, ouvrez une facture validée puis activez la répétition dans « Facturation récurrente ». Gestia prépare la suivante à chaque échéance.", label: "Voir les factures", to: "invoices" },
   },
-  credit_notes: { kind: "credit_notes", title: "Avoirs", intro: "Corrections et annulations de factures", noun: ["avoir", "avoirs"] },
+  credit_notes: {
+    kind: "credit_notes", title: "Avoirs", intro: "Corrections et annulations de factures", noun: ["avoir", "avoirs"],
+    origin: { text: "Un avoir corrige ou annule une facture validée : ouvrez la facture, puis « Créer un avoir ». Il est déduit de ce que le client doit.", label: "Voir les factures", to: "invoices" },
+  },
 };
 /** Parcours d'une vente, rappelé en tête des écrans : on voit où l'on est et ce qui vient ensuite. */
 const FLOW: { tab: Tab; label: string; hint: string }[] = [
@@ -231,7 +236,7 @@ export function Documents({ view, open, setOpen }: { view: DocView; open: string
   const filters = ([["all", "Tous"], ["draft", "Brouillons"], ["open", kind === "quotes" ? "En attente" : "À encaisser"], ["overdue", kind === "quotes" ? "Expirés" : "En retard"], ["remind", "À relancer"], ["recurring", "Récurrentes"]] as [Filter, string][])
     .filter(([f]) => (kind !== "credit_notes" || f === "all" || f === "draft") && ((f !== "remind" && f !== "recurring") || kind === "invoices"))
     // « Récurrentes » n'apparaît qu'une fois une série créée.
-    .filter(([f]) => f !== "recurring" && !(v.slips && f === "overdue"));
+    .filter(([f]) => f !== "recurring" && !(v.noDue && f === "overdue"));
   // Filtre devenu sans objet (dernière série arrêtée) : retour à « Tous ».
   const shownFilter: Filter = filters.some(([f]) => f === list.filter) ? list.filter : "all";
 
@@ -272,7 +277,7 @@ export function Documents({ view, open, setOpen }: { view: DocView; open: string
   const typesPresent = kind === "quotes" ? (Object.keys(QUOTE_TYPES) as QuoteType[]).filter((t) => index.some((r) => r.type === t)) : [];
   const narrowed = Boolean(q || list.period !== "all" || list.client || list.type || shownFilter !== "all");
   const noClient = clients.length === 0;
-  const withDue = kind !== "credit_notes" && !v.slips;
+  const withDue = kind !== "credit_notes" && !v.noDue;
   const plural = (n: number) => `${n.toLocaleString("fr-FR")} document${n > 1 ? "s" : ""}`;
 
   const sortBy = (key: SortKey) => set(list.sort === key ? { dir: list.dir === 1 ? -1 : 1 } : { sort: key, dir: key === "number" || key === "client" || key === "due" ? 1 : -1 });
@@ -308,6 +313,7 @@ export function Documents({ view, open, setOpen }: { view: DocView; open: string
         )}
       </div>
       <SalesFlow current={view as Tab} />
+      {v.origin && docs.length > 0 && <p className="view-hint">{v.origin.text}</p>}
       {importing && <ImportHistory />}
       <div className="toolbar">
         <label className="sr-only" htmlFor={`search-${kind}`}>Rechercher</label>
@@ -478,7 +484,7 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
   const [message, setMessage] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [docType, setDocType] = useState<QuoteType>(() => {
+  const [docType] = useState<QuoteType>(() => {
     const preset = NEW_DOC_TYPE;
     NEW_DOC_TYPE = null;
     return record ? quoteTypeOf(record.data) : preset ?? "quote";
@@ -793,12 +799,6 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
         {numbered && <button onClick={() => setPrinting(true)}>Aperçu / imprimer</button>}
         {record && kind !== "credit_notes" && <button onClick={duplicate}>Dupliquer</button>}
         {numbered && <button onClick={() => share.pdf("download")} disabled={share.busy}>Télécharger le PDF</button>}
-        {numbered && followUps(kind, record?.data).length > 0 && (
-          <select className="follow-up" aria-label="Créer un bon à partir de ce document" value="" onChange={(e) => e.target.value && createDelivery(e.target.value as QuoteType)}>
-            <option value="">Créer un bon…</option>
-            {followUps(kind, record?.data).map((t) => <option key={t} value={t}>{QUOTE_TYPES[t].label}</option>)}
-          </select>
-        )}
       </div>
     </div>
   );
@@ -947,7 +947,7 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                   <>
                     {!isDelivery && <><div className="aside-label">{kind === "quotes" ? `Montant (TTC)` : "Montant de l'avoir (TTC)"}</div>
                     <div className="aside-amount mono">{fm(totals.gross)}</div></>}
-                    {isDelivery && <><div className="aside-label">{slip?.count}</div><div className="aside-amount mono">{billable().reduce((n, l) => n + l.qty, 0)}</div></>}
+                    {isDelivery && <><div className="aside-label">{slip?.count}</div><div className="aside-amount mono">{billable().length}</div></>}
                     {kind === "quotes" && showDue && dueDate && <p className="aside-sub">Valable jusqu'au {formatDate(dueDate)}</p>}
                     {kind === "quotes" && deposits.length > 0 && (
                       <ul className="deposit-list" aria-label="Acomptes facturés">
@@ -1002,6 +1002,15 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                   </ul>
                 </div>
               )}
+              {followUps(kind, record?.data).length > 0 && (
+                <div className="card aside-actions next-steps" data-testid="next-steps">
+                  <h3>Étape suivante</h3>
+                  {followUps(kind, record?.data).map((t) => (
+                    <button key={t} onClick={() => createDelivery(t)}>Créer le {QUOTE_TYPES[t].label.toLowerCase()}</button>
+                  ))}
+                  <p className="hint">Le nouveau document reprend les lignes de celui-ci et lui reste lié.</p>
+                </div>
+              )}
               <div className="card aside-actions">
                 <h3>{share.reminder ? "Relancer le client" : "Envoyer au client"}</h3>
                 {nextReminder && <p className="remind-step"><span className="remind-tag">{nextReminder.label}</span> {TONE_LABELS[nextReminder.tone]} prévue aujourd'hui (Réglages, Documents).</p>}
@@ -1038,14 +1047,6 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
       {links}
       <div className="card editor-card">
         <div className="doc-fields">
-          {kind === "quotes" && (
-            <label>
-              Type de document
-              <select value={docType} onChange={(e) => setDocType(e.target.value as QuoteType)}>
-                {(Object.keys(QUOTE_TYPES) as QuoteType[]).map((k) => <option key={k} value={k}>{QUOTE_TYPES[k].label}</option>)}
-              </select>
-            </label>
-          )}
           <label>
             Client
             <select value={clientId} onChange={(e) => setClientId(e.target.value)} disabled={kind === "credit_notes"}>

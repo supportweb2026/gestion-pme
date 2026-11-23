@@ -2311,3 +2311,6 @@ select.follow-up { width: auto; min-height: 40px; height: 40px; padding: 0 34px 
   .sidebar .side-brand { padding-bottom: 8px; gap: 8px; }
   .sidebar .side-foot { padding-top: 8px; }
 }
+
+/* Mode d'emploi d'un écran dont les documents se créent ailleurs (acomptes, avoirs, récurrentes). */
+.view-hint { margin: 0 0 14px; padding: 10px 14px; border-radius: var(--radius); background: #F6F7F9; color: var(--ink-2); font-size: 0.8125rem; }

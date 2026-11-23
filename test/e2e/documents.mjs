@@ -116,7 +116,7 @@ try {
   await shot("solde.png");
 
   step("Bon de livraison depuis la facture : quantités seules, signatures");
-  await page.getByLabel("Créer un bon à partir de ce document").selectOption({ label: "Bon de livraison" });
+  await page.getByTestId("next-steps").getByRole("button", { name: "Créer le bon de livraison" }).click();
   await heading("Bon de livraison (brouillon)");
   const blLabels = await page.getByLabel("Désignation").evaluateAll((els) => els.map((e) => e.value));
   assert.ok(!blLabels.some((l) => l.includes("acompte")), `pas d'acompte sur le bon de livraison : ${blLabels.join(" | ")}`);
@@ -131,8 +131,7 @@ try {
 
   step("Facture pro forma (série PF) convertie en facture");
   await nav("Devis");
-  await page.getByRole("button", { name: "Nouveau devis" }).first().click();
-  await page.getByLabel("Type de document").selectOption("proforma");
+  await page.getByRole("button", { name: "Nouvelle pro forma" }).click();
   await line(0, "Audit réseau", 1, 500_000);
   await page.getByRole("button", { name: "Finaliser la pro forma" }).click();
   await heading(`Facture pro forma PF-${YEAR}-00001`);
@@ -158,13 +157,13 @@ try {
   await line(0, "Formation des équipes", 2, 150_000);
   await page.getByRole("button", { name: "Finaliser le devis" }).click();
   await heading(`Devis DV-${YEAR}-00002`);
-  await page.getByLabel("Créer un bon à partir de ce document").selectOption({ label: "Bon de commande" });
+  await page.getByTestId("next-steps").getByRole("button", { name: "Créer le bon de commande" }).click();
   await heading("Bon de commande (brouillon)");
   assert.equal(await ttc(), "354 000 FCFA", "le bon de commande reprend les prix du devis");
   await page.getByRole("button", { name: "Finaliser le bon de commande" }).click();
   await heading(`Bon de commande BC-${YEAR}-00001`);
   await page.getByTestId("related-docs").getByText(`DV-${YEAR}-00002`).waitFor();
-  await page.getByLabel("Créer un bon à partir de ce document").selectOption({ label: "Bon de prestation" });
+  await page.getByTestId("next-steps").getByRole("button", { name: "Créer le bon de prestation" }).click();
   await heading("Bon de prestation (brouillon)");
   await page.getByRole("button", { name: "Finaliser le bon de prestation" }).click();
   await heading(`Bon de prestation BP-${YEAR}-00001`);
