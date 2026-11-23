@@ -46,7 +46,7 @@ export function Dashboard() {
       }
     }
     const openQuotes = quotes.filter((q) => quoteStatus(q) === "sent");
-    const drafts = invoices.filter((i) => i.data.status !== "validated").length;
+    const drafts = invoices.filter((i) => i.data.status !== "validated" && i.data.status !== "cancelled").length;
     return {
       due, overdue, drafts,
       lateCount: late.length,

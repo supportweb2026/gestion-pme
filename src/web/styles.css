@@ -498,6 +498,7 @@ tr.clickable:has(.row-link:focus-visible) td:first-child { box-shadow: inset 3px
 .locked-note svg { width: 16px; height: 16px; flex: none; }
 .line-label { font-weight: 600; }
 .line-sub { display: block; color: var(--ink-3); font-size: 0.75rem; font-weight: 500; }
+.line-detail { white-space: pre-line; margin-top: 2px; }
 .pay-row-meta { color: var(--ink-3); font-size: 0.8125rem; }
 .aside-form { display: flex; flex-direction: column; gap: 12px; margin-top: 16px; padding-top: 16px; border-top: 1px solid var(--line); }
 .aside-form h3 { margin: 0; font-size: 0.9375rem; }
@@ -616,6 +617,7 @@ tr.clickable:has(.row-link:focus-visible) td:first-child { box-shadow: inset 3px
 .ps-lines .r, .ps-totals .r { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .ps-bottom { display: flex; gap: 10mm; justify-content: space-between; align-items: flex-start; }
 .ps-words { flex: 1; min-width: 0; font-size: 9.5pt; }
+.ps-line-detail { white-space: pre-line; font-size: 0.85em; color: #5b605a; margin-top: 1mm; }
 .ps-notes { white-space: pre-line; margin-top: 4mm; color: #3c403a; }
 .ps-totals { border-collapse: collapse; width: 88mm; flex: none; }
 .ps-totals td { padding: 1.5mm 3mm; border-bottom: 1px solid #e6e4dc; font-size: 10pt; }

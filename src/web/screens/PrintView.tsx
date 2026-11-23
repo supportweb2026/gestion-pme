@@ -104,10 +104,10 @@ export function PrintView({ kind, record, client, situation, onClose }: {
             {lines.map((l, i) => isSection(l) ? (
               <tr key={i} className="ps-section"><td colSpan={delivery ? 2 : hasDiscount ? 6 : 5}><strong>{l.label}</strong></td></tr>
             ) : delivery ? (
-              <tr key={i}><td>{l.label}</td><td className="r">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td></tr>
+              <tr key={i}><td>{l.label}{l.description && <div className="ps-line-detail">{l.description}</div>}</td><td className="r">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td></tr>
             ) : (
               <tr key={i}>
-                <td>{l.label}</td>
+                <td>{l.label}{l.description && <div className="ps-line-detail">{l.description}</div>}</td>
                 <td className="r">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td>
                 <td className="r">{formatXaf(l.unitPrice)}</td>
                 {hasDiscount && <td className="r">{lineDiscount(l) ? `${lineDiscount(l)} %` : ""}</td>}

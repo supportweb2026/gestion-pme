@@ -20,6 +20,14 @@ export interface InvoiceLine {
   deposit?: boolean;
   /** Déduction, sur la facture de solde, de la facture d'acompte indiquée (montant négatif). */
   depositInvoiceId?: string;
+  /** Détail imprimé sous la désignation (documents repris d'un autre logiciel). */
+  description?: string;
+  /**
+   * Montants figés d'un document repris d'un autre logiciel : HT et TVA de la ligne tels qu'ils
+   * figuraient sur le document d'origine. Présents, ils remplacent le calcul quantité × prix.
+   */
+  net?: number;
+  vat?: number;
 }
 
 export interface InvoiceTotals {
@@ -43,12 +51,15 @@ export interface DocTaxes {
   /** La CSS s'applique aussi aux lignes à 0 % de TVA. */
   cssOnZero?: boolean;
   withholdingRate?: number;
+  /** Retenue figée (document repris d'un autre logiciel) : remplace le calcul par le taux. */
+  withholdingAmount?: number;
 }
 
 /** Taxes figées sur un document, lues depuis ses champs css_rate, css_on_zero, withholding_rate. */
 export function docTaxes(data: Record<string, unknown> | undefined): DocTaxes {
   const n = (v: unknown) => Math.min(100, Math.max(0, Number(v) || 0));
-  return { cssRate: n(data?.css_rate), cssOnZero: Boolean(data?.css_on_zero), withholdingRate: n(data?.withholding_rate) };
+  const frozen = typeof data?.withholding_amount === "number" && Number.isFinite(data.withholding_amount) ? { withholdingAmount: data.withholding_amount } : {};
+  return { cssRate: n(data?.css_rate), cssOnZero: Boolean(data?.css_on_zero), withholdingRate: n(data?.withholding_rate), ...frozen };
 }
 
 export const DEFAULT_VAT_RATE = 18;
@@ -64,12 +75,19 @@ export const lineDiscount = (l: InvoiceLine) => Math.min(100, Math.max(0, Number
 
 /** Montant HT d'une ligne, remise déduite, arrondi à la précision de la devise. */
 export const lineNet = (l: InvoiceLine, decimals = 0) =>
-  roundAmount((l.qty * l.unitPrice * (100 - lineDiscount(l))) / 100, decimals);
+  typeof l.net === "number" ? l.net : roundAmount((l.qty * l.unitPrice * (100 - lineDiscount(l))) / 100, decimals);
+
+/** Ligne sans montants figés : elle se recalcule à nouveau d'après quantité, prix et taux. */
+export function unfreezeLine(l: InvoiceLine): InvoiceLine {
+  const { net: _net, vat: _vat, ...rest } = l;
+  return rest;
+}
 
 /** Montant de la remise d'une ligne (avant TVA). */
 export const lineDiscountAmount = (l: InvoiceLine, decimals = 0) =>
-  roundAmount(l.qty * l.unitPrice, decimals) - lineNet(l, decimals);
-export const lineVat = (l: InvoiceLine, decimals = 0) => roundAmount((lineNet(l, decimals) * l.vatRate) / 100, decimals);
+  typeof l.net === "number" ? 0 : roundAmount(l.qty * l.unitPrice, decimals) - lineNet(l, decimals);
+export const lineVat = (l: InvoiceLine, decimals = 0) =>
+  typeof l.vat === "number" ? l.vat : roundAmount((lineNet(l, decimals) * l.vatRate) / 100, decimals);
 
 export function computeTotals(lines: InvoiceLine[], decimals = 0, taxes: DocTaxes = {}): InvoiceTotals {
   let net = 0;
@@ -84,7 +102,9 @@ export function computeTotals(lines: InvoiceLine[], decimals = 0, taxes: DocTaxe
     if (taxes.cssOnZero || l.vatRate > 0) cssBase += n;
   }
   const css = taxes.cssRate ? roundAmount((cssBase * taxes.cssRate) / 100, decimals) : 0;
-  const withholding = taxes.withholdingRate ? roundAmount((net * taxes.withholdingRate) / 100, decimals) : 0;
+  const withholding = typeof taxes.withholdingAmount === "number"
+    ? taxes.withholdingAmount
+    : taxes.withholdingRate ? roundAmount((net * taxes.withholdingRate) / 100, decimals) : 0;
   const gross = roundAmount(net + vat + css, decimals);
   return {
     discount: roundAmount(discount, decimals),

@@ -287,6 +287,34 @@ export class LocalDb {
     return change;
   }
 
+  /**
+   * Écrit beaucoup de lignes d'un coup (reprise d'historique) : une transaction par paquet,
+   * un seul rafraîchissement des écrans à la fin. `onProgress` reçoit le nombre de lignes écrites.
+   */
+  async writeMany(items: { tbl: SyncTable; id: string; patch: Fields }[], onProgress?: (done: number) => void): Promise<void> {
+    const SIZE = 200;
+    for (let start = 0; start < items.length; start += SIZE) {
+      const chunk = items.slice(start, start + SIZE);
+      await exclusive(async () => {
+        const packed: { record: StoredRecord; queued: StoredChange; hlc: string }[] = [];
+        for (const it of chunk) {
+          const c: Change = { id: crypto.randomUUID(), tbl: it.tbl, row: it.id, patch: it.patch, hlc: this.clock.tick(), device: this.deviceId };
+          const existing = await this.get(it.tbl, it.id);
+          packed.push({ record: await this.packRecord(applyChange(existing, c).record), queued: await this.packChange(c), hlc: c.hlc });
+        }
+        const tx = this.db.transaction(["records", "outbox", "meta"], "readwrite");
+        for (const p of packed) {
+          tx.objectStore("records").put(p.record);
+          tx.objectStore("outbox").put(p.queued);
+        }
+        if (packed.length) tx.objectStore("meta").put(packed[packed.length - 1].hlc, "hlc");
+        await done(tx);
+      });
+      onProgress?.(Math.min(items.length, start + SIZE));
+    }
+    this.notify();
+  }
+
   async remove(tbl: SyncTable, id: string): Promise<void> {
     await this.write(tbl, id, { [DELETED]: true });
   }

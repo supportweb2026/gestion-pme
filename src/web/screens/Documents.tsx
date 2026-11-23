@@ -6,7 +6,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { formatDate, normalize, text, today, useApp, useSettings, useTable } from "../context.ts";
 import {
-  addDays, computeTotals, DEFAULT_PAYMENT_DAYS, DEFAULT_VAT_RATE, lineNet, PAYMENT_METHODS, type InvoiceLine,
+  addDays, computeTotals, DEFAULT_PAYMENT_DAYS, DEFAULT_VAT_RATE, lineNet, PAYMENT_METHODS, unfreezeLine, type InvoiceLine,
 } from "../../shared/invoice.ts";
 import { CURRENCIES, decimalsOf, formatMoney, rateFor } from "../../shared/currency.ts";
 import { isNumbered, type DocTable, type SyncRecord } from "../../shared/sync.ts";
@@ -204,7 +204,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
                       const r = remindOf(d);
                       return r ? <span className="remind-tag" title={TONE_LABELS[r.tone]}>À relancer · {r.label}</span> : null;
                     })()}</td>
-                    {kind === "invoices" && <td className="c-due right mono">{st.key === "draft" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
+                    {kind === "invoices" && <td className="c-due right mono">{st.key === "draft" || st.key === "cancelled" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
                     <td className="c-total right mono">{kind === "quotes" && quoteTypeOf(d.data) === "delivery" ? "—" : formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
                   </tr>
                 );
@@ -227,6 +227,8 @@ function subtitle(kind: DocTable, n: number): string {
 /** Statut affiché d'un document, avec sa couleur : gris brouillon, bleu en cours, ambre partiel, vert réglé, rouge en retard. */
 export function docStatus(kind: DocTable, d: SyncRecord, situations: Map<string, Situation>): { label: string; tone: string; key: string } {
   if (kind === "invoices") {
+    // Facture annulée dans le logiciel d'origine (reprise d'historique) : gardée pour mémoire, hors chiffres.
+    if (d.data.status === "cancelled") return { label: "Annulée", tone: "", key: "cancelled" };
     const s = situations.get(d.id)?.status ?? "draft";
     const tone = s === "paid" ? "ok" : s === "overdue" ? "danger" : s === "partial" ? "warn" : s === "unpaid" ? "info" : "";
     return { label: SITUATION_LABELS[s], tone, key: s };
@@ -241,6 +243,7 @@ export function docStatus(kind: DocTable, d: SyncRecord, situations: Map<string,
     const tone = s === "accepted" || s === "invoiced" ? "ok" : s === "expired" ? "danger" : s === "sent" ? "info" : "";
     return { label: QUOTE_LABELS[s] ?? s, tone, key: s };
   }
+  if (d.data.status === "cancelled") return { label: "Annulé", tone: "", key: "cancelled" };
   const v = d.data.status === "validated";
   return { label: v ? "Validé" : "Brouillon", tone: v ? "ok" : "", key: v ? "validated" : "draft" };
 }
@@ -303,7 +306,9 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     ? { css_rate: Number(record?.data.css_rate) || 0, css_on_zero: Boolean(record?.data.css_on_zero) }
     : isDelivery ? { css_rate: 0, css_on_zero: false } : newDocTaxFields(fiscal);
   const withholdingRate = isDelivery ? 0 : withholding.rate;
-  const totals = computeTotals(lines, decimals, { cssRate: taxFields.css_rate, cssOnZero: taxFields.css_on_zero, withholdingRate });
+  // Retenue figée d'un document repris d'un autre logiciel.
+  const frozenWithholding = numbered && typeof record?.data.withholding_amount === "number" ? { withholdingAmount: record.data.withholding_amount } : {};
+  const totals = computeTotals(lines, decimals, { cssRate: taxFields.css_rate, cssOnZero: taxFields.css_on_zero, withholdingRate, ...frozenWithholding });
   const taxCopy = (r: SyncRecord | null | undefined) => ({
     css_rate: Number(r?.data.css_rate) || 0, css_on_zero: Boolean(r?.data.css_on_zero),
     withholding_rate: Number(r?.data.withholding_rate) || 0, withholding_label: text(r?.data.withholding_label),
@@ -314,7 +319,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     if (!record) setDueDate(addDays(date, kind === "quotes" ? 30 : paymentDays));
   }, [date]);
 
-  const update = (i: number, patch: Partial<InvoiceLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...l, ...patch } : l)));
+  // Une ligne modifiée perd ses montants figés (document repris) : elle se recalcule.
+  const update = (i: number, patch: Partial<InvoiceLine>) => setLines((ls) => ls.map((l, j) => (j === i ? { ...unfreezeLine(l), ...patch } : l)));
   const pickArticle = (i: number, label: string) => {
     const a = articles.find((x) => text(x.data.label) === label);
     if (!a) return update(i, { label, articleId: undefined });
@@ -510,7 +516,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       status: "draft",
       client_id: clientId,
       date: today(),
-      lines: cleanLines(),
+      lines: cleanLines().map(unfreezeLine),
       notes: notes.trim(),
       currency,
       rate: currency === "XAF" ? 1 : rate,
@@ -585,6 +591,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
           {originPhrase(text(record.data.quote_number))} <button className="link" onClick={() => go("quotes", text(record.data.quote_id))}>{text(record.data.quote_number)}</button>
         </p>
       ) : null}
+      {record?.data.imported ? <p className="muted small" data-testid="doc-imported">Document repris de VosFactures, tel qu'il a été émis.</p> : null}
       {kind === "invoices" && record?.data.recurrence_of ? (
         <p className="muted small recur-origin">
           {numbered ? "Facture récurrente, d'après" : "Préparée automatiquement d'après la facture récurrente"} <button className="link" onClick={() => go("invoices", text(record.data.recurrence_of))}>{text(record.data.recurrence_number)}</button>
@@ -665,6 +672,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                       <tr key={i}>
                         <td>
                           <span className="line-label">{l.label}</span>
+                          {l.description && <span className="line-sub line-detail">{l.description}</span>}
                           {!isDelivery && <span className="line-sub lines-mobile-meta mono">{l.qty} × {fm(l.unitPrice)}{l.discount ? ` · remise ${l.discount} %` : ""} · TVA {l.vatRate} %</span>}
                         </td>
                         <td className="num right mono">{l.qty}{l.unit ? ` ${l.unit}` : ""}</td>
