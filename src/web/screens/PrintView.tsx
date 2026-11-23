@@ -10,6 +10,7 @@ import { computeTotals, docTaxes, lineDiscount, lineNet, lineVat, type InvoiceLi
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../../shared/currency.ts";
 import type { DocTable, SyncRecord } from "../../shared/sync.ts";
 import type { Situation } from "../ledger.ts";
+import { signatureLine, signatureOf } from "../../shared/signature.ts";
 import { docArrete, docRefs, docTitle, isSection, isSlip, quoteTypeOf, sellerOf, SLIP_TEXTS } from "../../shared/documents.ts";
 import { fiscalMentions, pct } from "../../shared/taxes.ts";
 import { docColor, softOf, stampFor, termsFor, tooLight } from "../../shared/branding.ts";
@@ -33,6 +34,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
   const title = docTitle(kind, record.data);
   const delivery = kind === "quotes" && isSlip(record.data);
   const slip = SLIP_TEXTS[quoteTypeOf(record.data)];
+  const sig = kind === "quotes" ? signatureOf(record.data) : null;
   const refs = docRefs(record.data);
 
   // TVA ventilée par taux, comme l'exige une facture.
@@ -180,9 +182,10 @@ export function PrintView({ kind, record, client, situation, onClose }: {
         </div>}
 
         {delivery && (
-          <section className="ps-sign">
+          <section className={`ps-sign${sig ? " signed" : ""}`}>
             <div className="ps-label">{slip?.received}</div>
-            <div className="muted">Nom, date, signature et cachet</div>
+            {sig ? <><img src={sig.image} alt={`Signature de ${sig.name}`} /><div className="muted">{signatureLine(sig, formatDate)}</div></>
+              : <div className="muted">Nom, date, signature et cachet</div>}
           </section>
         )}
 
@@ -203,9 +206,10 @@ export function PrintView({ kind, record, client, situation, onClose }: {
               </section>
             ) : <span />}
             {kind === "quotes" && !delivery && (
-              <section className="ps-sign">
+              <section className={`ps-sign${sig ? " signed" : ""}`}>
                 <div className="ps-label">Bon pour accord</div>
-                <div className="muted">Date, signature et cachet du client</div>
+                {sig ? <><img src={sig.image} alt={`Signature de ${sig.name}`} /><div className="muted">{signatureLine(sig, formatDate)}</div></>
+                  : <div className="muted">Date, signature et cachet du client</div>}
               </section>
             )}
           </div>

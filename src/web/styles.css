@@ -2334,3 +2334,18 @@ select.follow-up { width: auto; min-height: 40px; height: 40px; padding: 0 34px 
 .contact-form label.check-inline { font-weight: 400; margin-bottom: 14px; }
 .contact-form .actions { display: flex; justify-content: flex-end; gap: 8px; }
 @media (max-width: 640px) { .contact-fields { grid-template-columns: 1fr; } .contact-actions { margin-left: 0; } }
+
+/* Signature du client : zone de tracé et rappel de la signature posée */
+.sign-pad { position: relative; display: flex; flex-direction: column; gap: 6px; }
+.sign-pad-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 0.8125rem; font-weight: 600; color: var(--ink-2); }
+.sign-pad canvas { width: 100%; aspect-ratio: 14 / 5; border: 1.5px dashed var(--line-strong, var(--line)); border-radius: var(--radius-lg); background: #fff; touch-action: none; cursor: crosshair; }
+.sign-pad-hint { position: absolute; left: 0; right: 0; bottom: 38%; margin: 0; text-align: center; color: var(--ink-3); font-size: 0.875rem; pointer-events: none; }
+.sign-recap { margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--subtle); display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
+.sign-recap strong { font-size: 1.0625rem; }
+.sign-agree { display: flex; gap: 10px; align-items: flex-start; font-size: 0.875rem; }
+.sign-agree input { margin-top: 3px; }
+.signed-card h3 { margin: 0 0 6px; font-size: 0.9375rem; }
+.signed-card img { display: block; max-width: 100%; height: 72px; object-fit: contain; object-position: left; background: #fff; border-radius: 8px; }
+.signed-card p { margin: 6px 0 0; font-size: 0.8125rem; color: var(--ink-2); }
+.signed-card .signed-via { color: var(--ink-3); font-size: 0.75rem; }
+.ps-sign.signed img { display: block; height: 58px; max-width: 100%; object-fit: contain; object-position: left; }

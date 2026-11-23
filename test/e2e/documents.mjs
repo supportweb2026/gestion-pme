@@ -218,6 +218,35 @@ try {
   assert.ok(lateRows >= 3, `les factures à encaisser sont listées (${lateRows})`);
   await shot("relances.png");
 
+  step("Signature du client sur l'écran : le devis est accepté, la signature est sur le PDF");
+  await nav("Devis");
+  await page.getByRole("button", { name: "Nouveau devis" }).first().click();
+  await line(0, "Maintenance annuelle", 1, 400_000);
+  await page.getByRole("button", { name: "Finaliser le devis" }).click();
+  await heading(`Devis DV-${YEAR}-00003`);
+  await page.getByRole("button", { name: "Faire signer sur cet écran" }).click();
+  const dialog = page.getByTestId("sign-dialog");
+  await dialog.getByText("472 000 FCFA TTC").waitFor();
+  await dialog.getByRole("button", { name: "Signer et accepter" }).click();
+  await dialog.getByText("Indiquez le nom de la personne qui signe.").waitFor();
+  await dialog.getByLabel("Nom du signataire").fill("Awa Ndong");
+  await dialog.getByRole("button", { name: "Signer et accepter" }).click();
+  await dialog.getByText("La signature manque").waitFor();
+  const box = await dialog.getByTestId("sign-canvas").boundingBox();
+  await page.mouse.move(box.x + 40, box.y + box.height / 2);
+  await page.mouse.down();
+  for (let i = 1; i <= 12; i++) await page.mouse.move(box.x + 40 + i * 18, box.y + box.height / 2 + (i % 2 ? -24 : 24));
+  await page.mouse.up();
+  await shot("signature.png");
+  await dialog.getByRole("button", { name: "Signer et accepter" }).click();
+  const signed = page.getByTestId("signed-card");
+  await signed.getByText(/Signé par Awa Ndong le/).waitFor();
+  await page.getByText("Accepté", { exact: true }).first().waitFor();
+  assert.equal(await page.getByRole("button", { name: "Faire signer sur cet écran" }).count(), 0, "un document signé ne se signe plus");
+  const signedPdf = await pdfText("devis-signe.pdf");
+  assert.ok(/Signé par Awa Ndong le/.test(signedPdf.text), `la signature est sur le PDF\n${signedPdf.text}`);
+  await shot("devis-signe.png");
+
   assert.deepEqual(errors, [], "aucune erreur JavaScript");
   console.log("\nRecette du cycle de vente réussie.");
 } catch (e) {
