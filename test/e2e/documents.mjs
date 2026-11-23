@@ -224,7 +224,7 @@ try {
   await line(0, "Maintenance annuelle", 1, 400_000);
   await page.getByRole("button", { name: "Finaliser le devis" }).click();
   await heading(`Devis DV-${YEAR}-00003`);
-  await page.getByRole("button", { name: "Faire signer sur cet écran" }).click();
+  await page.getByRole("button", { name: "Faire signer ici" }).click();
   const dialog = page.getByTestId("sign-dialog");
   await dialog.getByText("472 000 FCFA TTC").waitFor();
   await dialog.getByRole("button", { name: "Signer et accepter" }).click();
@@ -242,10 +242,115 @@ try {
   const signed = page.getByTestId("signed-card");
   await signed.getByText(/Signé par Awa Ndong le/).waitFor();
   await page.getByText("Accepté", { exact: true }).first().waitFor();
-  assert.equal(await page.getByRole("button", { name: "Faire signer sur cet écran" }).count(), 0, "un document signé ne se signe plus");
+  assert.equal(await page.getByRole("button", { name: "Faire signer ici" }).count(), 0, "un document signé ne se signe plus");
   const signedPdf = await pdfText("devis-signe.pdf");
   assert.ok(/Signé par Awa Ndong le/.test(signedPdf.text), `la signature est sur le PDF\n${signedPdf.text}`);
   await shot("devis-signe.png");
+
+  step("Signature en ligne : le client ouvre le lien, lit le devis et le signe sans compte");
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], { origin: BASE });
+  await nav("Devis");
+  await page.getByRole("button", { name: "Nouveau devis" }).first().click();
+  await line(0, "Contrat de support", 1, 200_000);
+  await page.getByRole("button", { name: "Finaliser le devis" }).click();
+  await heading(`Devis DV-${YEAR}-00004`);
+  const waHref = await page.getByRole("link", { name: "WhatsApp" }).getAttribute("href");
+  assert.ok(decodeURIComponent(waHref).includes("le signer en ligne : http"), "le message porte le lien de signature");
+  await page.getByTestId("sign-link").click();
+  await page.getByTestId("agreement").getByText("Lien copié").waitFor();
+  await shot("lien-signature.png");
+  const signUrl = await page.evaluate(() => navigator.clipboard.readText());
+  assert.match(signUrl, /\/signer\/[\w-]+\/[\w-]+\/[\w-]{32}$/, signUrl);
+  await page.getByTestId("sync-pill").click();
+  await page.getByTestId("sync-pill").filter({ hasText: "À jour" }).waitFor({ timeout: 20_000 });
+
+  const visitor = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: "fr-FR", acceptDownloads: true });
+  const pub = await visitor.newPage();
+  pub.on("pageerror", (e) => errors.push(`page publique : ${e.message}`));
+  // Un lien au jeton faux ne révèle rien.
+  await pub.goto(signUrl.slice(0, -4) + "AAAA");
+  await pub.getByRole("heading", { name: "Ce lien n'est plus valable" }).waitFor();
+  await pub.goto(signUrl);
+  await pub.getByRole("heading", { name: `Devis DV-${YEAR}-00004` }).waitFor();
+  assert.equal(await pub.getByTestId("pub-total").textContent(), "236 000 FCFA");
+  await pub.getByText("Contrat de support").first().waitFor();
+  assert.equal(await pub.getByText("Réglages").count(), 0, "aucun accès à l'application");
+  const form = pub.getByTestId("pub-sign-form");
+  await form.getByRole("button", { name: "Signer et accepter le devis" }).click();
+  await form.getByText("Indiquez votre prénom et votre nom.").waitFor();
+  await form.getByLabel("Prénom et nom").fill("Paul Mba");
+  const pad = await form.getByTestId("sign-canvas").boundingBox();
+  await pub.mouse.move(pad.x + 30, pad.y + pad.height / 2);
+  await pub.mouse.down();
+  for (let i = 1; i <= 10; i++) await pub.mouse.move(pad.x + 30 + i * 20, pad.y + pad.height / 2 + (i % 2 ? -20 : 20));
+  await pub.mouse.up();
+  await form.getByRole("button", { name: "Signer et accepter le devis" }).click();
+  await form.getByText("Cochez la case pour donner votre accord.").waitFor();
+  if (shots) await pub.screenshot({ path: join(shots, "signature-en-ligne.png"), fullPage: true });
+  await form.getByRole("checkbox").check();
+  await form.getByRole("button", { name: "Signer et accepter le devis" }).click();
+  await pub.getByTestId("pub-signed").getByText(/Signé par Paul Mba le/).waitFor();
+  await pub.getByRole("heading", { name: "Merci, votre accord est enregistré" }).waitFor();
+  if (shots) await pub.screenshot({ path: join(shots, "signature-en-ligne-faite.png"), fullPage: true });
+  // Le PDF téléchargé par le client porte sa signature.
+  const [pubDl] = await Promise.all([pub.waitForEvent("download"), pub.getByRole("button", { name: "Télécharger le devis signé" }).click()]);
+  const pubFile = join(out, "devis-client.pdf");
+  await pubDl.saveAs(pubFile);
+  assert.ok(/Signé par Paul Mba le/.test(execFileSync("pdftotext", [pubFile, "-"]).toString().replace(/\s+/g, " ")), "signature sur le PDF du client");
+  // Le lien reste lisible, mais ne se signe pas deux fois.
+  await pub.reload();
+  await pub.getByRole("heading", { name: "Ce document est signé" }).waitFor();
+  assert.equal(await pub.getByTestId("pub-sign-form").count(), 0, "un document signé ne se signe plus");
+  const again = await pub.request.post(signUrl.replace("/signer/", "/api/public/sign/"), { data: { name: "Autre", image: "data:image/png;base64,iVBORw0KGgo=" } });
+  assert.equal(again.status(), 409, "seconde signature refusée par le serveur");
+  const leak = await (await pub.request.get(signUrl.replace("/signer/", "/api/public/sign/"))).json();
+  assert.deepEqual(Object.keys(leak).sort(), ["client", "company", "doc", "locked"]);
+  assert.ok(!("sign_token" in leak.doc) && !("created_by" in leak.doc) && !("ip" in leak.doc.signature), "rien d'interne dans la réponse publique");
+  await visitor.close();
+
+  // Côté entreprise : le devis est accepté, avec la signature en ligne.
+  await page.getByTestId("sync-pill").click();
+  await page.getByTestId("signed-card").getByText(/Signé par Paul Mba le/).waitFor({ timeout: 20_000 });
+  await page.getByTestId("signed-card").getByText("Signature en ligne").waitFor();
+  await page.getByText("Accepté", { exact: true }).first().waitFor();
+  assert.equal(await page.getByTestId("sign-link").count(), 0, "plus de lien à envoyer une fois le devis signé");
+
+  step("Refus en ligne et lien désactivé");
+  await nav("Devis");
+  await page.getByRole("button", { name: "Nouveau devis" }).first().click();
+  await line(0, "Option étendue", 1, 50_000);
+  await page.getByRole("button", { name: "Finaliser le devis" }).click();
+  await heading(`Devis DV-${YEAR}-00005`);
+  await page.getByTestId("sign-link").click();
+  await page.getByTestId("agreement").getByText("Lien copié").waitFor();
+  const refuseUrl = await page.evaluate(() => navigator.clipboard.readText());
+  await page.getByTestId("sync-pill").click();
+  await page.getByTestId("sync-pill").filter({ hasText: "À jour" }).waitFor({ timeout: 20_000 });
+  const visitor2 = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
+  const pub2 = await visitor2.newPage();
+  await pub2.goto(refuseUrl);
+  await pub2.getByRole("button", { name: "Refuser le devis", exact: true }).click();
+  await pub2.getByRole("button", { name: "Oui, refuser le devis" }).click();
+  await pub2.getByText("Ce devis a été refusé.").waitFor();
+  assert.equal(await pub2.getByTestId("pub-sign-form").count(), 0, "un devis refusé ne se signe plus");
+  await page.getByTestId("sync-pill").click();
+  await page.getByText("Refusé", { exact: true }).first().waitFor({ timeout: 20_000 });
+  // Lien désactivé par l'entreprise : il ne s'ouvre plus.
+  await nav("Devis");
+  await page.getByRole("button", { name: "Nouveau devis" }).first().click();
+  await line(0, "Étude", 1, 10_000);
+  await page.getByRole("button", { name: "Finaliser le devis" }).click();
+  await heading(`Devis DV-${YEAR}-00006`);
+  await page.getByTestId("sign-link").click();
+  await page.getByTestId("agreement").getByText("Lien copié").waitFor();
+  const offUrl = await page.evaluate(() => navigator.clipboard.readText());
+  await page.getByRole("button", { name: "Désactiver le lien" }).click();
+  await page.getByTestId("agreement").getByRole("button", { name: "Créer le lien de signature" }).waitFor();
+  await page.getByTestId("sync-pill").click();
+  await page.getByTestId("sync-pill").filter({ hasText: "À jour" }).waitFor({ timeout: 20_000 });
+  await pub2.goto(offUrl);
+  await pub2.getByRole("heading", { name: "Ce lien n'est plus valable" }).waitFor();
+  await visitor2.close();
 
   assert.deepEqual(errors, [], "aucune erreur JavaScript");
   console.log("\nRecette du cycle de vente réussie.");

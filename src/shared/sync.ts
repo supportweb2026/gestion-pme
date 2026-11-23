@@ -85,7 +85,7 @@ export const NUMBERED_DOCS = {
   credit_notes: { numberedStatus: "validated", series: "AV", afterNumbering: ["sent_at"] },
   // `project_id` : rattachement analytique d'un devis envoyé au projet qu'il lance (RG3.2) ;
   // ni imprimé ni comptable, il ne passe que de vide à une valeur (voir projectRules.ts).
-  quotes: { numberedStatus: "sent", series: "DV", afterNumbering: ["status", "invoice_id", "sent_at", "decided_at", "project_id", "signature"] },
+  quotes: { numberedStatus: "sent", series: "DV", afterNumbering: ["status", "invoice_id", "sent_at", "decided_at", "project_id", "signature", "sign_token"] },
 } as const;
 
 /** Références qu'une nouvelle reprise d'historique peut ajouter à un document déjà repris (jamais remplacer). */
@@ -146,6 +146,8 @@ export function checkChange(existing: SyncRecord | null, change: Change): string
         return "un document validé doit recevoir un numéro de sa série";
       }
     }
+    // Jeton du lien de signature en ligne : forme imposée, pour qu'il ne soit jamais devinable.
+    if ("sign_token" in change.patch && change.patch.sign_token !== "" && !/^[A-Za-z0-9_-]{32}$/.test(String(change.patch.sign_token))) return "lien de signature invalide";
     // Signature du client : sur un document finalisé seulement, bien formée, et posée une seule fois.
     if ("signature" in change.patch) {
       if (change.tbl !== "quotes" || !isNumbered(existing?.data)) return "seul un document finalisé peut être signé";

@@ -176,3 +176,26 @@ test("signature du client : sur un document finalisé, bien formée, une seule f
   assert.equal(signatureOf({ signature: { name: "x" } }), null);
   assert.match(signatureLine(sig as never, (d) => d.split("-").reverse().join("/")), /^Signé par Awa Ndong le 23\/11\/2026 à \d\d:05$/);
 });
+
+test("lien de signature : jeton, chemin, verrous et champs rendus au client", async () => {
+  const { isSignToken, newSignToken, parseSignPath, publicDoc, sameToken, shareable, signLock, signPath } = await import("../src/shared/publicDoc.ts");
+  const t = newSignToken();
+  assert.ok(isSignToken(t) && t !== newSignToken());
+  assert.ok(sameToken(t, t) && !sameToken(t, t.slice(0, -1) + (t.endsWith("A") ? "B" : "A")) && !sameToken(t, t.slice(1)));
+  const path = signPath("a6de1303-7072-48ba-8dac-c259e192f4dd", "dv-abc123", t);
+  assert.deepEqual(parseSignPath(path), { companyId: "a6de1303-7072-48ba-8dac-c259e192f4dd", docId: "dv-abc123", token: t });
+  for (const bad of ["/signer/x/y/z", `/signer/../dv-1/${t}`, `${path}/extra`, "/devis"]) assert.equal(parseSignPath(bad), null, bad);
+  const doc = { number: "DV-1", status: "sent", date: "2026-11-01", valid_until: "2026-12-01", lines: [], sign_token: t, created_by: "u-1", project_id: "p-1", client_id: "c-1" };
+  assert.equal(signLock(doc, "2026-11-23"), "");
+  assert.equal(signLock(doc, "2026-12-02"), "expired");
+  assert.equal(signLock({ ...doc, status: "accepted" }, "2026-11-23"), "closed");
+  assert.equal(signLock({ ...doc, status: "refused" }, "2026-11-23"), "refused");
+  const sig = { name: "Awa Ndong", at: "2026-11-23T14:05:00.000Z", image: "data:image/png;base64,iVBORw0KGgo=", via: "link", ip: "41.1.2.3", agent: "Firefox" };
+  assert.equal(signLock({ ...doc, signature: sig }, "2026-11-23"), "signed");
+  const view = publicDoc({ ...doc, signature: sig }, { name: "Comilog", phone: "+241 01", email: "a@b.c", notes: "privé" }, { name: "IDO", closed_until: "2026-01-01", api: "x", logo: "data:image/png;base64,AA" }, "2026-11-23");
+  assert.deepEqual(Object.keys(view.doc).sort(), ["date", "lines", "number", "signature", "status", "valid_until"]);
+  assert.deepEqual(view.doc.signature, { name: "Awa Ndong", at: sig.at, image: sig.image, via: "link" });
+  assert.deepEqual(view.client, { name: "Comilog" });
+  assert.deepEqual(view.company, { name: "IDO", logo: "data:image/png;base64,AA" });
+  assert.ok(shareable(doc) && !shareable({ ...doc, number: "" }) && !shareable({ ...doc, doc_type: "delivery" }) && !shareable({ ...doc, _deleted: true }));
+});

@@ -2342,10 +2342,74 @@ select.follow-up { width: auto; min-height: 40px; height: 40px; padding: 0 34px 
 .sign-pad-hint { position: absolute; left: 0; right: 0; bottom: 38%; margin: 0; text-align: center; color: var(--ink-3); font-size: 0.875rem; pointer-events: none; }
 .sign-recap { margin: 0; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-lg); background: var(--subtle); display: flex; justify-content: space-between; gap: 12px; align-items: baseline; }
 .sign-recap strong { font-size: 1.0625rem; }
-.sign-agree { display: flex; gap: 10px; align-items: flex-start; font-size: 0.875rem; }
-.sign-agree input { margin-top: 3px; }
+.sign-agree { display: flex; flex-direction: row; gap: 10px; align-items: flex-start; font-size: 0.875rem; font-weight: 400; cursor: pointer; }
+.sign-agree input { margin-top: 2px; width: 20px; height: 20px; min-height: 0; flex: none; }
 .signed-card h3 { margin: 0 0 6px; font-size: 0.9375rem; }
 .signed-card img { display: block; max-width: 100%; height: 72px; object-fit: contain; object-position: left; background: #fff; border-radius: 8px; }
 .signed-card p { margin: 6px 0 0; font-size: 0.8125rem; color: var(--ink-2); }
 .signed-card .signed-via { color: var(--ink-3); font-size: 0.75rem; }
 .ps-sign.signed img { display: block; height: 58px; max-width: 100%; object-fit: contain; object-position: left; }
+
+/* Page publique de signature (lien envoyé au client) */
+.pub-page { --pub-accent: var(--brand-blue); max-width: 820px; margin: 0 auto; padding: 20px max(16px, env(safe-area-inset-left)) 48px; display: flex; flex-direction: column; gap: 16px; min-height: 100vh; }
+.pub-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 4px 0; }
+.pub-head img { max-height: 56px; max-width: 200px; object-fit: contain; }
+.pub-head strong { font-size: 1.25rem; }
+.pub-card { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 22px 24px; }
+.pub-state { margin-top: 18vh; text-align: center; }
+.pub-state h1 { font-size: 1.25rem; margin: 0 0 8px; }
+.pub-state p { margin: 0; color: var(--ink-2); }
+.pub-title { display: flex; justify-content: space-between; gap: 16px; align-items: flex-start; flex-wrap: wrap; border-top: 4px solid var(--pub-accent); margin: -22px -24px 0; padding: 20px 24px 0; border-radius: 16px 16px 0 0; }
+.pub-title h1 { margin: 0 0 4px; font-size: 1.375rem; }
+.pub-title p { margin: 0; font-size: 0.875rem; }
+.pub-amount { text-align: right; }
+.pub-amount span { display: block; font-size: 0.75rem; color: var(--ink-3); font-weight: 600; }
+.pub-amount strong { font-size: 1.5rem; }
+.pub-meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px 20px; margin: 18px 0; }
+.pub-meta dt { font-size: 0.75rem; color: var(--ink-3); font-weight: 600; }
+.pub-meta dd { margin: 2px 0 0; font-weight: 600; }
+.pub-lines { width: 100%; border-collapse: collapse; font-size: 0.9375rem; }
+.pub-lines th { font-size: 0.75rem; color: var(--ink-3); font-weight: 600; text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); }
+.pub-lines td { padding: 10px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.pub-lines .right { text-align: right; white-space: nowrap; }
+.pub-section td { font-weight: 700; background: var(--subtle); }
+.pub-desc, .pub-mobile { display: block; font-size: 0.8125rem; color: var(--ink-3); font-weight: 400; white-space: pre-line; }
+.pub-mobile { display: none; }
+.pub-totals { display: grid; grid-template-columns: 1fr auto; gap: 6px 24px; margin: 16px 0 0 auto; max-width: 340px; padding: 14px 16px; background: var(--subtle); border-radius: var(--radius-lg); }
+.pub-totals dt, .pub-totals dd { margin: 0; }
+.pub-totals dd { text-align: right; }
+.pub-totals .strong { font-weight: 700; font-size: 1.0625rem; padding-top: 6px; border-top: 1px solid var(--line); }
+.pub-notes { margin: 16px 0 0; font-size: 0.875rem; color: var(--ink-2); white-space: pre-line; }
+.pub-sign { display: flex; flex-direction: column; gap: 14px; }
+.pub-sign h2, .pub-done h2 { margin: 0; font-size: 1.1875rem; }
+.pub-sign > p { margin: -8px 0 0; }
+.pub-sign button.primary { min-height: 48px; font-size: 1rem; }
+.pub-field { display: flex; flex-direction: column; gap: 6px; font-size: 0.8125rem; font-weight: 600; color: var(--ink-2); }
+.pub-done { border-color: var(--ok); background: color-mix(in srgb, var(--ok) 7%, var(--surface)); }
+.pub-done p { margin: 6px 0 10px; }
+.pub-done img { display: block; height: 80px; max-width: 100%; object-fit: contain; object-position: left; background: #fff; border-radius: 8px; }
+.pub-warn { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, var(--surface)); }
+.pub-warn p { margin: 0; }
+.pub-foot { text-align: center; font-size: 0.8125rem; margin-top: 8px; }
+.pub-foot p { margin: 2px 0; }
+@media (max-width: 640px) {
+  .pub-card { padding: 18px 16px; }
+  .pub-title { margin: -18px -16px 0; padding: 16px 16px 0; }
+  .pub-amount { text-align: left; }
+  .pub-lines thead, .pub-wide { display: none; }
+  .pub-mobile { display: block; }
+  .pub-totals { max-width: none; }
+}
+.sign-link { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding-top: 12px; border-top: 1px solid var(--line); }
+.sign-link h4 { margin: 0; font-size: 0.8125rem; color: var(--ink-2); }
+.pub-sender { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.pub-sender img { max-height: 52px; max-width: 120px; object-fit: contain; }
+.pub-sender strong { display: block; font-size: 1.125rem; }
+.pub-sender span { display: block; font-size: 0.8125rem; color: var(--ink-3); }
+.pub-intro { margin: 0; color: var(--ink-2); }
+.pub-done button { margin-top: 12px; }
+.pub-alt { margin: 0; text-align: center; font-size: 0.875rem; color: var(--ink-2); }
+.pub-decline { border: 1px solid var(--line); border-radius: var(--radius-lg); padding: 12px 14px; }
+.pub-decline p { margin: 0 0 10px; font-weight: 600; }
+.pub-decline div { display: flex; gap: 8px; flex-wrap: wrap; }
+.pub-foot a { color: inherit; font-weight: 600; }

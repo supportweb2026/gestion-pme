@@ -19,6 +19,7 @@ import { PrintView } from "./PrintView.tsx";
 import { SignDialog } from "./SignDialog.tsx";
 import { signatureLine, signatureOf, type Signature } from "../../shared/signature.ts";
 import { contactsOf } from "../../shared/contacts.ts";
+import { isSignToken, newSignToken, shareable, signPath } from "../../shared/publicDoc.ts";
 import {
   applyGlobalDiscount, deductionLines, depositLines, docRefs, docSearchText, docTitle, followUps, invoicesFromSlips, isDepositLine, isSection, isSlip, isSlipType, slipBilling, percentForAmount, SLIP_TEXTS,
   QUOTE_TYPES, quoteTypeOf, relatedDocs, sectionSubtotals, type QuoteType,
@@ -606,7 +607,11 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
         return setMessage("Plus de numéro en réserve sur cet appareil. Connectez-vous une fois à internet pour en obtenir.");
       }
       await db.write(kind, id, contentPatch());
-      await db.write(kind, id, { status: cfg.numberedStatus, number, validated_at: new Date().toISOString(), validated_by: session.user.id });
+      await db.write(kind, id, {
+        status: cfg.numberedStatus, number, validated_at: new Date().toISOString(), validated_by: session.user.id,
+        // Devis, pro forma, commande : le lien de signature en ligne est prêt dès la finalisation.
+        ...(kind === "quotes" && !isDelivery ? { sign_token: newSignToken() } : {}),
+      });
       // Un nouveau document reste ouvert, désormais sous son identifiant.
       if (!record) onOpen(id);
     } finally {
@@ -1009,7 +1014,7 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                         {record!.data.status === "sent" ? (
                           <>
                             <button className="primary" onClick={() => setQuoteStatus("accepted")}>{slip?.mark}</button>
-                            <button onClick={() => setSigning(true)}>Faire signer sur cet écran</button>
+                            <button onClick={() => setSigning(true)}>Faire signer ici, sur cet écran</button>
                           </>
                         ) : <p className="status-line ok">{slip?.confirmed}</p>}
                         {slipBill?.state === "invoiced" && (
@@ -1028,17 +1033,10 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                           </p>
                         )}
                         {!stageBilled && !slipInvoices.length && ["sent", "accepted"].includes(text(record!.data.status)) && (
-                          <button className="primary" onClick={quoteToInvoice}>{deposits.length ? "Facture de solde" : "Convertir en facture"}</button>
+                          <button className={record!.data.status === "sent" ? undefined : "primary"} onClick={quoteToInvoice}>{deposits.length ? "Facture de solde" : "Convertir en facture"}</button>
                         )}
                         {draftDeposits.length > 0 && <p className="hint">Un acompte en brouillon n'est pas déduit : validez-le d'abord.</p>}
                         {!stageBilled && !slipInvoices.length && ["sent", "accepted"].includes(text(record!.data.status)) && <DepositForm onCreate={createDeposit} currency={currency} />}
-                        {record!.data.status === "sent" && (
-                          <>
-                            <button onClick={() => setSigning(true)}>Faire signer sur cet écran</button>
-                            <button onClick={() => setQuoteStatus("accepted")}>Marquer accepté</button>
-                            <button className="ghost" onClick={() => setQuoteStatus("refused")}>Marquer refusé</button>
-                          </>
-                        )}
                         {record!.data.invoice_id ? (
                           <button onClick={() => go("invoices", text(record!.data.invoice_id))}>Voir la facture</button>
                         ) : null}
@@ -1047,12 +1045,30 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                   </>
                 )}
               </div>
+              {kind === "quotes" && !isDelivery && record!.data.status === "sent" && (
+                <div className="card aside-actions" data-testid="agreement">
+                  <h3>Obtenir l'accord du client</h3>
+                  {share.canSign && (
+                    <button className="primary" onClick={share.copySignLink} data-testid="sign-link">
+                      <SendIco name="link" />{share.copied ? "Lien copié" : share.signUrl ? "Copier le lien de signature" : "Créer le lien de signature"}
+                    </button>
+                  )}
+                  <button onClick={() => setSigning(true)}>Faire signer ici, sur cet écran</button>
+                  <button onClick={() => setQuoteStatus("accepted")}>Marquer accepté sans signature</button>
+                  <button onClick={() => setQuoteStatus("refused")}>Marquer refusé</button>
+                  {share.canSign && (
+                    <p className="hint">{share.signUrl
+                      ? <>Avec le lien, le client lit le document et le signe depuis son téléphone, sans compte. Dès qu'il signe, le document passe à « Accepté ». Les boutons WhatsApp et E-mail incluent déjà ce lien. <button className="link inline" onClick={share.disableSignLink}>Désactiver le lien</button></>
+                      : "Avec le lien, le client lit le document et le signe depuis son téléphone, sans compte."}</p>
+                  )}
+                </div>
+              )}
               {signature && (
                 <div className="card signed-card" data-testid="signed-card">
                   <h3>{isDelivery ? slip?.received : "Bon pour accord"}</h3>
                   <img src={signature.image} alt={`Signature de ${signature.name}`} />
                   <p>{signatureLine(signature, formatDate)}</p>
-                  <p className="signed-via">{signature.via === "link" ? "Signature en ligne, par le lien envoyé au client." : "Signature recueillie sur place, sur l'écran."}</p>
+                  <p className="signed-via">{signature.via === "link" ? `Signature en ligne, par le lien envoyé au client${signature.ip ? ` (adresse ${signature.ip})` : ""}.` : "Signature recueillie sur place, sur l'écran."}</p>
                 </div>
               )}
               {related.length > 0 && (
@@ -1115,7 +1131,7 @@ function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
                     <SendIco name="share" />{share.reminder ? "Relancer (PDF)" : "Partager le PDF"}
                   </button>
                 )}
-                <p className="hint">Le message est prérempli{share.reminder ? " avec le montant restant dû" : ""}. {canShare ? "« Partager le PDF » joint la facture au message." : "Joignez le PDF téléchargé si besoin."}</p>
+                <p className="hint">Le message est prérempli{share.reminder ? " avec le montant restant dû" : ""}. {canShare ? "« Partager le PDF » joint la facture au message." : "Le PDF se télécharge en haut de la page."}</p>
                 {share.error && <p className="error" role="alert">{share.error}</p>}
               </div>
               {kind === "invoices" && !record!.data.deposit && !record!.data.final_invoice && <RecurrenceCard invoice={record!} invoices={invoices} />}
@@ -1485,17 +1501,41 @@ function PaymentHistory({ situation, payments, credits, onCredit }: {
 function useShare({ kind, record, client, gross, situation, currency, nextReminder }: {
   kind: DocTable; record: SyncRecord | null; client: SyncRecord | null; gross: number; situation?: Situation; currency: string; nextReminder?: ReminderDue | null;
 }) {
-  const { db } = useApp();
+  const { db, session } = useApp();
   const settings = useSettings();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
   const company = text(settings.name);
+  // Lien de signature en ligne : devis, pro forma ou commande finalisé, en attente de la réponse du client.
+  const canSign = kind === "quotes" && shareable(record?.data) && record?.data.status === "sent";
+  const token = record?.data.sign_token;
+  const signUrl = canSign && isSignToken(token) ? `${location.origin}${signPath(session.company.id, record!.id, token)}` : "";
+  async function copySignLink() {
+    if (!record || !canSign) return;
+    setError(null);
+    let url = signUrl;
+    if (!url) {
+      const fresh = newSignToken();
+      await db.write("quotes", record.id, { sign_token: fresh });
+      url = `${location.origin}${signPath(session.company.id, record.id, fresh)}`;
+    }
+    try {
+      await navigator.clipboard.writeText(url);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 4000);
+    } catch {
+      setError(`Copie impossible sur cet appareil. Voici le lien : ${url}`);
+    }
+  }
+  /** Retire le lien : celui déjà envoyé ne s'ouvre plus. */
+  const disableSignLink = () => record && db.write("quotes", record.id, { sign_token: "" });
   const number = text(record?.data.number);
   const due = situation?.due;
   // Relance : étape du calendrier atteinte, ou facture échue (relance manuelle hors calendrier).
   const reminder = kind === "invoices" && (!!nextReminder || situation?.status === "overdue");
   const tone: ReminderTone = nextReminder?.tone ?? "friendly";
-  const message = documentMessage({ kind, number, client: text(client?.data.name), company, gross, due, currency, dueDate: text(record?.data.due_date), validUntil: text(record?.data.valid_until), reminder, tone, title: docTitle(kind, record?.data) });
+  const message = documentMessage({ kind, number, client: text(client?.data.name), company, gross, due, currency, dueDate: text(record?.data.due_date), validUntil: text(record?.data.valid_until), reminder, tone, title: docTitle(kind, record?.data), signUrl });
 
   // Numéro au format international uniquement (+241…) : sinon WhatsApp laisse choisir le contact.
   const phone = text(client?.data.phone).replace(/[^\d+]/g, "");
@@ -1530,13 +1570,15 @@ function useShare({ kind, record, client, gross, situation, currency, nextRemind
     }
   }
 
-  return { pdf, wa, mail, markSent, reminder, tone, busy, error };
+  return { pdf, wa, mail, markSent, reminder, tone, busy, error, canSign, signUrl, copySignLink, disableSignLink, copied };
 }
 
-function SendIco({ name }: { name: "wa" | "mail" | "share" }) {
+function SendIco({ name }: { name: "wa" | "mail" | "share" | "link" }) {
   const d = name === "wa"
     ? ["M3.5 20.5l1.3-4.3A8.5 8.5 0 1 1 8 19.3z", "M9 9.5c.3 2.2 2.3 4.3 4.6 4.7l1.1-1.1 1.8.8-.3 1.6c-3.6.4-7.6-3.4-7.3-7.2l1.6-.3.8 1.8z"]
-    : name === "mail" ? ["M3 6h18v12H3z", "m3 7 9 6 9-6"] : ["M12 3v13", "m7 8 5-5 5 5", "M5 14v6h14v-6"];
+    : name === "mail" ? ["M3 6h18v12H3z", "m3 7 9 6 9-6"]
+    : name === "link" ? ["M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1", "M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"]
+    : ["M12 3v13", "m7 8 5-5 5 5", "M5 14v6h14v-6"];
   return (
     <svg className="btn-ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
       {d.map((x) => <path key={x} d={x} />)}
@@ -1550,6 +1592,8 @@ const canShare = canShareFiles();
 export function documentMessage(p: {
   kind: DocTable; number: string; client: string; company: string; gross: number; due?: number; currency: string;
   dueDate?: string; validUntil?: string; reminder?: boolean; tone?: ReminderTone; title?: string;
+  /** Lien de signature en ligne, pour un devis en attente de réponse. */
+  signUrl?: string;
 }): string {
   const lines = [`Bonjour${p.client ? ` ${p.client}` : ""},`];
   const amount = p.due !== undefined ? formatMoney(p.due, p.currency) : "";
@@ -1580,6 +1624,7 @@ export function documentMessage(p: {
       lines.push(`Reste à régler : ${formatMoney(p.due, p.currency)}${p.dueDate ? `, échéance le ${formatDate(p.dueDate)}` : ""}.`);
     }
     if (p.kind === "quotes" && p.validUntil) lines.push(`Offre valable jusqu'au ${formatDate(p.validUntil)}.`);
+    if (p.signUrl) lines.push(`Vous pouvez le consulter et le signer en ligne : ${p.signUrl}`);
   }
   lines.push("Cordialement,", p.company);
   return lines.filter(Boolean).join("\n");
