@@ -1,6 +1,7 @@
 import { ImportCsv } from "../ImportCsv.tsx";
 import { useState, type FormEvent } from "react";
 import { formatDate, normalize, text, today, useApp, useTable } from "../context.ts";
+import { usePaged } from "../Pager.tsx";
 import { DEFAULT_VAT_RATE, formatXaf } from "../../shared/invoice.ts";
 import type { SyncRecord } from "../../shared/sync.ts";
 import { savePatch } from "./Clients.tsx";
@@ -37,6 +38,7 @@ export function Articles() {
     .filter((a) => !q || normalize(`${text(a.data.ref)} ${text(a.data.label)}`).includes(q))
     .filter((a) => !lowOnly || levels.get(a.id)?.low)
     .sort((a, b) => text(a.data.label).localeCompare(text(b.data.label), "fr"));
+  const { shown, pager } = usePaged(rows, `${q}|${lowOnly}`);
 
   async function save(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -148,7 +150,7 @@ export function Articles() {
           <table>
             <thead><tr><th>Référence</th><th>Désignation</th><th>Type</th><th className="right">Prix HT</th><th className="right">Marge</th>{levels.size > 0 && <th className="right">Stock</th>}<th className="right">TVA</th><th className="col-action"><span className="sr-only">Actions</span></th></tr></thead>
             <tbody>
-              {rows.map((a) => (
+              {shown.map((a) => (
                 <tr key={a.id}>
                   <td className="mono">{text(a.data.ref)}</td>
                   <td>{text(a.data.label)}{a.data.unit ? <span className="muted"> / {text(a.data.unit)}</span> : null}</td>
@@ -171,6 +173,7 @@ export function Articles() {
               ))}
             </tbody>
           </table>
+          {pager}
         </div>
       )}
     </section>
