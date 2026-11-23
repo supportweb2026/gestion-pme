@@ -352,6 +352,55 @@ try {
   await pub2.getByRole("heading", { name: "Ce lien n'est plus valable" }).waitFor();
   await visitor2.close();
 
+  step("Espace client en ligne : devis, factures et solde par un lien personnel");
+  await nav("Clients");
+  await page.getByRole("button", { name: "Comilog", exact: true }).click();
+  const card = page.getByTestId("portal-card");
+  await card.getByRole("button", { name: "Créer l'espace client" }).click();
+  await card.getByText("Lien copié.").waitFor();
+  const portalUrl = await page.evaluate(() => navigator.clipboard.readText());
+  assert.match(portalUrl, /\/espace\/[\w-]+\/[\w-]+\/[\w-]{32}$/, portalUrl);
+  await page.getByTestId("sync-pill").click();
+  await page.getByTestId("sync-pill").filter({ hasText: "À jour" }).waitFor({ timeout: 20_000 });
+  const visitor3 = await browser.newContext({ viewport: { width: 390, height: 844 }, locale: "fr-FR", acceptDownloads: true });
+  const portal = await visitor3.newPage();
+  portal.on("pageerror", (e) => errors.push(`espace client : ${e.message}`));
+  await portal.goto(portalUrl.slice(0, -4) + "AAAA");
+  await portal.getByRole("heading", { name: "Ce lien n'est plus valable" }).waitFor();
+  await portal.goto(portalUrl);
+  await portal.getByRole("heading", { name: "Espace client de Comilog" }).waitFor();
+  const dueText = await portal.getByTestId("portal-due").textContent();
+  assert.match(dueText, /Reste à régler/);
+  const inv = portal.getByTestId("portal-invoices");
+  await inv.getByText(`Facture d'acompte FA-${YEAR}-00001`).waitFor();
+  await inv.getByText(`Facture FA-${YEAR}-00004`).waitFor();
+  assert.equal(await inv.locator("li").count(), 4, "les quatre factures validées du client");
+  // Le devis en attente (lien de signature désactivé) se télécharge ; les autres sont dans l'historique.
+  await portal.getByTestId("portal-waiting").getByText(`Devis DV-${YEAR}-00006`).waitFor();
+  await portal.getByTestId("portal-quotes").getByText(`Devis DV-${YEAR}-00004`).waitFor();
+  assert.equal(await portal.getByText("BL-").count(), 0, "pas de bon sans prix dans l'espace client");
+  const [pdl] = await Promise.all([portal.waitForEvent("download"), inv.locator("li", { hasText: `FA-${YEAR}-00002` }).getByRole("button", { name: "Télécharger" }).click()]);
+  const pfile = join(out, "facture-espace.pdf");
+  await pdl.saveAs(pfile);
+  assert.ok(execFileSync("pdftotext", [pfile, "-"]).toString().includes(`FA-${YEAR}-00002`), "le PDF de la facture se télécharge");
+  if (shots) await portal.screenshot({ path: join(shots, "espace-client.png"), fullPage: true });
+  // Rien d'autre que les documents du client : un identifiant inventé ou une autre table ne répond pas.
+  const apiBase = portalUrl.replace("/espace/", "/api/public/portal/");
+  assert.equal((await portal.request.get(`${apiBase}/invoices/fa-inconnue`)).status(), 404);
+  assert.equal((await portal.request.get(`${apiBase}/clients/x-123`)).status(), 404);
+  assert.equal((await portal.request.post(apiBase, { data: {} })).status(), 405);
+  const summary = await (await portal.request.get(apiBase)).json();
+  assert.deepEqual(Object.keys(summary).sort(), ["client", "company", "due", "invoices", "quotes"]);
+  assert.ok(!JSON.stringify(summary).includes("portal_token"), "le jeton n'est pas renvoyé");
+  // Lien désactivé : l'espace se ferme.
+  await card.getByRole("button", { name: "Désactiver le lien" }).click();
+  await card.getByText("Lien désactivé").waitFor();
+  await page.getByTestId("sync-pill").click();
+  await page.getByTestId("sync-pill").filter({ hasText: "À jour" }).waitFor({ timeout: 20_000 });
+  await portal.reload();
+  await portal.getByRole("heading", { name: "Ce lien n'est plus valable" }).waitFor();
+  await visitor3.close();
+
   assert.deepEqual(errors, [], "aucune erreur JavaScript");
   console.log("\nRecette du cycle de vente réussie.");
 } catch (e) {

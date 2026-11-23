@@ -199,3 +199,36 @@ test("lien de signature : jeton, chemin, verrous et champs rendus au client", as
   assert.deepEqual(view.company, { name: "IDO", logo: "data:image/png;base64,AA" });
   assert.ok(shareable(doc) && !shareable({ ...doc, number: "" }) && !shareable({ ...doc, doc_type: "delivery" }) && !shareable({ ...doc, _deleted: true }));
 });
+
+test("espace client : devis, factures, solde, et rien de l'historique repris", async () => {
+  const { buildPortal, parsePortalPath, portalDocAllowed, portalPath } = await import("../src/shared/portal.ts");
+  const line = (unitPrice: number) => [{ label: "Service", qty: 1, unitPrice, vatRate: 0 }];
+  const tok = "A".repeat(32);
+  const quotes = [
+    { id: "dv-1", data: { number: "DV-1", status: "sent", date: "2026-11-01", valid_until: "2026-12-01", lines: line(100_000), sign_token: tok, client_id: "c-1" } },
+    { id: "dv-2", data: { number: "DV-2", status: "sent", date: "2026-09-01", valid_until: "2026-10-01", lines: line(50_000), sign_token: tok, client_id: "c-1" } },
+    { id: "dv-3", data: { number: "DV-3", status: "accepted", date: "2026-10-01", lines: line(70_000), client_id: "c-1" } },
+    { id: "bl-1", data: { number: "BL-1", doc_type: "delivery", status: "sent", date: "2026-11-02", lines: line(0), client_id: "c-1" } },
+    { id: "dv-9", data: { status: "draft", date: "2026-11-03", lines: line(1), client_id: "c-1" } },
+  ];
+  const invoices = [
+    { id: "fa-1", data: { number: "FA-1", status: "validated", date: "2026-10-01", due_date: "2026-10-31", lines: line(200_000), client_id: "c-1" } },
+    { id: "fa-2", data: { number: "FA-2", status: "validated", date: "2026-11-10", due_date: "2026-12-10", lines: line(80_000), client_id: "c-1" } },
+    { id: "fa-3", data: { number: "FA-3", status: "validated", date: "2026-11-11", due_date: "2026-12-11", lines: line(30_000), client_id: "c-1" } },
+    { id: "fa-old", data: { number: "F-2019-1", status: "validated", imported: "csv", date: "2019-01-01", due_date: "2019-02-01", lines: line(999_000), client_id: "c-1" } },
+    { id: "fa-d", data: { status: "draft", date: "2026-11-12", lines: line(5), client_id: "c-1" } },
+  ];
+  const payments = [{ id: "p-1", data: { invoice_id: "fa-1", amount: 50_000 } }, { id: "p-2", data: { invoice_id: "fa-3", amount: 30_000 } }, { id: "p-3", data: { invoice_id: "fa-2", amount: 80_000, _deleted: true } }];
+  const p = buildPortal({ companyId: "company-1", quotes, invoices, payments, credits: [], today: "2026-11-23" });
+  assert.deepEqual(p.quotes.map((q) => [q.number, q.state]), [["DV-1", "waiting"], ["DV-3", "accepted"], ["DV-2", "expired"]]);
+  assert.equal(p.quotes[0].signPath, `/signer/company-1/dv-1/${tok}`);
+  assert.equal(p.quotes[2].signPath, "", "un devis expiré ne se signe plus");
+  assert.deepEqual(p.invoices.map((i) => [i.number, i.state, i.due]), [["FA-3", "paid", 0], ["FA-2", "unpaid", 80_000], ["FA-1", "overdue", 150_000]]);
+  assert.deepEqual(p.due, [{ currency: "XAF", amount: 230_000, overdue: 150_000 }]);
+  assert.deepEqual(parsePortalPath(portalPath("company-1", "c-1", tok)), { companyId: "company-1", clientId: "c-1", token: tok });
+  assert.equal(parsePortalPath("/espace/company-1/c-1/court"), null);
+  assert.ok(portalDocAllowed("invoices", invoices[0], "c-1") && portalDocAllowed("quotes", quotes[0], "c-1"));
+  for (const [tbl, doc, cid] of [["invoices", invoices[0], "c-2"], ["invoices", invoices[3], "c-1"], ["invoices", invoices[4], "c-1"], ["quotes", quotes[3], "c-1"], ["quotes", quotes[4], "c-1"], ["payments", invoices[0], "c-1"]] as const) {
+    assert.equal(portalDocAllowed(tbl, doc, cid), false, `${tbl} ${doc.id} ${cid}`);
+  }
+});

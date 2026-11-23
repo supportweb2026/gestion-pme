@@ -2413,3 +2413,29 @@ select.follow-up { width: auto; min-height: 40px; height: 40px; padding: 0 34px 
 .pub-decline p { margin: 0 0 10px; font-weight: 600; }
 .pub-decline div { display: flex; gap: 8px; flex-wrap: wrap; }
 .pub-foot a { color: inherit; font-weight: 600; }
+
+/* Espace client en ligne */
+.portal-title { margin: 6px 0 4px; font-size: 1.5rem; }
+.portal-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+.portal-kpis .pub-card { display: flex; flex-direction: column; gap: 2px; padding: 16px 20px; }
+.portal-kpis span { font-size: 0.8125rem; color: var(--ink-3); font-weight: 600; }
+.portal-kpis strong { font-size: 1.5rem; }
+.portal-kpis small { color: var(--ink-2); font-size: 0.8125rem; }
+.portal-kpis .danger-text { color: var(--danger); font-weight: 600; }
+.pub-card > h2 { margin: 0 0 6px; font-size: 1.0625rem; }
+.portal-list { list-style: none; margin: 0; padding: 0; }
+.portal-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 8px 16px; align-items: center; padding: 12px 0; border-top: 1px solid var(--line); }
+.portal-list li:first-child { border-top: 0; }
+.portal-list li > div { display: flex; flex-wrap: wrap; align-items: center; gap: 2px 10px; min-width: 0; }
+.portal-list li > div strong { flex-basis: 100%; }
+.portal-list li > div > span:not(.badge) { font-size: 0.8125rem; color: var(--ink-3); }
+.portal-amount { text-align: right; font-weight: 600; white-space: nowrap; }
+.portal-amount small { display: block; font-weight: 400; font-size: 0.75rem; color: var(--ink-3); }
+.portal-pay { margin-top: 14px; padding: 12px 14px; background: var(--subtle); border-radius: var(--radius-lg); font-size: 0.875rem; }
+.portal-pay p { margin: 4px 0 0; white-space: pre-line; }
+@media (max-width: 640px) {
+  .portal-list li { grid-template-columns: minmax(0, 1fr) auto; }
+  .portal-list li > button, .portal-list li > a.button { grid-column: 1 / -1; justify-content: center; }
+}
+.pub-page a.button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); text-decoration: none; }
+.pub-page a.button.primary:hover { background: var(--accent-hover); border-color: var(--accent-hover); }

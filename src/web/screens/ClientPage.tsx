@@ -15,6 +15,8 @@ import { docStatus, presetList, presetNewDoc } from "./Documents.tsx";
 import { usePaged } from "../Pager.tsx";
 import { contactsOf } from "../../shared/contacts.ts";
 import { ClientContacts } from "./ClientContacts.tsx";
+import { isSignToken, newSignToken } from "../../shared/publicDoc.ts";
+import { portalPath } from "../../shared/portal.ts";
 
 type View = "documents" | "contacts" | "payments" | "projects" | "history";
 type DocFilter = "all" | DocTable;
@@ -268,6 +270,7 @@ export function ClientPage({ client, onBack, onEdit }: { client: SyncRecord; onB
             ) : <p className="muted small">Aucun contact enregistré.</p>}
             <button className="link small" onClick={() => setView("contacts")}>{contacts.length > 1 ? `Voir les ${contacts.length} contacts` : "Ouvrir le carnet de contacts"}</button>
           </div>
+          {["admin", "director", "accountant", "sales"].includes(session.user.role) && <PortalCard client={client} companyId={session.company.id} />}
           {(data.thisYear > 0 || data.lastYear > 0) && (
             <div className="card">
               <div className="aside-label">Facturé par année</div>
@@ -280,5 +283,40 @@ export function ClientPage({ client, onBack, onEdit }: { client: SyncRecord; onB
         </aside>
       </div>
     </section>
+  );
+}
+
+
+/** Espace client en ligne : le lien personnel du client, à copier, envoyer ou désactiver. */
+function PortalCard({ client, companyId }: { client: SyncRecord; companyId: string }) {
+  const { db } = useApp();
+  const [note, setNote] = useState("");
+  const token = client.data.portal_token;
+  const active = isSignToken(token);
+  const urlOf = (t: string) => `${location.origin}${portalPath(companyId, client.id, t)}`;
+  async function copy() {
+    let t = active ? (token as string) : "";
+    if (!t) {
+      t = newSignToken();
+      await db.write("clients", client.id, { portal_token: t });
+    }
+    try {
+      await navigator.clipboard.writeText(urlOf(t));
+      setNote("Lien copié. Envoyez-le au client par WhatsApp ou par e-mail.");
+    } catch {
+      setNote(`Copie impossible sur cet appareil. Voici le lien : ${urlOf(t)}`);
+    }
+  }
+  async function disable() {
+    await db.write("clients", client.id, { portal_token: "" });
+    setNote("Lien désactivé : celui déjà envoyé ne s'ouvre plus.");
+  }
+  return (
+    <div className="card aside-actions" data-testid="portal-card">
+      <div className="aside-label">Espace client en ligne</div>
+      <button onClick={copy}>{active ? "Copier le lien de l'espace client" : "Créer l'espace client"}</button>
+      <p className="hint">Avec ce lien, le client retrouve ses devis à signer, ses factures et ce qu'il reste à régler, sans compte. Les documents repris de votre ancien logiciel n'y figurent pas.{active && <> <button className="link inline" onClick={disable}>Désactiver le lien</button></>}</p>
+      {note && <p className="hint" role="status">{note}</p>}
+    </div>
   );
 }
