@@ -2268,3 +2268,7 @@ table.lines .add-detail:hover { color: var(--accent); }
   .client-table .badge { padding: 0 8px; font-size: 0.6875rem; }
   .only-narrow { display: inline !important; }
 }
+
+/* Menu « créer un bon » : une liste déroulante qui se présente comme un bouton */
+select.follow-up { width: auto; min-height: 40px; height: 40px; padding: 0 34px 0 14px; font-weight: 600; font-size: 0.875rem; color: var(--ink); cursor: pointer; }
+@media (max-width: 720px) { .page-head .quick select.follow-up { flex: 1; } }

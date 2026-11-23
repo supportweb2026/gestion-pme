@@ -10,7 +10,7 @@ import { computeTotals, docTaxes, lineDiscount, lineNet, lineVat, type InvoiceLi
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../../shared/currency.ts";
 import type { DocTable, SyncRecord } from "../../shared/sync.ts";
 import type { Situation } from "../ledger.ts";
-import { docArrete, docRefs, docTitle, isSection, quoteTypeOf, sellerOf } from "../../shared/documents.ts";
+import { docArrete, docRefs, docTitle, isSection, isSlip, quoteTypeOf, sellerOf, SLIP_TEXTS } from "../../shared/documents.ts";
 import { fiscalMentions, pct } from "../../shared/taxes.ts";
 import { docColor, softOf, stampFor, termsFor, tooLight } from "../../shared/branding.ts";
 
@@ -31,7 +31,8 @@ export function PrintView({ kind, record, client, situation, onClose }: {
   const number = text(record.data.number);
   const hasDiscount = lines.some((l) => lineDiscount(l) > 0);
   const title = docTitle(kind, record.data);
-  const delivery = kind === "quotes" && quoteTypeOf(record.data) === "delivery";
+  const delivery = kind === "quotes" && isSlip(record.data);
+  const slip = SLIP_TEXTS[quoteTypeOf(record.data)];
   const refs = docRefs(record.data);
 
   // TVA ventilée par taux, comme l'exige une facture.
@@ -108,7 +109,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
             {refs.clientRef && (<><div className="ps-label">Référence de commande</div><div className="ps-ref">{refs.clientRef}</div></>)}
           </section>
           <section className="ps-client">
-            <div className="ps-label">{delivery ? "Livré à" : kind === "quotes" ? "Destinataire" : "Facturé à"}</div>
+            <div className="ps-label">{delivery ? slip!.to : kind === "quotes" ? "Destinataire" : "Facturé à"}</div>
             <div className="ps-client-name">{text(c.name)}</div>
             <Lines>{[text(c.address), text(c.city), text(c.nif) && `NIF : ${text(c.nif)}`, text(c.rccm) && `RCCM : ${text(c.rccm)}`]}</Lines>
           </section>
@@ -180,7 +181,7 @@ export function PrintView({ kind, record, client, situation, onClose }: {
 
         {delivery && (
           <section className="ps-sign">
-            <div className="ps-label">Reçu par le client</div>
+            <div className="ps-label">{slip?.received}</div>
             <div className="muted">Nom, date, signature et cachet</div>
           </section>
         )}

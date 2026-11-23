@@ -639,7 +639,7 @@ const TAB_ICONS: Record<Tab, IconName> = {
 /** Lien du menu. Un module pas encore ouvert est grisé et porte la mention « Bientôt ». */
 function NavItem({ tab, active, onClick, short = false, tip = false }: { tab: Tab; active: boolean; onClick: () => void; short?: boolean; tip?: boolean }) {
   const soon = Boolean(COMING_SOON[tab]);
-  const label = short && tab === "dashboard" ? "Accueil" : TAB_LABELS[tab];
+  const label = short && tab === "dashboard" ? "Accueil" : short && tab === "quotes" ? "Devis" : TAB_LABELS[tab];
   return (
     <button
       className={`nav-item${active ? " active" : ""}${soon ? " soon" : ""}`}

@@ -120,10 +120,10 @@ try {
   assert.equal(await txt("total-ttc"), "236 000 FCFA");
 
   step("Devis facturé et bon d'intervention");
-  await nav("Devis");
+  await nav("Devis et bons");
   assert.match(await row("DALPHA001").innerText(), /Facturé/);
   assert.equal(await row("DOMEGA001").count(), 0);
-  await open("Devis", "BIALPHA001");
+  await open("Devis et bons", "BIALPHA001");
   assert.match(await page.locator("h2").first().innerText(), /Bon d'intervention BIALPHA001/);
 
   step("Listes : filtres par client, période et type, tri, état gardé en revenant");
@@ -146,7 +146,7 @@ try {
   assert.match(await page.locator("tbody tr").first().innerText(), /FAGAMMA001/);
   await page.getByRole("columnheader", { name: "Numéro" }).getByRole("button").click();
   assert.match(await page.locator("tbody tr").first().innerText(), /FSGAMMA001/);
-  await nav("Devis");
+  await nav("Devis et bons");
   await page.getByLabel("Type de document").selectOption({ label: "Bon d'intervention" });
   assert.match(await listSummary(), /^1 document sur 2/);
   assert.match(await page.locator("tbody tr").first().innerText(), /BIALPHA001/);

@@ -11,7 +11,7 @@ import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFImage, type PDFP
 import { computeTotals, docTaxes, lineDiscount, lineNet, lineVat, type InvoiceLine } from "../shared/invoice.ts";
 import { amountInWordsWithCurrency, decimalsOf, formatMoney } from "../shared/currency.ts";
 import type { DocTable } from "../shared/sync.ts";
-import { docArrete, docRefs, docTitle, isSection, quoteTypeOf, sectionSubtotals, sellerOf } from "../shared/documents.ts";
+import { docArrete, docRefs, docTitle, isSection, isSlip, quoteTypeOf, sectionSubtotals, sellerOf, SLIP_TEXTS } from "../shared/documents.ts";
 import { fiscalMentions, pct } from "../shared/taxes.ts";
 import { docColor, rgb01, softOf, stampFor, termsFor, tooLight } from "../shared/branding.ts";
 
@@ -56,7 +56,8 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   const number = str(doc.number);
   const title = docTitle(kind, doc);
   // Bon de livraison : quantités seulement, sans prix ni totaux.
-  const delivery = kind === "quotes" && quoteTypeOf(doc) === "delivery";
+  const delivery = kind === "quotes" && isSlip(doc);
+  const slip = SLIP_TEXTS[quoteTypeOf(doc)];
   // Couleur d'accent choisie dans Réglages (titre, en-tête du tableau, total).
   const accent = docColor(s);
   const BLUE = rgb(...rgb01(accent));
@@ -206,7 +207,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
   const nameLines = wrap(str(c.name), 11, boxW - 24, bold);
   const boxH = 22 + nameLines.length * 14 + clientLines.length * 12 + 8;
   page.drawRectangle({ x: boxX, y: y - boxH, width: boxW, height: boxH, borderColor: LINE, borderWidth: 1 });
-  text((delivery ? "Livré à" : kind === "quotes" ? "Destinataire" : "Facturé à").toUpperCase(), boxX + 12, y - 14, 7.5, regular, GREY);
+  text((delivery ? slip!.to : kind === "quotes" ? "Destinataire" : "Facturé à").toUpperCase(), boxX + 12, y - 14, 7.5, regular, GREY);
   let cy = y - 28;
   for (const l of nameLines) {
     text(l, boxX + 12, cy, 11, bold);
@@ -322,7 +323,7 @@ export async function buildPdf(input: PdfInput): Promise<Uint8Array> {
     }
     y -= 14;
     const w = (xr - M - 20) / 2;
-    for (const [i, label] of ["LIVRÉ PAR", "REÇU PAR LE CLIENT"].entries()) {
+    for (const [i, label] of [slip!.by.toUpperCase(), slip!.received.toUpperCase()].entries()) {
       const x = M + i * (w + 20);
       page.drawRectangle({ x, y: y - 85, width: w, height: 85, borderColor: GREY, borderWidth: 0.8, borderDashArray: [3, 3] });
       text(label, x + 10, y - 14, 7.5, regular, GREY);

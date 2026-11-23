@@ -131,7 +131,7 @@ try {
   }
 
   step("Devis accepté de 250 000 FCFA HT, projet lancé avec Ornella Mba comme responsable");
-  await nav(a, "Devis");
+  await nav(a, "Devis et bons");
   await a.getByRole("button", { name: "Nouveau devis" }).first().click();
   await a.getByRole("button", { name: "+ Ajouter un titre" }).click();
   await a.getByLabel("Titre de section").fill(PROJECT);

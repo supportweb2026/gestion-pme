@@ -88,7 +88,7 @@ try {
   await a.getByRole("button", { name: "Enregistrer" }).click();
 
   step("Devis de 18 000 000 FCFA HT, finalisé puis accepté");
-  await nav("Devis");
+  await nav("Devis et bons");
   await a.getByRole("button", { name: "Nouveau devis" }).first().click();
   await a.getByRole("button", { name: "+ Ajouter un titre" }).click();
   await a.getByLabel("Titre de section").fill("Aménagement de l'entrepôt de Nkok");
@@ -142,7 +142,7 @@ try {
   await shot(a, "onglet-etapes.png");
 
   step("CA2.2 : le devis ouvre le projet et ne peut plus en lancer un autre");
-  await nav("Devis");
+  await nav("Devis et bons");
   await a.getByRole("cell", { name: `DV-${YEAR}-00001` }).click();
   await banner.getByText("Projet lancé : Aménagement de l'entrepôt de Nkok").waitFor();
   assert.equal(await banner.getByRole("button", { name: "Lancer le projet" }).count(), 0);
@@ -150,7 +150,7 @@ try {
   await a.getByRole("button", { name: "Nouveau projet" }).click();
   await a.getByText("Aucun devis accepté en attente de projet.", { exact: false }).waitFor();
   await a.getByRole("button", { name: "Annuler" }).click();
-  await nav("Devis");
+  await nav("Devis et bons");
   await a.getByRole("cell", { name: `DV-${YEAR}-00001` }).click();
   await banner.getByRole("button", { name: "Ouvrir le projet" }).click();
   await a.getByRole("heading", { name: "Aménagement de l'entrepôt de Nkok" }).waitFor();

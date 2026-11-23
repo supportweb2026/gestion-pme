@@ -105,7 +105,7 @@ try {
 
   step("B hors ligne : devis depuis le catalogue, conversion en facture, encaissement partiel");
   await B.context.setOffline(true);
-  await nav(B.page, "Devis");
+  await nav(B.page, "Devis et bons");
   await B.page.getByRole("button", { name: "Nouveau devis" }).first().click();
   await B.page.getByLabel("Désignation").fill("Audit informatique");
   await B.page.getByLabel("Quantité").fill("2");
