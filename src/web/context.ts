@@ -57,15 +57,22 @@ export function useSyncStatus(): SyncStatus {
 }
 
 export type Tab =
-  | "dashboard" | "gains" | "quotes" | "invoices" | "credit_notes" | "expenses"
+  | "dashboard" | "gains" | "quotes" | "orders" | "deliveries" | "invoices" | "deposits" | "recurring" | "credit_notes"
+  | "payments" | "reminders" | "expenses"
   | "clients" | "articles" | "my_day" | "projects" | "accounting" | "settings" | "platform";
 
 export const TAB_LABELS: Record<Tab, string> = {
   dashboard: "Tableau de bord",
   gains: "Gains",
-  quotes: "Devis et bons",
+  quotes: "Devis",
+  orders: "Commandes",
+  deliveries: "Livraisons et prestations",
   invoices: "Factures",
+  deposits: "Acomptes",
+  recurring: "Factures récurrentes",
   credit_notes: "Avoirs",
+  payments: "Encaissements",
+  reminders: "Relances",
   expenses: "Dépenses",
   clients: "Clients",
   articles: "Articles",
@@ -113,6 +120,16 @@ export const TABS_BY_ROLE: Record<string, Tab[]> = {
   // « Ma journée » est le premier écran de l'employé (CA1.1).
   employee: ["my_day", "projects", "expenses", "settings"],
 };
+
+/**
+ * Menu Ventes : chaque étape de la vente a son entrée. Les entrées dérivées suivent
+ * le droit de l'écran dont elles lisent les données (devis ou factures).
+ */
+export const SALES_TABS: Tab[] = ["quotes", "orders", "deliveries", "invoices", "deposits", "recurring", "credit_notes", "payments", "reminders"];
+const DERIVED_TABS: Partial<Record<Tab, Tab[]>> = { quotes: ["orders", "deliveries"], invoices: ["deposits", "recurring", "payments", "reminders"] };
+export function tabsFor(role: string): Tab[] {
+  return (TABS_BY_ROLE[role] ?? ["expenses"]).flatMap((t) => [t, ...(DERIVED_TABS[t] ?? [])]);
+}
 
 export const can = {
   approveExpenses: (role: string) => ["admin", "director"].includes(role),

@@ -34,3 +34,16 @@ test("relances : rien si soldée, désactivé ou déjà relancée aujourd'hui", 
   assert.equal(due("2026-11-21", 1, "2026-11-21"), null);
   assert.equal(reminderDue({ dueDate: "2026-11-20", amountDue: 1, sent: 1, today: "2026-11-21", settings: { enabled: false, steps: [1] } }), null);
 });
+
+test("balance âgée : tranches de retard", async () => {
+  const { ageBucket, daysLate } = await import("../src/shared/reminders.ts");
+  assert.equal(daysLate("2026-11-01", "2026-11-23"), 22);
+  assert.equal(daysLate("", "2026-11-23"), 0);
+  assert.equal(ageBucket(daysLate("2026-11-30", "2026-11-23")), "current");
+  assert.equal(ageBucket(0), "current");
+  assert.equal(ageBucket(1), "d30");
+  assert.equal(ageBucket(30), "d30");
+  assert.equal(ageBucket(31), "d60");
+  assert.equal(ageBucket(90), "d90");
+  assert.equal(ageBucket(91), "older");
+});

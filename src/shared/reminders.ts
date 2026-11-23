@@ -66,3 +66,20 @@ export const TONE_LABELS: Record<ReminderTone, string> = {
   firm: "Relance",
   final: "Dernière relance",
 };
+
+/** Tranches d'ancienneté d'un retard de paiement (balance âgée). */
+export type AgeBucket = "current" | "d30" | "d60" | "d90" | "older";
+export const AGE_BUCKETS: Record<AgeBucket, string> = {
+  current: "Non échu",
+  d30: "1 à 30 jours",
+  d60: "31 à 60 jours",
+  d90: "61 à 90 jours",
+  older: "Plus de 90 jours",
+};
+
+/** Jours de retard à une date donnée (0 ou moins : pas encore échu ; sans échéance : 0). */
+export const daysLate = (dueDate: string, today: string) => (dueDate ? dayDiff(dueDate, today) : 0);
+
+export function ageBucket(days: number): AgeBucket {
+  return days <= 0 ? "current" : days <= 30 ? "d30" : days <= 60 ? "d60" : days <= 90 ? "d90" : "older";
+}

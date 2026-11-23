@@ -4,7 +4,7 @@
  * la suite se fait par actions : accepter, convertir, encaisser, créer un avoir.
  */
 import { useEffect, useMemo, useState } from "react";
-import { can, formatDate, normalize, text, today, useApp, useSettings, useTable } from "../context.ts";
+import { can, formatDate, normalize, tabsFor, text, today, useApp, useSettings, useTable, type Tab } from "../context.ts";
 import { ImportHistory } from "../ImportHistory.tsx";
 import { Pager, readPageSize } from "../Pager.tsx";
 import {
@@ -43,7 +43,7 @@ interface DocConfig {
 
 export const DOCS: Record<DocTable, DocConfig> = {
   quotes: {
-    title: "Devis et bons", one: "Devis", newLabel: "Nouveau devis", prefix: "DV", numberedStatus: "sent",
+    title: "Devis", one: "Devis", newLabel: "Nouveau devis", prefix: "DV", numberedStatus: "sent",
     validateLabel: "Finaliser le devis", confirm: "Le devis va être numéroté et ne pourra plus être modifié. Continuer ?",
   },
   invoices: {
@@ -55,6 +55,76 @@ export const DOCS: Record<DocTable, DocConfig> = {
     validateLabel: "Valider l'avoir", confirm: "L'avoir validé sera déduit de la facture et ne pourra plus être modifié. Valider ?",
   },
 };
+
+/**
+ * Vues du menu Ventes : chaque étape de la vente a son entrée. Plusieurs vues lisent
+ * la même table (un bon de commande est rangé avec les devis, un acompte est une facture).
+ */
+export type DocView = "quotes" | "orders" | "deliveries" | "invoices" | "deposits" | "recurring" | "credit_notes";
+interface ViewConfig {
+  kind: DocTable; title: string; intro: string; noun: [string, string]; feminine?: boolean;
+  /** Types de document de la vue (table des devis) : le premier est celui du bouton principal. */
+  types?: QuoteType[];
+  /** Bons sans prix : ni montant ni date de validité dans la liste. */
+  slips?: boolean;
+  /** Documents sans date de validité ni d'échéance. */
+  noDue?: boolean;
+  match?: (d: SyncRecord) => boolean;
+  /** Vue sans bouton « Nouveau » : où se crée ce document. */
+  origin?: { text: string; label: string; to: DocView };
+}
+export const VIEWS: Record<DocView, ViewConfig> = {
+  quotes: { kind: "quotes", title: "Devis", intro: "Devis et factures pro forma", noun: ["devis", "devis"], types: ["quote", "proforma"] },
+  orders: { kind: "quotes", title: "Commandes", intro: "Bons de commande et bons d'intervention confirmés par vos clients", noun: ["commande", "commandes"], feminine: true, types: ["order", "intervention"], noDue: true },
+  deliveries: { kind: "quotes", title: "Livraisons et prestations", intro: "Bons de livraison et de prestation, signés par le client à la réception", noun: ["bon", "bons"], types: ["delivery", "service"], slips: true, noDue: true },
+  invoices: { kind: "invoices", title: "Factures", intro: "Factures émises et suivi des encaissements", noun: ["facture", "factures"], feminine: true },
+  deposits: {
+    kind: "invoices", title: "Acomptes", intro: "Factures d'acompte demandées avant la facture de solde", noun: ["facture d'acompte", "factures d'acompte"], feminine: true,
+    match: (d) => Boolean(d.data.deposit),
+    origin: { text: "Un acompte se facture depuis un devis finalisé : ouvrez le devis, puis « Facture d'acompte ». Il sera déduit de la facture de solde.", label: "Voir les devis", to: "quotes" },
+  },
+  recurring: {
+    kind: "invoices", title: "Factures récurrentes", intro: "Abonnements, loyers et contrats facturés à date fixe", noun: ["facture récurrente", "factures récurrentes"], feminine: true,
+    match: (d) => Boolean(recurrenceOf(d.data)) || Boolean(d.data.recurrence_of),
+    origin: { text: "Pour répéter une facture, ouvrez une facture validée puis activez la répétition dans « Facturation récurrente ». Gestia prépare la suivante à chaque échéance.", label: "Voir les factures", to: "invoices" },
+  },
+  credit_notes: {
+    kind: "credit_notes", title: "Avoirs", intro: "Corrections et annulations de factures", noun: ["avoir", "avoirs"],
+    origin: { text: "Un avoir corrige ou annule une facture validée : ouvrez la facture, puis « Créer un avoir ». Il est déduit de ce que le client doit.", label: "Voir les factures", to: "invoices" },
+  },
+};
+/** Parcours d'une vente, rappelé en tête des écrans : on voit où l'on est et ce qui vient ensuite. */
+const FLOW: { tab: Tab; label: string; hint: string }[] = [
+  { tab: "quotes", label: "Devis", hint: "Proposer un prix" },
+  { tab: "orders", label: "Commande", hint: "Le client confirme" },
+  { tab: "deliveries", label: "Livraison ou prestation", hint: "Le client signe la réception" },
+  { tab: "invoices", label: "Facture", hint: "Demander le paiement" },
+  { tab: "payments", label: "Encaissement", hint: "Enregistrer le paiement" },
+];
+export function SalesFlow({ current }: { current: Tab }) {
+  const { go, session } = useApp();
+  const allowed = tabsFor(session.user.role);
+  if (!FLOW.some((s) => s.tab === current)) return null;
+  return (
+    <ol className="sales-flow" aria-label="Parcours d'une vente">
+      {FLOW.filter((s) => allowed.includes(s.tab)).map((s, i) => (
+        <li key={s.tab} className={s.tab === current ? "current" : ""}>
+          <button type="button" onClick={() => go(s.tab)} aria-current={s.tab === current ? "step" : undefined}>
+            <span className="flow-num" aria-hidden="true">{i + 1}</span>
+            <span className="flow-text"><strong>{s.label}</strong><span>{s.hint}</span></span>
+          </button>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+/** Vue du menu où se range un document. */
+export function viewOf(kind: DocTable, data: Record<string, unknown> | undefined): DocView {
+  if (kind !== "quotes") return kind;
+  const t = quoteTypeOf(data);
+  return t === "order" || t === "intervention" ? "orders" : t === "delivery" || t === "service" ? "deliveries" : "quotes";
+}
 
 type Filter = "all" | "draft" | "open" | "overdue" | "remind" | "recurring";
 
@@ -91,9 +161,9 @@ interface ListState {
 }
 const DEFAULT_LIST: ListState = { query: "", filter: "all", period: "all", from: "", to: "", client: "", type: "", sort: "date", dir: -1, page: 0 };
 /** État de chaque liste, gardé tant que l'application reste ouverte : on retrouve sa liste en revenant d'un document. */
-const LIST_STATE = new Map<DocTable, ListState>();
+const LIST_STATE = new Map<DocView, ListState>();
 /** Prépare une liste avant de l'ouvrir (depuis la fiche d'un client, par exemple). */
-export function presetList(kind: DocTable, patch: Partial<ListState>) {
+export function presetList(kind: DocView, patch: Partial<ListState>) {
   LIST_STATE.set(kind, { ...DEFAULT_LIST, ...patch });
 }
 
@@ -104,20 +174,23 @@ export function presetNewDoc(clientId: string) {
   NEW_DOC_CLIENT = clientId;
 }
 
-export function Documents({ kind, open, setOpen }: { kind: DocTable; open: string | null; setOpen: (id: string | null) => void }) {
+export function Documents({ view, open, setOpen }: { view: DocView; open: string | null; setOpen: (id: string | null) => void }) {
+  const v = VIEWS[view];
+  const kind = v.kind;
   const { go, session } = useApp();
   // Reprise d'historique d'un autre logiciel : ouverte depuis la liste, pour la direction.
   const [importing, setImporting] = useState(false);
-  const docs = useTable(kind);
+  const all = useTable(kind);
+  const docs = useMemo(() => all.filter((d) => (v.types ? v.types.includes(quoteTypeOf(d.data)) : true) && (v.match ? v.match(d) : true)), [all, v]);
   const clients = useTable("clients");
   const { situations } = useSalesData();
   const listSettings = useSettings();
-  const [list, setList] = useState<ListState>(() => LIST_STATE.get(kind) ?? DEFAULT_LIST);
+  const [list, setList] = useState<ListState>(() => LIST_STATE.get(view) ?? DEFAULT_LIST);
   const [pageSize, setPageSize] = useState(readPageSize);
   // Tout changement de filtre ramène à la première page.
   const set = (patch: Partial<ListState>) => setList((l) => {
     const next = { ...l, page: 0, ...patch };
-    LIST_STATE.set(kind, next);
+    LIST_STATE.set(view, next);
     return next;
   });
   const cfg = DOCS[kind];
@@ -146,9 +219,9 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
   type Row = (typeof index)[number];
 
   if (open) {
-    const record = open === "new" ? null : docs.find((d) => d.id === open) ?? null;
+    const record = open === "new" ? null : all.find((d) => d.id === open) ?? null;
     if (open !== "new" && !record) return <p className="empty">Document introuvable sur cet appareil.</p>;
-    return <DocEditor key={open} kind={kind} record={record} clients={clients} onClose={() => setOpen(null)} onOpen={setOpen} />;
+    return <DocEditor key={open} kind={kind} record={record} clients={clients} backLabel={v.title} onClose={() => setOpen(null)} onOpen={setOpen} />;
   }
 
   const matchesFilter = (r: Row, f: Filter) => {
@@ -160,11 +233,10 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
     if (f === "recurring") return r.series;
     return true;
   };
-  const hasSeries = index.some((r) => r.series);
   const filters = ([["all", "Tous"], ["draft", "Brouillons"], ["open", kind === "quotes" ? "En attente" : "À encaisser"], ["overdue", kind === "quotes" ? "Expirés" : "En retard"], ["remind", "À relancer"], ["recurring", "Récurrentes"]] as [Filter, string][])
     .filter(([f]) => (kind !== "credit_notes" || f === "all" || f === "draft") && ((f !== "remind" && f !== "recurring") || kind === "invoices"))
     // « Récurrentes » n'apparaît qu'une fois une série créée.
-    .filter(([f]) => f !== "recurring" || hasSeries);
+    .filter(([f]) => f !== "recurring" && !(v.noDue && f === "overdue"));
   // Filtre devenu sans objet (dernière série arrêtée) : retour à « Tous ».
   const shownFilter: Filter = filters.some(([f]) => f === list.filter) ? list.filter : "all";
 
@@ -198,10 +270,14 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
   const clientOptions = [...new Map(index.map((r) => [text(r.d.data.client_id), r.client])).entries()]
     .filter(([id]) => id)
     .sort((a, b) => a[1].localeCompare(b[1], "fr"));
+  const newType = v.types?.[0] ?? null;
+  const newLabel = v.origin ? null : newType ? QUOTE_TYPES[newType].newLabel : cfg.newLabel;
+  const otherTypes = (v.types ?? []).slice(1);
+  const startNew = (t: QuoteType | null = newType) => { NEW_DOC_TYPE = t; setOpen("new"); };
   const typesPresent = kind === "quotes" ? (Object.keys(QUOTE_TYPES) as QuoteType[]).filter((t) => index.some((r) => r.type === t)) : [];
   const narrowed = Boolean(q || list.period !== "all" || list.client || list.type || shownFilter !== "all");
   const noClient = clients.length === 0;
-  const withDue = kind !== "credit_notes";
+  const withDue = kind !== "credit_notes" && !v.noDue;
   const plural = (n: number) => `${n.toLocaleString("fr-FR")} document${n > 1 ? "s" : ""}`;
 
   const sortBy = (key: SortKey) => set(list.sort === key ? { dir: list.dir === 1 ? -1 : 1 } : { sort: key, dir: key === "number" || key === "client" || key === "due" ? 1 : -1 });
@@ -217,10 +293,11 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
     <section>
       <div className="page-head">
         <div>
-          <h2>{cfg.title}</h2>
-          <p className="muted small">{subtitle(kind, docs.length)}</p>
+          <h2>{v.title}</h2>
+          <p className="muted small">{docs.length === 0 ? v.intro : `${docs.length.toLocaleString("fr-FR")} ${v.noun[docs.length > 1 ? 1 : 0]}`}</p>
         </div>
-        {cfg.newLabel && (
+        {v.origin && <div className="quick"><button onClick={() => go(v.origin!.to)}>{v.origin.label}</button></div>}
+        {newLabel && (
           <div className="quick">
             {noClient && !importing && <span className="muted small" id="need-client">Créez d'abord un client.</span>}
             {can.manageCompany(session.user.role) && (
@@ -228,18 +305,15 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
                 Importer
               </button>
             )}
-            {kind === "quotes" && (
-              <select className="follow-up" aria-label="Créer un autre document" value="" disabled={noClient} onChange={(e) => { if (!e.target.value) return; NEW_DOC_TYPE = e.target.value as QuoteType; setOpen("new"); }}>
-                <option value="">Autre document…</option>
-                {(Object.keys(QUOTE_TYPES) as QuoteType[]).filter((t) => t !== "quote").map((t) => <option key={t} value={t}>{QUOTE_TYPES[t].label}</option>)}
-              </select>
-            )}
-            <button className="primary" onClick={() => setOpen("new")} disabled={noClient} aria-describedby={noClient ? "need-client" : undefined}>
-              {cfg.newLabel}
+            {otherTypes.map((t) => <button key={t} onClick={() => startNew(t)} disabled={noClient}>{QUOTE_TYPES[t].newLabel}</button>)}
+            <button className="primary" onClick={() => startNew()} disabled={noClient} aria-describedby={noClient ? "need-client" : undefined}>
+              {newLabel}
             </button>
           </div>
         )}
       </div>
+      <SalesFlow current={view as Tab} />
+      {v.origin && docs.length > 0 && <p className="view-hint">{v.origin.text}</p>}
       {importing && <ImportHistory />}
       <div className="toolbar">
         <label className="sr-only" htmlFor={`search-${kind}`}>Rechercher</label>
@@ -284,7 +358,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
           {narrowed && <button className="ghost small" onClick={() => set({ ...DEFAULT_LIST, sort: list.sort, dir: list.dir })}>Tout afficher</button>}
           <p className="list-summary muted small" data-testid="list-summary" aria-live="polite">
             <strong>{plural(rows.length)}</strong>{narrowed && rows.length !== docs.length ? ` sur ${docs.length.toLocaleString("fr-FR")}` : ""}
-            {rows.length > 0 && totalXaf !== 0 && <> · Total TTC <strong>{formatXaf(totalXaf)}</strong></>}
+            {rows.length > 0 && totalXaf !== 0 && !v.slips && <> · Total TTC <strong>{formatXaf(totalXaf)}</strong></>}
             {kind === "invoices" && restXaf > 0 && <> · Reste dû <strong>{formatXaf(restXaf)}</strong></>}
           </p>
         </div>
@@ -296,41 +370,42 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
           </div>
           <p className="empty-title">
             {noClient ? "Commencez par créer un client"
-              : kind === "credit_notes" && docs.length === 0 ? "Aucun avoir"
-              : docs.length === 0 ? `Aucun${kind === "invoices" ? "e" : ""} ${cfg.one.toLowerCase()} pour l'instant`
+              : docs.length === 0 ? `Aucun${v.feminine ? "e" : ""} ${v.noun[0]} pour l'instant`
               : "Aucun document ne correspond"}
           </p>
           <p className="muted">
             {noClient ? "Un devis ou une facture est toujours adressé à un client."
               : kind === "credit_notes" && docs.length === 0 ? "Un avoir se crée depuis une facture validée, pour la corriger ou l'annuler."
-              : docs.length === 0 ? `Créez votre premi${kind === "invoices" ? "ère" : "er"} ${cfg.one.toLowerCase()} : ${kind === "invoices" ? "elle sera numérotée" : "il sera numéroté"} automatiquement à la validation.`
+              : docs.length === 0 && v.origin ? v.origin.text
+              : docs.length === 0 ? `Créez votre premi${v.feminine ? "ère" : "er"} ${v.noun[0]} : ${v.feminine ? "elle sera numérotée" : "il sera numéroté"} automatiquement à la validation.`
               : "Modifiez la recherche ou les filtres."}
           </p>
           {noClient ? <button className="primary" onClick={() => go("clients")}>Créer un client</button>
-            : docs.length === 0 && cfg.newLabel ? <button className="primary" onClick={() => setOpen("new")}>{cfg.newLabel}</button>
+            : docs.length === 0 && v.origin ? <button className="primary" onClick={() => go(v.origin!.to)}>{v.origin.label}</button>
+            : docs.length === 0 && newLabel ? <button className="primary" onClick={() => startNew()}>{newLabel}</button>
             : docs.length > 0 ? <button onClick={() => set({ ...DEFAULT_LIST })}>Tout afficher</button> : null}
         </div>
       ) : (
         <div className="card table-wrap">
           <table className="doc-table">
-            <caption className="sr-only">{cfg.title}</caption>
+            <caption className="sr-only">{v.title}</caption>
             <thead>
               <tr>
                 {th("number", "Numéro")}{th("client", "Client")}{th("date", "Date")}{withDue && th("due", kind === "quotes" ? "Valable jusqu'au" : "Échéance")}<th>Statut</th>
                 {kind === "invoices" && th("rest", "Reste dû", true)}
-                {th("total", "Total TTC", true)}
+                {!v.slips && th("total", "Total TTC", true)}
               </tr>
             </thead>
             <tbody>
               {shown.map(({ d, client, st, remind, series, dueDate }) => (
                 <tr key={d.id} className="clickable">
-                  <td className="c-num mono"><button className="row-link" onClick={() => setOpen(d.id)}>{text(d.data.number) || <i className="draft-num">Brouillon</i>}</button>{(kind === "quotes" && quoteTypeOf(d.data) !== "quote") || d.data.deposit ? <span className="doc-type">{docTitle(kind, d.data)}</span> : null}{kind === "invoices" && (series || d.data.recurrence_of) ? <span className="doc-type recur-tag" title={series ? `Prochaine facture le ${formatDate(d.data.recurrence_next)}` : "Préparée automatiquement"}>{series ? `Récurrente · ${RECURRENCE_FREQS[recurrenceOf(d.data)!.freq].adjective}` : "Récurrente"}</span> : null}</td>
+                  <td className="c-num mono"><button className="row-link" onClick={() => setOpen(d.id)}>{text(d.data.number) || <i className="draft-num">Brouillon</i>}</button>{(kind === "quotes" && quoteTypeOf(d.data) !== "quote") || (d.data.deposit && view !== "deposits") ? <span className="doc-type">{docTitle(kind, d.data)}</span> : null}{kind === "invoices" && (series || d.data.recurrence_of) ? <span className="doc-type recur-tag" title={series ? `Prochaine facture le ${formatDate(d.data.recurrence_next)}` : "Préparée automatiquement"}>{series ? `Récurrente · ${RECURRENCE_FREQS[recurrenceOf(d.data)!.freq].adjective}` : "Récurrente"}</span> : null}</td>
                   <td className="c-client">{client}</td>
                   <td className="c-date">{formatDate(d.data.date)}</td>
                   {withDue && <td className={`c-due-date ${st.key === "overdue" || st.key === "expired" ? "danger-text" : "muted"}`}>{dueDate ? formatDate(dueDate) : "—"}</td>}
                   <td className="c-status"><span className={`badge ${st.tone}`}>{st.label}</span>{remind ? <span className="remind-tag" title={TONE_LABELS[remind.tone]}>À relancer · {remind.label}</span> : null}</td>
                   {kind === "invoices" && <td className="c-due right mono">{st.key === "draft" || st.key === "cancelled" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
-                  <td className="c-total right mono">{kind === "quotes" && isSlip(d.data) ? "—" : formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
+                  {!v.slips && <td className="c-total right mono">{kind === "quotes" && isSlip(d.data) ? "—" : formatMoney(totalsOf(d).gross, currencyOf(d))}</td>}
                 </tr>
               ))}
             </tbody>
@@ -340,13 +415,6 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
       )}
     </section>
   );
-}
-
-function subtitle(kind: DocTable, n: number): string {
-  if (n === 0) return kind === "quotes" ? "Devis, factures pro forma, bons de commande, de livraison et de prestation" : kind === "invoices" ? "Factures émises et suivi des encaissements" : "Corrections et annulations de factures";
-  if (kind === "quotes") return `${n} document${n > 1 ? "s" : ""}`;
-  const one = kind === "invoices" ? "facture" : "avoir";
-  return `${n} ${one}${n > 1 ? "s" : ""}`;
 }
 
 /** Statut affiché d'un document, avec sa couleur : gris brouillon, bleu en cours, ambre partiel, vert réglé, rouge en retard. */
@@ -376,8 +444,8 @@ export function docStatus(kind: DocTable, d: SyncRecord, situations: Map<string,
 
 const emptyLine = (): InvoiceLine => ({ label: "", qty: 1, unitPrice: 0, vatRate: DEFAULT_VAT_RATE });
 
-function DocEditor({ kind, record, clients, onClose, onOpen }: {
-  kind: DocTable; record: SyncRecord | null; clients: SyncRecord[]; onClose: () => void; onOpen: (id: string) => void;
+function DocEditor({ kind, record, clients, backLabel, onClose, onOpen }: {
+  kind: DocTable; backLabel: string; record: SyncRecord | null; clients: SyncRecord[]; onClose: () => void; onOpen: (id: string) => void;
 }) {
   const { db, sync, session, go } = useApp();
   const cfg = DOCS[kind];
@@ -416,7 +484,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const [message, setMessage] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [docType, setDocType] = useState<QuoteType>(() => {
+  const [docType] = useState<QuoteType>(() => {
     const preset = NEW_DOC_TYPE;
     NEW_DOC_TYPE = null;
     return record ? quoteTypeOf(record.data) : preset ?? "quote";
@@ -711,7 +779,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const head = (
     <div className="page-head doc-head">
       <div>
-        <button className="link back-link" onClick={onClose}>← {cfg.title}</button>
+        <button className="link back-link" onClick={onClose}>← {backLabel}</button>
         <div className="title-row">
           <h2>{title}</h2>
           {status && numbered && <span className={`badge ${status.tone}`}>{status.label}</span>}
@@ -731,12 +799,6 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
         {numbered && <button onClick={() => setPrinting(true)}>Aperçu / imprimer</button>}
         {record && kind !== "credit_notes" && <button onClick={duplicate}>Dupliquer</button>}
         {numbered && <button onClick={() => share.pdf("download")} disabled={share.busy}>Télécharger le PDF</button>}
-        {numbered && followUps(kind, record?.data).length > 0 && (
-          <select className="follow-up" aria-label="Créer un bon à partir de ce document" value="" onChange={(e) => e.target.value && createDelivery(e.target.value as QuoteType)}>
-            <option value="">Créer un bon…</option>
-            {followUps(kind, record?.data).map((t) => <option key={t} value={t}>{QUOTE_TYPES[t].label}</option>)}
-          </select>
-        )}
       </div>
     </div>
   );
@@ -885,7 +947,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                   <>
                     {!isDelivery && <><div className="aside-label">{kind === "quotes" ? `Montant (TTC)` : "Montant de l'avoir (TTC)"}</div>
                     <div className="aside-amount mono">{fm(totals.gross)}</div></>}
-                    {isDelivery && <><div className="aside-label">{slip?.count}</div><div className="aside-amount mono">{billable().reduce((n, l) => n + l.qty, 0)}</div></>}
+                    {isDelivery && <><div className="aside-label">{slip?.count}</div><div className="aside-amount mono">{billable().length}</div></>}
                     {kind === "quotes" && showDue && dueDate && <p className="aside-sub">Valable jusqu'au {formatDate(dueDate)}</p>}
                     {kind === "quotes" && deposits.length > 0 && (
                       <ul className="deposit-list" aria-label="Acomptes facturés">
@@ -940,6 +1002,15 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                   </ul>
                 </div>
               )}
+              {followUps(kind, record?.data).length > 0 && (
+                <div className="card aside-actions next-steps" data-testid="next-steps">
+                  <h3>Étape suivante</h3>
+                  {followUps(kind, record?.data).map((t) => (
+                    <button key={t} onClick={() => createDelivery(t)}>Créer le {QUOTE_TYPES[t].label.toLowerCase()}</button>
+                  ))}
+                  <p className="hint">Le nouveau document reprend les lignes de celui-ci et lui reste lié.</p>
+                </div>
+              )}
               <div className="card aside-actions">
                 <h3>{share.reminder ? "Relancer le client" : "Envoyer au client"}</h3>
                 {nextReminder && <p className="remind-step"><span className="remind-tag">{nextReminder.label}</span> {TONE_LABELS[nextReminder.tone]} prévue aujourd'hui (Réglages, Documents).</p>}
@@ -976,14 +1047,6 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       {links}
       <div className="card editor-card">
         <div className="doc-fields">
-          {kind === "quotes" && (
-            <label>
-              Type de document
-              <select value={docType} onChange={(e) => setDocType(e.target.value as QuoteType)}>
-                {(Object.keys(QUOTE_TYPES) as QuoteType[]).map((k) => <option key={k} value={k}>{QUOTE_TYPES[k].label}</option>)}
-              </select>
-            </label>
-          )}
           <label>
             Client
             <select value={clientId} onChange={(e) => setClientId(e.target.value)} disabled={kind === "credit_notes"}>

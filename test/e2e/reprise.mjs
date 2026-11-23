@@ -120,10 +120,10 @@ try {
   assert.equal(await txt("total-ttc"), "236 000 FCFA");
 
   step("Devis facturé et bon d'intervention");
-  await nav("Devis et bons");
+  await nav("Devis");
   assert.match(await row("DALPHA001").innerText(), /Facturé/);
   assert.equal(await row("DOMEGA001").count(), 0);
-  await open("Devis et bons", "BIALPHA001");
+  await open("Commandes", "BIALPHA001");
   assert.match(await page.locator("h2").first().innerText(), /Bon d'intervention BIALPHA001/);
 
   step("Listes : filtres par client, période et type, tri, état gardé en revenant");
@@ -146,11 +146,21 @@ try {
   assert.match(await page.locator("tbody tr").first().innerText(), /FAGAMMA001/);
   await page.getByRole("columnheader", { name: "Numéro" }).getByRole("button").click();
   assert.match(await page.locator("tbody tr").first().innerText(), /FSGAMMA001/);
-  await nav("Devis et bons");
-  await page.getByLabel("Type de document").selectOption({ label: "Bon d'intervention" });
-  assert.match(await listSummary(), /^1 document sur 2/);
+  await nav("Commandes");
+  assert.match(await listSummary(), /^1 document/);
   assert.match(await page.locator("tbody tr").first().innerText(), /BIALPHA001/);
-  await page.getByRole("button", { name: "Tout afficher" }).click();
+
+  step("Encaissements : tous les paiements repris, total et filtre par client");
+  await nav("Encaissements");
+  assert.match(await txt("payments-summary"), /^3 encaissements · Total/);
+  await page.getByLabel("Filtrer par tiers").selectOption({ label: "BETA" });
+  assert.match(await txt("payments-summary"), /^1 encaissement sur 3 · Total 1 000 000 FCFA/);
+  await shot("reprise-encaissements.png");
+
+  step("Relances : factures à encaisser par ancienneté du retard");
+  await nav("Relances");
+  await page.getByRole("row", { name: /FBETA001/ }).getByRole("button", { name: "Relancer" }).click();
+  await page.locator("h2", { hasText: "FBETA001" }).waitFor();
 
   step("Clients : filtre « Reste dû » et fiche avec les documents du client");
   await nav("Clients");

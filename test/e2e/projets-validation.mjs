@@ -98,7 +98,7 @@ try {
   await a.getByRole("button", { name: "Nouveau client" }).click();
   await a.getByLabel("Raison sociale").fill("SEEG");
   await a.getByRole("button", { name: "Enregistrer" }).click();
-  await nav(a, "Devis et bons");
+  await nav(a, "Devis");
   await a.getByRole("button", { name: "Nouveau devis" }).first().click();
   await a.getByRole("button", { name: "+ Ajouter un titre" }).click();
   await a.getByLabel("Titre de section").fill(PROJECT);
