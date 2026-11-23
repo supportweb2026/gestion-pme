@@ -49,25 +49,68 @@ async function resizeLogo(file: File, maxW = 320, maxH = 160): Promise<string> {
   }
 }
 
+type SettingsTab = "account" | "company" | "documents" | "tax" | "team" | "data";
+
+const SETTINGS_TABS: { key: SettingsTab; label: string; hint: string }[] = [
+  { key: "account", label: "Mon compte", hint: "Mot de passe, double authentification, cet appareil et les applications connectées." },
+  { key: "company", label: "Entreprise", hint: "Identité, coordonnées et banque imprimées sur vos documents, abonnement et objectif." },
+  { key: "documents", label: "Documents", hint: "Apparence, cachet, notes par défaut, délai de paiement et relances." },
+  { key: "tax", label: "Fiscalité", hint: "TVA, CSS, retenues à la source, mentions obligatoires et devises." },
+  { key: "team", label: "Équipe", hint: "Les personnes qui utilisent Gestia et leur rôle." },
+  { key: "data", label: "Données", hint: "Sauvegarde, reprise d'historique et accès par API." },
+];
+
+/** Mentions de l'entreprise attendues sur une facture et encore vides. */
+export function missingCompanyFields(s: Record<string, unknown>): string[] {
+  return ([["nif", "NIF"], ["rccm", "RCCM"], ["address", "adresse"], ["phone", "téléphone"]] as const)
+    .filter(([k]) => !text(s[k]).trim()).map(([, label]) => label);
+}
+
+/**
+ * Réglages rangés par sujet, un onglet à la fois : plus de longue page à faire défiler.
+ * Chacun ne voit que les onglets de son rôle ; le dernier onglet ouvert est mémorisé sur l'appareil.
+ */
 export function Settings() {
   const { session } = useApp();
+  const s = useSettings();
+  const role = session.user.role;
+  const company = can.manageCompany(role);
+  const allowed = SETTINGS_TABS.filter((t) => t.key === "account" || (t.key === "team" ? can.manageUsers(role) : company));
+  const [picked, setPicked] = useState<SettingsTab>(() => {
+    try { return (localStorage.getItem("gestia:reglages-onglet") as SettingsTab | null) ?? "account"; } catch { return "account"; }
+  });
+  const tab = allowed.some((t) => t.key === picked) ? picked : "account";
+  const choose = (t: SettingsTab) => {
+    setPicked(t);
+    try { localStorage.setItem("gestia:reglages-onglet", t); } catch { /* stockage indisponible */ }
+  };
+  const current = SETTINGS_TABS.find((t) => t.key === tab)!;
+  const incomplete = company && missingCompanyFields(s).length > 0;
   return (
-    <section>
-      <div className="section-head"><h2>Réglages</h2></div>
-      <MyAccount />
-      <DeviceSecurity />
-      <Connections />
-      {can.manageCompany(session.user.role) && <SubscriptionCard />}
-      {can.manageCompany(session.user.role) && <CompanySettings />}
-      {can.manageCompany(session.user.role) && <DocumentLookCard />}
-      {can.manageCompany(session.user.role) && <FiscalSettingsCard />}
-      {can.manageCompany(session.user.role) && <RemindersCard />}
-      {can.manageCompany(session.user.role) && <TargetCard />}
-      {can.manageCompany(session.user.role) && <CurrencySettings />}
-      {can.manageUsers(session.user.role) && <Users />}
-      {can.manageCompany(session.user.role) && <DataExport />}
-      {can.manageCompany(session.user.role) && <ImportHistory />}
-      {session.user.role === "admin" && <ApiKeys />}
+    <section className="settings">
+      <div className="page-head">
+        <div>
+          <h2>Réglages</h2>
+          <p className="muted small">{current.hint}</p>
+        </div>
+      </div>
+      {allowed.length > 1 && (
+        <div className="segmented scroll-x settings-tabs" role="tablist" aria-label="Rubriques des réglages">
+          {allowed.map((t) => (
+            <button key={t.key} role="tab" id={`reglages-${t.key}`} aria-selected={tab === t.key} className={tab === t.key ? "active" : ""} onClick={() => choose(t.key)}>
+              {t.label}{t.key === "company" && incomplete ? <span className="tab-flag" title="Des mentions manquent sur vos documents">À compléter</span> : null}
+            </button>
+          ))}
+        </div>
+      )}
+      <div role={allowed.length > 1 ? "tabpanel" : undefined} aria-labelledby={allowed.length > 1 ? `reglages-${tab}` : undefined} className="settings-panel">
+        {tab === "account" && <><MyAccount /><DeviceSecurity /><Connections /></>}
+        {tab === "company" && <><CompanySettings /><TargetCard /><SubscriptionCard /></>}
+        {tab === "documents" && <><DocumentLookCard /><RemindersCard /></>}
+        {tab === "tax" && <><FiscalSettingsCard /><CurrencySettings /></>}
+        {tab === "team" && <Users />}
+        {tab === "data" && <><DataExport /><ImportHistory />{role === "admin" && <ApiKeys />}</>}
+      </div>
     </section>
   );
 }
@@ -313,8 +356,7 @@ function CompanySettings() {
     const f = Object.fromEntries([...new FormData(e.currentTarget)].map(([k, v]) => [k, String(v).trim()]));
     const patch: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(f)) {
-      const value = k === "payment_days" ? Number(v) || DEFAULT_PAYMENT_DAYS : v;
-      if ((s[k] ?? "") !== value) patch[k] = value;
+      if ((s[k] ?? "") !== v) patch[k] = v;
     }
     if (Object.keys(patch).length) await db.write("settings", "company", patch);
     setSaved(true);
@@ -335,6 +377,11 @@ function CompanySettings() {
     <form className="card section-card" onSubmit={save}>
       <h3>Entreprise</h3>
       <p className="muted small">Ces informations apparaissent sur vos devis, factures et avoirs.</p>
+      {missingCompanyFields(s).length > 0 && (
+        <p className="notice" data-testid="company-missing">
+          Il manque : {missingCompanyFields(s).join(", ")}. Vos devis et factures sortent sans {missingCompanyFields(s).length > 1 ? "ces mentions" : "cette mention"} tant que {missingCompanyFields(s).length > 1 ? "ces champs sont vides" : "ce champ est vide"}.
+        </p>
+      )}
       <div className="logo-row">
         {typeof s.logo === "string" && s.logo ? <img src={s.logo} alt="Logo actuel" className="logo-preview" /> : <div className="logo-preview empty-logo">Logo</div>}
         <label className="button">
@@ -351,10 +398,6 @@ function CompanySettings() {
             <input name={f.name} defaultValue={text(s[f.name])} placeholder={f.placeholder} />
           </label>
         ))}
-        <label>
-          Délai de paiement (jours)
-          <input name="payment_days" type="number" min="0" defaultValue={text(s.payment_days ?? DEFAULT_PAYMENT_DAYS)} />
-        </label>
       </div>
       <div className="form-actions">
         {saved && <span className="ok-text">Enregistré</span>}
@@ -813,8 +856,9 @@ function DocumentLookCard() {
       default_note_invoices: String(f.get("default_note_invoices") ?? "").trim(),
       default_note_quotes: String(f.get("default_note_quotes") ?? "").trim(),
       terms: String(f.get("terms") ?? "").trim(),
+      payment_days: Math.max(0, Math.round(Number(f.get("payment_days")))) || DEFAULT_PAYMENT_DAYS,
     };
-    const patch = Object.fromEntries(Object.entries(values).filter(([k, v]) => (s[k] ?? (k === "stamp_on" ? true : "")) !== v));
+    const patch = Object.fromEntries(Object.entries(values).filter(([k, v]) => (s[k] ?? (k === "stamp_on" ? true : k === "payment_days" ? DEFAULT_PAYMENT_DAYS : "")) !== v));
     if (Object.keys(patch).length) await db.write("settings", "company", patch);
     setSaved(true);
     setTimeout(() => setSaved(false), 2500);
@@ -832,7 +876,7 @@ function DocumentLookCard() {
 
   return (
     <form className="card section-card doc-look-card" onSubmit={save}>
-      <h3>Apparence des documents</h3>
+      <h3>Apparence et mentions des documents</h3>
       <p className="muted small">Couleur, cachet et mentions de vos devis, factures et avoirs, à l'écran comme en PDF.</p>
 
       <div className="aside-label">Couleur</div>
@@ -867,6 +911,10 @@ function DocumentLookCard() {
       <p className="hint">Photo ou scan du cachet signé, idéalement détouré (PNG transparent). Jamais imprimé sur un bon de livraison, que signe le client.</p>
 
       <div className="form-grid">
+        <label>Délai de paiement (jours)
+          <input name="payment_days" type="number" min="0" defaultValue={text(s.payment_days ?? DEFAULT_PAYMENT_DAYS)} />
+          <span className="hint">Échéance proposée sur chaque nouvelle facture.</span>
+        </label>
         <label className="wide">Note par défaut des nouvelles factures
           <textarea name="default_note_invoices" rows={2} defaultValue={text(s.default_note_invoices)} placeholder="Ex. Merci de rappeler le numéro de facture lors du paiement." />
         </label>

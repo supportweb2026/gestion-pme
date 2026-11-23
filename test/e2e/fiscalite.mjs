@@ -76,6 +76,7 @@ try {
 
   step("Réglages > Fiscalité : CSS 1 %, NIF exigé, pénalités de retard");
   await nav("Réglages");
+  await page.getByRole("tab", { name: "Fiscalité" }).click();
   const fiscal = page.locator(".fiscal-card");
   await fiscal.getByLabel(/Facturer la CSS/).check();
   await fiscal.getByLabel(/numéro fiscal des entreprises/).check();

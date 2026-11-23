@@ -75,6 +75,8 @@ try {
   await waitSynced();
 
   await nav("Réglages");
+
+  await page.getByRole("tab", { name: "Entreprise" }).click();
   await page.getByLabel("Raison sociale").fill("IDO SARL");
   await page.getByLabel("NIF").fill("2026 0042 G");
   await page.getByLabel("RCCM").fill("GA-LBV-01-2026-B12-00042");

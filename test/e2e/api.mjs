@@ -70,6 +70,7 @@ try {
   await page.getByRole("button", { name: "Démarrer l'essai gratuit" }).click();
   await waitSynced();
   await nav("Réglages");
+  await page.getByRole("tab", { name: "Données" }).click();
   const card = page.getByRole("region", { name: "Accès par API" });
   await card.getByText("Aucun jeton actif.").waitFor();
   await card.getByRole("button", { name: "Nouveau jeton" }).click();

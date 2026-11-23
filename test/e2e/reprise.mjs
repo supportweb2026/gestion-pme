@@ -63,6 +63,7 @@ try {
 
   step("Réglages › Reprise d'historique : aperçu et contrôle par année");
   await nav("Réglages");
+  await page.getByRole("tab", { name: "Données" }).click();
   await page.getByLabel("Exports CSV VosFactures").setInputFiles(FILE);
   const preview = page.getByTestId("import-history-preview");
   await preview.waitFor();

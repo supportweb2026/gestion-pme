@@ -87,6 +87,7 @@ try {
   await a.getByRole("button", { name: "Démarrer l'essai gratuit" }).click();
   await waitSynced(a);
   await nav(a, "Réglages");
+  await a.getByRole("tab", { name: "Équipe" }).click();
   for (const [name, email, role] of [["Junior Mintsa", "junior@ido.ga", "employee"], ["Ornella Mba", "ornella@ido.ga", "project_manager"]]) {
     await a.getByRole("button", { name: "Ajouter un utilisateur" }).click();
     await a.getByLabel("Nom", { exact: true }).fill(name);
