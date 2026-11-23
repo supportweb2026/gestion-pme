@@ -9,7 +9,7 @@ import { formatXaf, PAYMENT_METHODS } from "../../shared/invoice.ts";
 import { formatMoney } from "../../shared/currency.ts";
 import type { DocTable, SyncRecord } from "../../shared/sync.ts";
 import { currencyOf, invoiceSituations, rateOf, totalsOf } from "../ledger.ts";
-import { docRefs, docTitle, isSection, quoteTypeOf } from "../../shared/documents.ts";
+import { docRefs, docTitle, isSection, isSlip } from "../../shared/documents.ts";
 import { PROJECT_STATUS } from "../../shared/projects.ts";
 import { docStatus, presetList, presetNewDoc } from "./Documents.tsx";
 import { usePaged } from "../Pager.tsx";
@@ -74,7 +74,7 @@ export function ClientPage({ client, onBack, onEdit }: { client: SyncRecord; onB
   const history = useMemo(() => [
     ...data.docs.filter((x) => x.d.data.number).map((x) => ({
       date: text(x.d.data.date), key: x.d.id, tbl: x.tbl as DocTable | null, id: x.d.id,
-      what: `${docTitle(x.tbl, x.d.data)} ${text(x.d.data.number)}`, amount: x.tbl === "quotes" && quoteTypeOf(x.d.data) === "delivery" ? "" : formatMoney(totalsOf(x.d).gross, currencyOf(x.d)), tone: x.tbl === "invoices" ? "info" : x.tbl === "credit_notes" ? "warn" : "",
+      what: `${docTitle(x.tbl, x.d.data)} ${text(x.d.data.number)}`, amount: x.tbl === "quotes" && isSlip(x.d.data) ? "" : formatMoney(totalsOf(x.d).gross, currencyOf(x.d)), tone: x.tbl === "invoices" ? "info" : x.tbl === "credit_notes" ? "warn" : "",
     })),
     ...data.pays.map((p) => {
       const inv = data.ids.get(text(p.data.invoice_id));
@@ -170,7 +170,7 @@ export function ClientPage({ client, onBack, onEdit }: { client: SyncRecord; onB
                   <tbody>
                     {docsPaged.shown.map(({ tbl, d }) => {
                       const st = docStatus(tbl, d, situations);
-                      const delivery = tbl === "quotes" && quoteTypeOf(d.data) === "delivery";
+                      const delivery = tbl === "quotes" && isSlip(d.data);
                       const subject = docRefs(d.data).subject || text((d.data.lines as { label?: string; section?: boolean }[] | undefined)?.find((l) => !isSection(l as never))?.label);
                       return (
                         <tr key={d.id}>

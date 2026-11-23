@@ -63,7 +63,7 @@ export type Tab =
 export const TAB_LABELS: Record<Tab, string> = {
   dashboard: "Tableau de bord",
   gains: "Gains",
-  quotes: "Devis",
+  quotes: "Devis et bons",
   invoices: "Factures",
   credit_notes: "Avoirs",
   expenses: "Dépenses",

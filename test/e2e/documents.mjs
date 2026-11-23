@@ -74,7 +74,7 @@ try {
   await page.getByRole("button", { name: "Enregistrer" }).click();
 
   step("Devis avec un titre de section, deux lignes et 10 % de remise sur toutes les lignes");
-  await nav("Devis");
+  await nav("Devis et bons");
   await page.getByRole("button", { name: "Nouveau devis" }).first().click();
   await page.getByRole("button", { name: "+ Ajouter un titre" }).click();
   // Le titre s'ajoute en fin de tableau : on le saisit puis on remplit les lignes.
@@ -116,7 +116,7 @@ try {
   await shot("solde.png");
 
   step("Bon de livraison depuis la facture : quantités seules, signatures");
-  await page.getByRole("button", { name: "Bon de livraison" }).click();
+  await page.getByLabel("Créer un bon à partir de ce document").selectOption({ label: "Bon de livraison" });
   await heading("Bon de livraison (brouillon)");
   const blLabels = await page.getByLabel("Désignation").evaluateAll((els) => els.map((e) => e.value));
   assert.ok(!blLabels.some((l) => l.includes("acompte")), `pas d'acompte sur le bon de livraison : ${blLabels.join(" | ")}`);
@@ -130,7 +130,7 @@ try {
   await page.getByText("Livraison confirmée.").waitFor();
 
   step("Facture pro forma (série PF) convertie en facture");
-  await nav("Devis");
+  await nav("Devis et bons");
   await page.getByRole("button", { name: "Nouveau devis" }).first().click();
   await page.getByLabel("Type de document").selectOption("proforma");
   await line(0, "Audit réseau", 1, 500_000);
@@ -142,12 +142,40 @@ try {
   await heading(`Facture FA-${YEAR}-00003`);
 
   step("Liste des devis : le type de chaque document est affiché");
-  await nav("Devis");
+  await nav("Devis et bons");
   for (const t of ["Facture pro forma", "Bon de livraison"]) await page.locator(".doc-type", { hasText: t }).first().waitFor();
   const blRow = page.getByRole("row", { name: new RegExp(`BL-${YEAR}-00001`) });
   await blRow.getByText("Livré", { exact: true }).waitFor();
   assert.equal((await blRow.locator(".c-total").textContent()).trim(), "—", "pas de montant pour un bon de livraison");
   await shot("liste-devis.png");
+
+  step("Chaîne : devis, bon de commande, bon de prestation signé par le client");
+  await page.getByRole("button", { name: "Nouveau devis" }).first().click();
+  await line(0, "Formation des équipes", 2, 150_000);
+  await page.getByRole("button", { name: "Finaliser le devis" }).click();
+  await heading(`Devis DV-${YEAR}-00002`);
+  await page.getByLabel("Créer un bon à partir de ce document").selectOption({ label: "Bon de commande" });
+  await heading("Bon de commande (brouillon)");
+  assert.equal(await ttc(), "354 000 FCFA", "le bon de commande reprend les prix du devis");
+  await page.getByRole("button", { name: "Finaliser le bon de commande" }).click();
+  await heading(`Bon de commande BC-${YEAR}-00001`);
+  await page.getByTestId("related-docs").getByText(`DV-${YEAR}-00002`).waitFor();
+  await page.getByLabel("Créer un bon à partir de ce document").selectOption({ label: "Bon de prestation" });
+  await heading("Bon de prestation (brouillon)");
+  await page.getByRole("button", { name: "Finaliser le bon de prestation" }).click();
+  await heading(`Bon de prestation BP-${YEAR}-00001`);
+  const bp = await pdfText("bp.pdf");
+  assert.ok(/BON DE PRESTATION/i.test(bp.text), bp.text);
+  assert.ok(/PRESTATION CONSTATÉE PAR LE CLIENT/i.test(bp.text), "signature du client");
+  assert.ok(!bp.text.includes("354 000"), "aucun prix sur le bon de prestation");
+  await page.getByRole("button", { name: "Marquer réalisé" }).click();
+  await page.getByText("Prestation constatée par le client.").waitFor();
+  // Le devis d'origine est accepté, et un bon se crée aussi directement depuis la liste.
+  await nav("Devis et bons");
+  await page.getByRole("row", { name: new RegExp(`DV-${YEAR}-00002`) }).getByText("Accepté", { exact: true }).waitFor();
+  await page.getByLabel("Créer un autre document").selectOption({ label: "Bon de prestation" });
+  await heading("Nouveau bon de prestation");
+  await page.getByRole("button", { name: /← Devis et bons/ }).click();
 
   assert.deepEqual(errors, [], "aucune erreur JavaScript");
   console.log("\nRecette du cycle de vente réussie.");

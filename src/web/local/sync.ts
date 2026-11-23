@@ -3,6 +3,7 @@
  * Envoie la file d'attente et récupère les modifications des autres appareils
  * dès que le réseau est disponible ; ne bloque jamais le travail local.
  */
+import { QUOTE_SERIES } from "../../shared/documents.ts";
 import { MAX_PUSH, type SyncRequest, type SyncResponse } from "../../shared/sync.ts";
 import type { SubscriptionInfo } from "../../shared/plans.ts";
 import { formatInvoiceNumber } from "../../shared/invoice.ts";
@@ -36,7 +37,8 @@ const DEBOUNCE_MS = 1_500;
 
 /** Série de l'année en cours pour un préfixe : FA (factures), AV (avoirs), DV (devis). */
 export const seriesFor = (prefix: string, date = new Date()) => `${prefix}-${date.getFullYear()}`;
-const PREFIXES = ["FA", "AV", "DV", "PF", "BC", "BL"];
+// Toutes les séries numérotées : factures, avoirs, et chaque type de devis ou de bon.
+const PREFIXES = ["FA", "AV", ...QUOTE_SERIES];
 
 export class SyncEngine {
   private db: LocalDb;

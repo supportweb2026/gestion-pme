@@ -17,7 +17,7 @@ import { CASH_LIMIT_XAF, fiscalSettings, newDocTaxFields, pct } from "../../shar
 import { currencyOf, invoiceSituations, linesOf, QUOTE_LABELS, quoteStatus, rateOf, SITUATION_LABELS, totalsOf, type Situation } from "../ledger.ts";
 import { PrintView } from "./PrintView.tsx";
 import {
-  applyGlobalDiscount, deductionLines, depositLines, docRefs, docSearchText, docTitle, isDepositLine, isSection, percentForAmount,
+  applyGlobalDiscount, deductionLines, depositLines, docRefs, docSearchText, docTitle, followUps, isDepositLine, isSection, isSlip, isSlipType, percentForAmount, SLIP_TEXTS,
   QUOTE_TYPES, quoteTypeOf, relatedDocs, sectionSubtotals, type QuoteType,
 } from "../../shared/documents.ts";
 import { inPeriod, PERIOD_LABELS, periodRange, type PeriodPreset } from "../../shared/periods.ts";
@@ -43,7 +43,7 @@ interface DocConfig {
 
 export const DOCS: Record<DocTable, DocConfig> = {
   quotes: {
-    title: "Devis", one: "Devis", newLabel: "Nouveau devis", prefix: "DV", numberedStatus: "sent",
+    title: "Devis et bons", one: "Devis", newLabel: "Nouveau devis", prefix: "DV", numberedStatus: "sent",
     validateLabel: "Finaliser le devis", confirm: "Le devis va être numéroté et ne pourra plus être modifié. Continuer ?",
   },
   invoices: {
@@ -98,6 +98,7 @@ export function presetList(kind: DocTable, patch: Partial<ListState>) {
 }
 
 /** Client à proposer sur le prochain nouveau document (créé depuis la page d'un client). */
+let NEW_DOC_TYPE: QuoteType | null = null;
 let NEW_DOC_CLIENT = "";
 export function presetNewDoc(clientId: string) {
   NEW_DOC_CLIENT = clientId;
@@ -128,7 +129,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
       const client = names.get(text(d.data.client_id)) || "—";
       const st = docStatus(kind, d, situations);
       const sit = situations.get(d.id);
-      const delivery = kind === "quotes" && quoteTypeOf(d.data) === "delivery";
+      const delivery = kind === "quotes" && isSlip(d.data);
       const counted = st.key !== "cancelled" && !delivery;
       return {
         d, client, st,
@@ -227,6 +228,12 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
                 Importer
               </button>
             )}
+            {kind === "quotes" && (
+              <select className="follow-up" aria-label="Créer un autre document" value="" disabled={noClient} onChange={(e) => { if (!e.target.value) return; NEW_DOC_TYPE = e.target.value as QuoteType; setOpen("new"); }}>
+                <option value="">Autre document…</option>
+                {(Object.keys(QUOTE_TYPES) as QuoteType[]).filter((t) => t !== "quote").map((t) => <option key={t} value={t}>{QUOTE_TYPES[t].label}</option>)}
+              </select>
+            )}
             <button className="primary" onClick={() => setOpen("new")} disabled={noClient} aria-describedby={noClient ? "need-client" : undefined}>
               {cfg.newLabel}
             </button>
@@ -323,7 +330,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
                   {withDue && <td className={`c-due-date ${st.key === "overdue" || st.key === "expired" ? "danger-text" : "muted"}`}>{dueDate ? formatDate(dueDate) : "—"}</td>}
                   <td className="c-status"><span className={`badge ${st.tone}`}>{st.label}</span>{remind ? <span className="remind-tag" title={TONE_LABELS[remind.tone]}>À relancer · {remind.label}</span> : null}</td>
                   {kind === "invoices" && <td className="c-due right mono">{st.key === "draft" || st.key === "cancelled" ? "" : formatMoney(situations.get(d.id)?.due ?? 0, currencyOf(d))}</td>}
-                  <td className="c-total right mono">{kind === "quotes" && quoteTypeOf(d.data) === "delivery" ? "—" : formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
+                  <td className="c-total right mono">{kind === "quotes" && isSlip(d.data) ? "—" : formatMoney(totalsOf(d).gross, currencyOf(d))}</td>
                 </tr>
               ))}
             </tbody>
@@ -336,7 +343,7 @@ export function Documents({ kind, open, setOpen }: { kind: DocTable; open: strin
 }
 
 function subtitle(kind: DocTable, n: number): string {
-  if (n === 0) return kind === "quotes" ? "Devis, factures pro forma, bons de commande et de livraison" : kind === "invoices" ? "Factures émises et suivi des encaissements" : "Corrections et annulations de factures";
+  if (n === 0) return kind === "quotes" ? "Devis, factures pro forma, bons de commande, de livraison et de prestation" : kind === "invoices" ? "Factures émises et suivi des encaissements" : "Corrections et annulations de factures";
   if (kind === "quotes") return `${n} document${n > 1 ? "s" : ""}`;
   const one = kind === "invoices" ? "facture" : "avoir";
   return `${n} ${one}${n > 1 ? "s" : ""}`;
@@ -354,9 +361,10 @@ export function docStatus(kind: DocTable, d: SyncRecord, situations: Map<string,
   if (kind === "quotes") {
     const s = quoteStatus(d);
     // Un bon de livraison n'est ni accepté ni facturé : il est livré (ou à livrer).
-    if (quoteTypeOf(d.data) === "delivery") {
+    const slip = SLIP_TEXTS[quoteTypeOf(d.data)];
+    if (slip) {
       if (s === "draft") return { label: "Brouillon", tone: "", key: s };
-      return s === "accepted" ? { label: "Livré", tone: "ok", key: s } : { label: "À livrer", tone: "info", key: s };
+      return s === "accepted" ? { label: slip.done, tone: "ok", key: s } : { label: slip.todo, tone: "info", key: s };
     }
     const tone = s === "accepted" || s === "invoiced" ? "ok" : s === "expired" ? "danger" : s === "sent" ? "info" : "";
     return { label: QUOTE_LABELS[s] ?? s, tone, key: s };
@@ -408,13 +416,19 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
   const [message, setMessage] = useState<string | null>(null);
   const [printing, setPrinting] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [docType, setDocType] = useState<QuoteType>(() => quoteTypeOf(record?.data));
+  const [docType, setDocType] = useState<QuoteType>(() => {
+    const preset = NEW_DOC_TYPE;
+    NEW_DOC_TYPE = null;
+    return record ? quoteTypeOf(record.data) : preset ?? "quote";
+  });
   const [globalDiscount, setGlobalDiscount] = useState("");
   const fiscal = fiscalSettings(settings);
   const [withholding, setWithholding] = useState(() => ({ rate: Number(record?.data.withholding_rate) || 0, label: text(record?.data.withholding_label) }));
   const qt = QUOTE_TYPES[docType];
   const one = kind === "quotes" ? qt.label : docTitle(kind, record?.data);
-  const isDelivery = kind === "quotes" && docType === "delivery";
+  // « isDelivery » : un bon sans prix (livraison ou prestation).
+  const isDelivery = kind === "quotes" && isSlipType(docType);
+  const slip = SLIP_TEXTS[docType];
 
   const numbered = isNumbered(record?.data);
   const closedUntil = text(settings.closed_until);
@@ -602,15 +616,17 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
     go("invoices", invId);
   }
 
-  /** Bon de livraison reprenant les articles du document (sans les acomptes). */
-  async function createDelivery() {
-    const blId = db.newId("bl");
+  /** Suite du document : bon de commande (avec les prix), bon de livraison ou de prestation (sans prix, sans les acomptes). */
+  async function createDelivery(type: QuoteType = "delivery") {
+    const blId = db.newId(type === "delivery" ? "bl" : "dv");
+    const priced = !isSlipType(type);
     await db.write("quotes", blId, {
       status: "draft",
-      doc_type: "delivery",
+      doc_type: type,
       client_id: record!.data.client_id,
       date: today(),
-      valid_until: "",
+      valid_until: priced ? addDays(today(), 30) : "",
+      ...(priced ? { ...taxCopy(record), payment_terms: refs.paymentTerms } : {}),
       lines: linesOf(record).filter((l) => !isDepositLine(l)),
       currency: currencyOf(record),
       rate: rateOf(record),
@@ -618,10 +634,12 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
       source_id: id,
       source_number: record!.data.number,
       subject: refs.subject, client_ref: refs.clientRef,
-      notes: `Livraison${record!.data.number ? ` selon ${docTitle(kind, record!.data).toLowerCase()} ${text(record!.data.number)}` : ""}`,
+      notes: priced ? refs.notes : `${SLIP_TEXTS[type]!.note}${record!.data.number ? ` selon ${docTitle(kind, record!.data).toLowerCase()} ${text(record!.data.number)}` : ""}`,
       created_by: session.user.id,
       created_by_name: session.user.name,
     });
+    // Un bon de commande tiré d'un devis envoyé vaut accord du client.
+    if (type === "order" && kind === "quotes" && record!.data.status === "sent") await db.write("quotes", id, { status: "accepted", decided_at: new Date().toISOString() });
     go("quotes", blId);
   }
 
@@ -713,7 +731,12 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
         {numbered && <button onClick={() => setPrinting(true)}>Aperçu / imprimer</button>}
         {record && kind !== "credit_notes" && <button onClick={duplicate}>Dupliquer</button>}
         {numbered && <button onClick={() => share.pdf("download")} disabled={share.busy}>Télécharger le PDF</button>}
-        {numbered && (kind === "invoices" || (kind === "quotes" && !isDelivery)) && <button onClick={createDelivery}>Bon de livraison</button>}
+        {numbered && followUps(kind, record?.data).length > 0 && (
+          <select className="follow-up" aria-label="Créer un bon à partir de ce document" value="" onChange={(e) => e.target.value && createDelivery(e.target.value as QuoteType)}>
+            <option value="">Créer un bon…</option>
+            {followUps(kind, record?.data).map((t) => <option key={t} value={t}>{QUOTE_TYPES[t].label}</option>)}
+          </select>
+        )}
       </div>
     </div>
   );
@@ -862,7 +885,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                   <>
                     {!isDelivery && <><div className="aside-label">{kind === "quotes" ? `Montant (TTC)` : "Montant de l'avoir (TTC)"}</div>
                     <div className="aside-amount mono">{fm(totals.gross)}</div></>}
-                    {isDelivery && <><div className="aside-label">Articles livrés</div><div className="aside-amount mono">{billable().reduce((n, l) => n + l.qty, 0)}</div></>}
+                    {isDelivery && <><div className="aside-label">{slip?.count}</div><div className="aside-amount mono">{billable().reduce((n, l) => n + l.qty, 0)}</div></>}
                     {kind === "quotes" && showDue && dueDate && <p className="aside-sub">Valable jusqu'au {formatDate(dueDate)}</p>}
                     {kind === "quotes" && deposits.length > 0 && (
                       <ul className="deposit-list" aria-label="Acomptes facturés">
@@ -874,8 +897,8 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                     {kind === "quotes" && isDelivery && (
                       <div className="aside-actions" style={{ marginTop: 16 }}>
                         {record!.data.status === "sent" ? (
-                          <button className="primary" onClick={() => setQuoteStatus("accepted")}>Marquer livré</button>
-                        ) : <p className="status-line ok">Livraison confirmée.</p>}
+                          <button className="primary" onClick={() => setQuoteStatus("accepted")}>{slip?.mark}</button>
+                        ) : <p className="status-line ok">{slip?.confirmed}</p>}
                       </div>
                     )}
                     {kind === "quotes" && !isDelivery && (
@@ -910,7 +933,7 @@ function DocEditor({ kind, record, clients, onClose, onOpen }: {
                         <li key={`${r.tbl}/${r.id}`}>
                           <span className="rel-kind">{r.relation}</span>
                           <button className="link" onClick={() => go(r.tbl, r.id)}>{docTitle(r.tbl, d.data)} {text(d.data.number) || "(brouillon)"}</button>
-                          <span className="rel-meta">{formatDate(d.data.date)}{r.tbl === "quotes" && quoteTypeOf(d.data) === "delivery" ? "" : <> · <span className="mono">{formatMoney(totalsOf(d).gross, currencyOf(d))}</span></>}</span>
+                          <span className="rel-meta">{formatDate(d.data.date)}{r.tbl === "quotes" && isSlip(d.data) ? "" : <> · <span className="mono">{formatMoney(totalsOf(d).gross, currencyOf(d))}</span></>}</span>
                         </li>
                       );
                     })}

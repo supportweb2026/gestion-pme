@@ -9,15 +9,43 @@
  */
 import { lineNet, roundAmount, type InvoiceLine } from "./invoice.ts";
 
-export type QuoteType = "quote" | "proforma" | "order" | "delivery" | "intervention";
+export type QuoteType = "quote" | "proforma" | "order" | "delivery" | "service" | "intervention";
 
 export const QUOTE_TYPES: Record<QuoteType, { label: string; prefix: string; arrete: string; validate: string; newLabel: string }> = {
   quote: { label: "Devis", prefix: "DV", arrete: "Arrêté le présent devis", validate: "Finaliser le devis", newLabel: "Nouveau devis" },
   proforma: { label: "Facture pro forma", prefix: "PF", arrete: "Arrêtée la présente facture pro forma", validate: "Finaliser la pro forma", newLabel: "Nouvelle pro forma" },
   order: { label: "Bon de commande", prefix: "BC", arrete: "Arrêté le présent bon de commande", validate: "Finaliser le bon de commande", newLabel: "Nouveau bon de commande" },
   delivery: { label: "Bon de livraison", prefix: "BL", arrete: "", validate: "Finaliser le bon de livraison", newLabel: "Nouveau bon de livraison" },
+  service: { label: "Bon de prestation", prefix: "BP", arrete: "", validate: "Finaliser le bon de prestation", newLabel: "Nouveau bon de prestation" },
   intervention: { label: "Bon d'intervention", prefix: "BI", arrete: "Arrêté le présent bon d'intervention", validate: "Finaliser le bon d'intervention", newLabel: "Nouveau bon d'intervention" },
 };
+
+/**
+ * Bons remis à la réception, sans prix ni totaux, signés par le client : le bon de
+ * livraison (des articles) et le bon de prestation (un service réalisé).
+ */
+export const SLIP_TEXTS: Partial<Record<QuoteType, {
+  to: string; qty: string; by: string; received: string; todo: string; done: string; mark: string; confirmed: string; count: string; note: string;
+}>> = {
+  delivery: {
+    to: "Livré à", qty: "Quantité", by: "Livré par", received: "Reçu par le client", todo: "À livrer", done: "Livré",
+    mark: "Marquer livré", confirmed: "Livraison confirmée.", count: "Articles livrés", note: "Livraison",
+  },
+  service: {
+    to: "Prestation réalisée pour", qty: "Quantité", by: "Réalisé par", received: "Prestation constatée par le client", todo: "À réaliser", done: "Réalisé",
+    mark: "Marquer réalisé", confirmed: "Prestation constatée par le client.", count: "Prestations réalisées", note: "Prestation réalisée",
+  },
+};
+export const isSlipType = (t: QuoteType) => t in SLIP_TEXTS;
+export const isSlip = (data: Record<string, unknown> | undefined) => isSlipType(quoteTypeOf(data));
+/** Ce qu'un document peut donner comme suite, dans l'ordre de la chaîne : devis, commande, livraison ou prestation, facture. */
+export function followUps(kind: "quotes" | "invoices" | "credit_notes", data: Record<string, unknown> | undefined): QuoteType[] {
+  if (kind === "credit_notes") return [];
+  if (kind === "invoices") return ["delivery", "service"];
+  const t = quoteTypeOf(data);
+  if (isSlipType(t)) return [];
+  return t === "quote" || t === "proforma" ? ["order", "delivery", "service"] : ["delivery", "service"];
+}
 
 /** Séries admises pour la table des documents d'avant-vente. */
 export const QUOTE_SERIES = Object.values(QUOTE_TYPES).map((t) => t.prefix);
