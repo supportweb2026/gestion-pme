@@ -699,7 +699,7 @@ tbody.entry:hover { background: var(--bg); }
 .receipt-view img { max-width: 100%; max-height: 80vh; object-fit: contain; }
 .receipt-view iframe { width: 100%; height: 80vh; border: none; }
 .import { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; position: relative; }
-.import-preview { position: absolute; right: 0; top: 44px; z-index: 5; min-width: 300px; box-shadow: 0 6px 24px rgb(0 0 0 / 0.12); }
+.import-preview { position: absolute; right: 0; top: 44px; z-index: 5; width: min(600px, calc(100vw - 32px)); max-height: 75vh; overflow-y: auto; box-shadow: 0 6px 24px rgb(0 0 0 / 0.12); }
 
 /* v5 : inscription, abonnement, console de la plateforme */
 .platform-filters { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -2193,3 +2193,18 @@ tr.selected td { background: var(--accent-soft); }
   .client-sheet { overflow-x: auto; }
   .client-sheet table.sheet-docs td:nth-child(2), .client-sheet table.sheet-docs td:nth-child(3) { display: none; }
 }
+
+/* Import : correspondance des colonnes */
+.import-title { margin: 0 0 12px; display: grid; gap: 2px; }
+.import-map { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px 16px; margin-bottom: 14px; }
+.import-map label { display: grid; gap: 4px; font-size: 0.8125rem; min-width: 0; }
+.import-map select { width: 100%; min-width: 0; }
+@media (max-width: 720px) {
+  .import-map { grid-template-columns: 1fr; }
+  .import-preview { position: fixed; left: 16px; right: 16px; top: 72px; width: auto; }
+}
+.form-grid .span-all { grid-column: 1 / -1; }
+.art-desc { max-width: 520px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+table.lines textarea.line-desc { display: block; width: 100%; margin-top: 6px; font-size: 0.8125rem; resize: vertical; }
+table.lines .add-detail { display: inline-block; margin-top: 4px; color: var(--ink-3); }
+table.lines .add-detail:hover { color: var(--accent); }
