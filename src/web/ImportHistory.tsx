@@ -200,7 +200,7 @@ export function ImportHistory() {
             <div className="row">
               <button className="primary" onClick={run} data-testid="import-history-run">Reprendre {fresh.length} élément{fresh.length > 1 ? "s" : ""}</button>
               {result.records.length > fresh.length && <span className="muted small">{result.records.length - fresh.length} déjà repris, ignorés.</span>}
-              <span className="muted small">Conseil : exportez d'abord une sauvegarde (ci-dessus).</span>
+              <span className="muted small">Conseil : exportez d'abord une sauvegarde (Réglages › Sauvegarde des données).</span>
             </div>
           )}
         </div>
