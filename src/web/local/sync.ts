@@ -112,7 +112,8 @@ export class SyncEngine {
       for (let pass = 0; pass < 20; pass++) {
         const outbox = await this.db.outbox(MAX_PUSH);
         const since = (await this.db.getMeta<number>("cursor")) ?? 0;
-        const body: SyncRequest = { changes: outbox, since };
+        const rebuild = (await this.db.getMeta<boolean>("rebuild")) === true;
+        const body: SyncRequest = rebuild ? { changes: outbox, since, echo: true } : { changes: outbox, since };
         const res = await api<SyncResponse>("/api/sync", body);
         const knownRole = await this.db.getMeta<string>("role");
         if (knownRole !== res.role) {
@@ -128,7 +129,9 @@ export class SyncEngine {
           if (knownEpoch !== res.dataEpoch) {
             // Règles de lecture durcies (lot 1 Projets) : l'employé efface les montants
             // reçus avant le filtrage en rechargeant sa copie locale.
-            const reload = res.role === "employee" && (knownEpoch !== undefined || since > 0);
+            // Version 2 : rechargement pour tous, afin de récupérer ce qu'un changement
+            // de compte sur le même appareil avait fait disparaître de la copie locale.
+            const reload = knownEpoch !== undefined || since > 0;
             if (reload) await this.db.resetForRole(res.role);
             await this.db.setMeta("dataEpoch", res.dataEpoch);
             if (reload) continue;
@@ -143,6 +146,7 @@ export class SyncEngine {
           remote: res.changes,
           cursor: res.cursor,
         });
+        if (rebuild && !res.more) await this.db.setMeta("rebuild", false);
         rejected.push(...res.rejected.map((r) => ({ reason: r.reason })));
         if (res.subscription) {
           this.set({ subscription: res.subscription });

@@ -68,6 +68,8 @@ export function App() {
       <AuthScreen
         db={boot.db}
         onSession={async (session) => {
+          // Autre compte que celui de la copie locale : elle est rechargée pour lui.
+          await boot.db.switchAccount({ userId: session.user.id, companyId: session.company.id });
           await boot.db.setMeta("session", session);
           setToken(session.token);
           setBoot({ kind: "ready", db: boot.db, session });

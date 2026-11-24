@@ -245,6 +245,12 @@ export interface SyncRequest {
   changes: Change[];
   /** Curseur : dernier numéro de séquence serveur déjà reçu. */
   since: number;
+  /**
+   * Copie locale en cours de rechargement complet (changement de compte ou de
+   * rôle, déconnexion) : le serveur renvoie aussi les modifications faites
+   * depuis cet appareil, que la copie locale vient d'effacer.
+   */
+  echo?: boolean;
 }
 
 /**
@@ -285,7 +291,7 @@ export function canRead(actor: Actor, tbl: string, owner: unknown, rowId?: strin
  * Version des règles de lecture. Quand elle change, l'appareil d'un employé
  * repart de zéro pour effacer les montants reçus avant le filtrage (lot 1).
  */
-export const DATA_EPOCH = 1;
+export const DATA_EPOCH = 2;
 
 export interface SyncResponse {
   /** Rôle pris en compte : s'il change, l'appareil repart de zéro. */

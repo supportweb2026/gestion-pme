@@ -432,9 +432,37 @@ export class LocalDb {
       tx.objectStore("records").clear();
       tx.objectStore("meta").put(0, "cursor");
       tx.objectStore("meta").put(role, "role");
+      // Rechargement complet : le serveur doit aussi renvoyer ce qui a été saisi
+      // depuis cet appareil, puisque la copie locale vient d'être effacée.
+      tx.objectStore("meta").put(true, "rebuild");
       await done(tx);
     });
     this.notify();
+  }
+
+  /**
+   * Connexion d'un compte sur cet appareil. Si ce n'est pas le compte de la
+   * copie locale, celle-ci est effacée et rechargée : on ne montre jamais au
+   * nouveau compte les données gardées pour le précédent. Les saisies pas
+   * encore envoyées restent si le compte appartient à la même entreprise.
+   */
+  async switchAccount(account: { userId: string; companyId: string }): Promise<void> {
+    const known = await this.getMeta<{ userId: string; companyId: string }>("account");
+    if (known && known.userId === account.userId && known.companyId === account.companyId) return;
+    if (known && known.companyId !== account.companyId) {
+      await this.wipe();
+    } else if (known || ((await this.getMeta<number>("cursor")) ?? 0) > 0) {
+      await exclusive(async () => {
+        const tx = this.db.transaction(["records", "meta"], "readwrite");
+        tx.objectStore("records").clear();
+        tx.objectStore("meta").put(0, "cursor");
+        tx.objectStore("meta").delete("role");
+        tx.objectStore("meta").put(true, "rebuild");
+        await done(tx);
+      });
+      this.notify();
+    }
+    await this.setMeta("account", account);
   }
 
   /** Efface toutes les données locales, PIN compris (déconnexion, révocation, PIN oublié). */
@@ -444,6 +472,7 @@ export class LocalDb {
       const tx = this.db.transaction(["records", "outbox", "files", "meta"], "readwrite");
       for (const name of ["records", "outbox", "files", "meta"]) tx.objectStore(name).clear();
       tx.objectStore("meta").put(deviceId, "deviceId");
+      tx.objectStore("meta").put(true, "rebuild");
       await done(tx);
     });
     this.key = null;
