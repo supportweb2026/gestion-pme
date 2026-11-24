@@ -4,7 +4,7 @@ import { join } from "node:path";
 import worker from "../src/worker/index.ts";
 import { createLocalD1 } from "../dev/d1-local.ts";
 import { HlcClock } from "../src/shared/hlc.ts";
-import type { Change, SyncResponse } from "../src/shared/sync.ts";
+import { DATA_EPOCH, type Change, type SyncResponse } from "../src/shared/sync.ts";
 
 const env = { DB: createLocalD1(":memory:", join(import.meta.dirname, "..", "migrations")), FILES: createLocalD1(":memory:"), JWT_SECRET: "test-secret-0123456789-0123456789-abc" };
 
@@ -55,6 +55,11 @@ test("synchronisation : A envoie, B reçoit ; un renvoi après coupure ne crée 
   const push = await call("/api/sync", { changes: [c1], since: 0 }, tokenA);
   assert.deepEqual(push.data.accepted, [c1.id]);
   assert.equal(push.data.changes.length, 0, "A ne reçoit pas ses propres modifications");
+
+  // Copie locale effacée (changement de compte sur le même appareil) : en rechargement,
+  // le serveur renvoie aussi ce qui a été saisi depuis cet appareil.
+  const rebuild: SyncResponse = (await call("/api/sync", { changes: [], since: 0, echo: true }, tokenA)).data;
+  assert.deepEqual(rebuild.changes.map((c) => c.id), [c1.id], "rechargement : A retrouve ses propres saisies");
 
   const again = await call("/api/sync", { changes: [c1], since: push.data.cursor }, tokenA);
   assert.deepEqual(again.data.accepted, [c1.id]);
@@ -262,7 +267,7 @@ test("projets (CA1.4, CA1.5) : aucun montant envoyé à l'employé, historique c
   let since = 0;
   for (;;) {
     const r: SyncResponse = (await call("/api/sync", { changes: [], since }, lea.token)).data;
-    assert.equal(r.dataEpoch, 1);
+    assert.equal(r.dataEpoch, DATA_EPOCH);
     all.push(...r.changes);
     since = r.cursor;
     if (!r.more) break;

@@ -536,6 +536,7 @@ async function handleSync(req: Request, env: Env, s: Session, company: Company) 
   const subscription = subscriptionInfo(company, today());
   const body = await readJson<SyncRequest>(req);
   const since = Number.isInteger(body.since) && body.since >= 0 ? body.since : 0;
+  const echo = body.echo === true;
   const incoming: Change[] = Array.isArray(body.changes) ? body.changes : [];
   if (incoming.length > MAX_PUSH) throw new HttpError(413, `au plus ${MAX_PUSH} modifications par envoi`);
   for (const c of incoming) {
@@ -549,8 +550,8 @@ async function handleSync(req: Request, env: Env, s: Session, company: Company) 
     ? await applyIncoming(env, s, incoming)
     : { accepted: [] as string[], rejected: [] as SyncResponse["rejected"] };
 
-  // Réception : modifications postérieures au curseur, hors celles de cet appareil,
-  // limitées à ce que le rôle de l'utilisateur peut voir.
+  // Réception : modifications postérieures au curseur, hors celles de cet appareil
+  // (sauf rechargement complet de la copie locale, voir SyncRequest.echo), limitées à ce que le rôle de l'utilisateur peut voir.
   const { results } = await env.DB.prepare(
     `SELECT c.seq, c.op_id, c.device_id, c.tbl, c.row_id, c.patch, c.hlc,
             json_extract(r.data, '$.created_by') AS owner
@@ -564,7 +565,7 @@ async function handleSync(req: Request, env: Env, s: Session, company: Company) 
   // Les montants sont retirés de tout l'historique rejoué (redactPatch, lot 1 Projets).
   const changes: Change[] = [];
   for (const r of page) {
-    if (r.device_id === s.dev || !canRead(reader, r.tbl, r.owner, r.row_id)) continue;
+    if ((!echo && r.device_id === s.dev) || !canRead(reader, r.tbl, r.owner, r.row_id)) continue;
     const patch = redactPatch(reader, r.tbl, JSON.parse(r.patch));
     if (patch) changes.push({ id: r.op_id, tbl: r.tbl as Change["tbl"], row: r.row_id, patch, hlc: r.hlc, device: r.device_id });
   }
